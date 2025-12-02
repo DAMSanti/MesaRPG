@@ -99,53 +99,137 @@
         </div>
     </div>
     
-    <!-- Debug táctil directo - funciona sin depender de otros scripts -->
+    <!-- Sistema de tokens táctiles - aparecen mientras tocas -->
     <script>
         (function() {
-            // Crear indicador de debug visible
+            // Mapa de tokens activos por touch ID
+            var activeTokens = {};
+            var tokenColors = ['#e94560', '#4ecdc4', '#ffe66d', '#95e1d3', '#f38181', '#aa96da', '#fcbad3', '#a8d8ea'];
+            var tokenNames = ['Guerrero', 'Mago', 'Arquera', 'Clérigo', 'Pícaro', 'Druida', 'Paladín', 'Bardo'];
+            var tokenCounter = 0;
+            
+            // Crear indicador de debug
             var debug = document.createElement('div');
-            debug.id = 'direct-debug';
-            debug.style.cssText = 'position:fixed;top:50px;left:10px;right:10px;background:rgba(0,0,0,0.9);color:lime;padding:15px;z-index:99999;font-family:monospace;font-size:14px;border:2px solid lime;border-radius:10px;';
-            debug.innerHTML = '🔧 Debug cargado - esperando touch...';
+            debug.id = 'touch-debug';
+            debug.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.8);color:lime;padding:10px 15px;z-index:99999;font-family:monospace;font-size:12px;border-radius:5px;pointer-events:none;';
+            debug.innerHTML = 'Toca la pantalla...';
             document.body.appendChild(debug);
             
-            var tokenCount = 0;
-            
-            function createToken(x, y) {
-                tokenCount++;
+            function createToken(id, x, y) {
+                var idx = tokenCounter % tokenColors.length;
+                tokenCounter++;
+                
                 var token = document.createElement('div');
-                token.style.cssText = 'position:absolute;left:'+x+'px;top:'+y+'px;width:80px;height:80px;background:linear-gradient(135deg,#e94560,#0f3460);border:4px solid gold;border-radius:50%;transform:translate(-50%,-50%);z-index:1000;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:24px;box-shadow:0 0 20px rgba(233,69,96,0.8);';
-                token.textContent = tokenCount;
-                token.className = 'debug-token';
+                token.id = 'touch-token-' + id;
+                token.className = 'touch-token';
+                token.style.cssText = 'position:absolute;left:'+x+'px;top:'+y+'px;width:100px;height:100px;border-radius:50%;transform:translate(-50%,-50%);z-index:1000;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;transition:none;';
+                token.style.background = 'radial-gradient(circle at 30% 30%, ' + tokenColors[idx] + ', #1a1a2e)';
+                token.style.border = '4px solid gold';
+                token.style.boxShadow = '0 0 30px ' + tokenColors[idx] + ', 0 5px 20px rgba(0,0,0,0.5)';
+                
+                token.innerHTML = '<span style="color:white;font-weight:bold;font-size:14px;text-shadow:0 0 5px black;">' + tokenNames[idx] + '</span><span style="color:gold;font-size:24px;margin-top:5px;">' + token.innerHTML + String.fromCharCode(65 + idx) + '</span>';
+                
                 document.body.appendChild(token);
-                debug.innerHTML = '✅ Token #' + tokenCount + ' creado en (' + Math.round(x) + ', ' + Math.round(y) + ')';
+                activeTokens[id] = token;
+                
+                updateDebug();
+                return token;
             }
             
-            // Touch events
-            document.body.addEventListener('touchstart', function(e) {
-                debug.innerHTML = '👆 Touch detectado: ' + e.touches.length + ' dedos';
-            }, {passive: true});
+            function moveToken(id, x, y) {
+                var token = activeTokens[id];
+                if (token) {
+                    token.style.left = x + 'px';
+                    token.style.top = y + 'px';
+                }
+            }
             
-            document.body.addEventListener('touchend', function(e) {
-                if (e.changedTouches.length > 0) {
-                    var t = e.changedTouches[0];
-                    debug.innerHTML = '👆 TouchEnd en (' + Math.round(t.clientX) + ', ' + Math.round(t.clientY) + ')';
-                    // Solo crear si no tocamos un token existente
-                    if (!e.target.classList.contains('debug-token')) {
-                        createToken(t.clientX, t.clientY);
-                    }
+            function removeToken(id) {
+                var token = activeTokens[id];
+                if (token) {
+                    // Animación de desvanecimiento
+                    token.style.transition = 'opacity 0.3s, transform 0.3s';
+                    token.style.opacity = '0';
+                    token.style.transform = 'translate(-50%,-50%) scale(0.5)';
+                    setTimeout(function() {
+                        if (token.parentNode) {
+                            token.parentNode.removeChild(token);
+                        }
+                    }, 300);
+                    delete activeTokens[id];
+                }
+                updateDebug();
+            }
+            
+            function updateDebug() {
+                var count = Object.keys(activeTokens).length;
+                debug.innerHTML = 'Tokens activos: ' + count;
+            }
+            
+            // Touch Start - crear token
+            document.body.addEventListener('touchstart', function(e) {
+                for (var i = 0; i < e.changedTouches.length; i++) {
+                    var touch = e.changedTouches[i];
+                    createToken(touch.identifier, touch.clientX, touch.clientY);
                 }
             }, {passive: true});
             
-            // Mouse click como fallback
-            document.body.addEventListener('click', function(e) {
-                debug.innerHTML = '🖱️ Click en (' + Math.round(e.clientX) + ', ' + Math.round(e.clientY) + ')';
-                if (!e.target.classList.contains('debug-token')) {
-                    createToken(e.clientX, e.clientY);
+            // Touch Move - mover token
+            document.body.addEventListener('touchmove', function(e) {
+                for (var i = 0; i < e.changedTouches.length; i++) {
+                    var touch = e.changedTouches[i];
+                    moveToken(touch.identifier, touch.clientX, touch.clientY);
+                }
+            }, {passive: true});
+            
+            // Touch End - eliminar token
+            document.body.addEventListener('touchend', function(e) {
+                for (var i = 0; i < e.changedTouches.length; i++) {
+                    var touch = e.changedTouches[i];
+                    removeToken(touch.identifier);
+                }
+            }, {passive: true});
+            
+            // Touch Cancel - eliminar token
+            document.body.addEventListener('touchcancel', function(e) {
+                for (var i = 0; i < e.changedTouches.length; i++) {
+                    var touch = e.changedTouches[i];
+                    removeToken(touch.identifier);
+                }
+            }, {passive: true});
+            
+            // Soporte para mouse (debug en PC)
+            var mouseDown = false;
+            var mouseTokenId = 'mouse';
+            
+            document.body.addEventListener('mousedown', function(e) {
+                if (e.button === 0) {
+                    mouseDown = true;
+                    createToken(mouseTokenId, e.clientX, e.clientY);
                 }
             });
             
-            console.log('✅ Debug táctil directo cargado');
+            document.body.addEventListener('mousemove', function(e) {
+                if (mouseDown) {
+                    moveToken(mouseTokenId, e.clientX, e.clientY);
+                }
+            });
+            
+            document.body.addEventListener('mouseup', function(e) {
+                if (mouseDown) {
+                    mouseDown = false;
+                    removeToken(mouseTokenId);
+                }
+            });
+            
+            document.body.addEventListener('mouseleave', function(e) {
+                if (mouseDown) {
+                    mouseDown = false;
+                    removeToken(mouseTokenId);
+                }
+            });
+            
+            console.log('✅ Sistema de tokens táctiles cargado');
         })();
     </script>
     
