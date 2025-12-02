@@ -513,23 +513,34 @@ async def websocket_display(websocket: WebSocket):
     await ws_manager.connect_display(websocket)
     try:
         # Enviar estado inicial
-        await websocket.send_json({
-            "type": "state_update",
-            "payload": game_state.get_full_state()
-        })
+        try:
+            initial_state = game_state.get_full_state()
+            await send_json_safe(websocket, {
+                "type": "state_update",
+                "payload": initial_state
+            })
+        except Exception as e:
+            print(f"⚠️ Error enviando estado inicial a display: {e}")
+            await send_json_safe(websocket, {"type": "error", "payload": {"message": str(e)}})
         
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
-            
-            # Responder a ping con pong para mantener conexión viva
-            if message.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-                continue
-            
-            # Procesar eventos táctiles si es necesario
+            try:
+                message = json.loads(data)
+                
+                # Responder a ping con pong para mantener conexión viva
+                if message.get("type") == "ping":
+                    await send_json_safe(websocket, {"type": "pong"})
+                    continue
+                
+                # Procesar eventos táctiles si es necesario
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Error parseando mensaje de display: {e}")
             
     except WebSocketDisconnect:
+        ws_manager.disconnect_display(websocket)
+    except Exception as e:
+        print(f"❌ Error en WebSocket display: {e}")
         ws_manager.disconnect_display(websocket)
 
 @app.websocket("/ws/mobile")
@@ -543,20 +554,32 @@ async def websocket_mobile(websocket: WebSocket, player_id: str = Query(None), n
     
     try:
         # Enviar estado inicial
-        await websocket.send_json({
-            "type": "connected",
-            "payload": {
-                "player_id": player_id,
-                "state": game_state.get_full_state()
-            }
-        })
+        try:
+            initial_state = game_state.get_full_state()
+            await send_json_safe(websocket, {
+                "type": "connected",
+                "payload": {
+                    "player_id": player_id,
+                    "state": initial_state
+                }
+            })
+        except Exception as e:
+            print(f"⚠️ Error enviando estado inicial a mobile {player_id}: {e}")
+            await send_json_safe(websocket, {"type": "error", "payload": {"message": str(e)}})
         
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
-            await handle_mobile_message(player_id, message, websocket)
+            try:
+                message = json.loads(data)
+                await handle_mobile_message(player_id, message, websocket)
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Error parseando mensaje de mobile {player_id}: {e}")
             
     except WebSocketDisconnect:
+        ws_manager.disconnect_mobile(websocket)
+        await game_state.remove_player(player_id)
+    except Exception as e:
+        print(f"❌ Error en WebSocket mobile {player_id}: {e}")
         ws_manager.disconnect_mobile(websocket)
         await game_state.remove_player(player_id)
 
@@ -567,7 +590,7 @@ async def handle_mobile_message(player_id: str, message: dict, websocket: WebSoc
     
     # Responder a ping con pong para mantener conexión viva
     if msg_type == "ping":
-        await websocket.send_json({"type": "pong"})
+        await send_json_safe(websocket, {"type": "pong"})
         return
     
     if msg_type == "ability":
@@ -644,21 +667,32 @@ async def websocket_admin(websocket: WebSocket):
     
     try:
         # Enviar estado inicial
-        await websocket.send_json({
-            "type": "state_update",
-            "payload": game_state.get_full_state()
-        })
-        await websocket.send_json({
-            "type": "stats",
-            "payload": ws_manager.get_stats()
-        })
+        try:
+            initial_state = game_state.get_full_state()
+            await send_json_safe(websocket, {
+                "type": "state_update",
+                "payload": initial_state
+            })
+            await send_json_safe(websocket, {
+                "type": "stats",
+                "payload": ws_manager.get_stats()
+            })
+        except Exception as e:
+            print(f"⚠️ Error enviando estado inicial a admin: {e}")
+            await send_json_safe(websocket, {"type": "error", "payload": {"message": str(e)}})
         
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
-            await handle_admin_message(websocket, message)
+            try:
+                message = json.loads(data)
+                await handle_admin_message(websocket, message)
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Error parseando mensaje de admin: {e}")
             
     except WebSocketDisconnect:
+        ws_manager.disconnect_admin(websocket)
+    except Exception as e:
+        print(f"❌ Error en WebSocket admin: {e}")
         ws_manager.disconnect_admin(websocket)
 
 async def handle_admin_message(websocket: WebSocket, message: dict):
@@ -667,7 +701,7 @@ async def handle_admin_message(websocket: WebSocket, message: dict):
     
     # Responder a ping con pong para mantener conexión viva
     if msg_type == "ping":
-        await websocket.send_json({"type": "pong"})
+        await send_json_safe(websocket, {"type": "pong"})
         return
     
     if msg_type == "start_combat":
@@ -677,7 +711,7 @@ async def handle_admin_message(websocket: WebSocket, message: dict):
     elif msg_type == "next_turn":
         await game_state.next_turn()
     elif msg_type == "refresh":
-        await websocket.send_json({
+        await send_json_safe(websocket, {
             "type": "state_update",
             "payload": game_state.get_full_state()
         })

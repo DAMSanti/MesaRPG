@@ -49,4 +49,6 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8000/api/state || exit 1
 
 # Comando de inicio (sin reload para producción)
-CMD ["python", "-m", "uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers para funcionar detrás de nginx
+# --ws websockets para mejor soporte de WebSocket
+CMD ["python", "-m", "uvicorn", "server.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
