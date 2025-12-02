@@ -34,6 +34,8 @@ class GameRenderer {
     }
     
     setupTouchEvents() {
+        console.log('🖐️ Configurando eventos táctiles en:', this.tokensContainer);
+        
         // Eventos táctiles en el contenedor
         this.tokensContainer.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
         this.tokensContainer.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
@@ -46,11 +48,21 @@ class GameRenderer {
         this.tokensContainer.addEventListener('mouseup', (e) => this.handleMouseUp(e));
         this.tokensContainer.addEventListener('mouseleave', (e) => this.handleMouseUp(e));
         
-        // Doble click para crear token (desarrollo)
-        this.tokensContainer.addEventListener('dblclick', (e) => this.createLocalToken(e.clientX, e.clientY));
+        // Click simple para crear token (más fácil para testing)
+        this.tokensContainer.addEventListener('click', (e) => {
+            // Solo crear si no hay tokens en ese punto
+            const tokenEl = e.target.closest('.character-token');
+            if (!tokenEl) {
+                console.log('👆 Click en posición:', e.clientX, e.clientY);
+                this.createLocalToken(e.clientX, e.clientY);
+            }
+        });
+        
+        console.log('✅ Eventos táctiles configurados');
     }
     
     handleTouchStart(e) {
+        console.log('👆 Touch start:', e.touches.length, 'toques');
         if (e.touches.length !== 1) return;
         
         const touch = e.touches[0];
