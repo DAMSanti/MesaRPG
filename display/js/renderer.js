@@ -26,6 +26,14 @@ class GameRenderer {
         // Contador para IDs únicos de tokens locales
         this.localTokenCounter = 0;
         
+        // Calibración inicial (sin transformación)
+        this.calibration = {
+            offsetX: 0,
+            offsetY: 0,
+            scaleX: 1,
+            scaleY: 1
+        };
+        
         this.resize();
         window.addEventListener('resize', () => this.resize());
         
@@ -252,6 +260,8 @@ class GameRenderer {
     }
     
     createLocalToken(x, y) {
+        this.showDebugMessage('Creando token en ' + x + ',' + y);
+        
         // Crear un token local (sin servidor)
         this.localTokenCounter++;
         const localId = `local_${this.localTokenCounter}`;
@@ -270,9 +280,15 @@ class GameRenderer {
         };
         
         this.characters[localId] = char;
-        this.createToken(localId, char);
         
-        console.log('✨ Token local creado:', char.name, 'en', x, y);
+        try {
+            this.createToken(localId, char);
+            console.log('✨ Token local creado:', char.name, 'en', x, y);
+            this.showDebugMessage('Token: ' + char.name + ' creado!');
+        } catch (e) {
+            console.error('Error creando token:', e);
+            this.showDebugMessage('ERROR: ' + e.message);
+        }
         
         // Notificar al servidor (si está conectado)
         this.notifyTokenCreated(localId, char);
@@ -449,12 +465,26 @@ class GameRenderer {
     }
     
     createToken(id, char) {
-        console.log('🎭 Creando token:', char.name);
+        console.log('🎭 Creando token:', char.name, 'contenedor:', this.tokensContainer);
+        
+        if (!this.tokensContainer) {
+            console.error('❌ tokensContainer no existe!');
+            this.tokensContainer = document.getElementById('tokens-container');
+            if (!this.tokensContainer) {
+                console.error('❌ No se puede encontrar tokens-container en el DOM');
+                return;
+            }
+        }
         
         const token = document.createElement('div');
         token.className = 'character-token';
         token.id = `token-${id}`;
         token.dataset.characterId = id;
+        
+        // Posición directa en el estilo (sin calibración para tokens locales)
+        token.style.left = `${char.position.x}px`;
+        token.style.top = `${char.position.y}px`;
+        token.style.position = 'absolute';
         
         token.innerHTML = `
             <span class="token-name">${char.name}</span>
@@ -479,6 +509,12 @@ class GameRenderer {
             img.src = `assets/tokens/${char.marker_id}.png`;
         }
         
+        // Añadir al DOM primero
+        this.tokensContainer.appendChild(token);
+        this.tokens[id] = token;
+        
+        console.log('✅ Token añadido al DOM:', token, 'en', char.position.x, char.position.y);
+        
         // Eventos táctiles y click
         token.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -488,12 +524,6 @@ class GameRenderer {
             e.stopPropagation();
             this.selectCharacter(id);
         }, { passive: true });
-        
-        // Posición inicial - aplicar calibración
-        this.setTokenPosition(token, char.position);
-        
-        this.tokensContainer.appendChild(token);
-        this.tokens[id] = token;
         
         // Animación de entrada
         token.style.animation = 'tokenAppear 0.3s ease-out';
