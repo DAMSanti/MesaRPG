@@ -14,12 +14,13 @@ ENV PYTHONUNBUFFERED=1
 
 # Instalar dependencias del sistema para OpenCV
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
-    libxrender-dev \
+    libxrender1 \
     libgomp1 \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Crear directorio de trabajo
@@ -42,8 +43,6 @@ EXPOSE 8000
 
 # Directorio de datos como volumen
 VOLUME ["/app/data", "/app/config", "/app/assets"]
-# Instalar curl para healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
