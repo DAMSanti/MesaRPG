@@ -37,8 +37,12 @@ class GameRenderer {
         this.resize();
         window.addEventListener('resize', () => this.resize());
         
-        // Inicializar eventos táctiles
-        this.setupTouchEvents();
+        // Inicializar eventos táctiles (solo si no están deshabilitados)
+        if (!window.DISABLE_RENDERER_TOUCH) {
+            this.setupTouchEvents();
+        } else {
+            console.log('🖐️ Eventos táctiles del renderer deshabilitados (usando sistema multitouch)');
+        }
     }
     
     setupTouchEvents() {
