@@ -250,6 +250,24 @@ async def admin_page():
         <script>
             let ws;
             let gameState = {};
+            let pingInterval = null;
+            const pingIntervalMs = 25000;
+            
+            function startPing() {
+                stopPing();
+                pingInterval = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'ping' }));
+                    }
+                }, pingIntervalMs);
+            }
+            
+            function stopPing() {
+                if (pingInterval) {
+                    clearInterval(pingInterval);
+                    pingInterval = null;
+                }
+            }
             
             function connect() {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -260,12 +278,14 @@ async def admin_page():
                     document.getElementById('connection-status').textContent = 'Conectado';
                     log('Conectado al servidor', 'system');
                     refreshState();
+                    startPing();
                 };
                 
                 ws.onclose = () => {
                     document.getElementById('connection-status').className = 'disconnected';
                     document.getElementById('connection-status').textContent = 'Desconectado';
                     log('Desconectado del servidor', 'error');
+                    stopPing();
                     setTimeout(connect, 3000);
                 };
                 
@@ -276,6 +296,11 @@ async def admin_page():
             }
             
             function handleMessage(data) {
+                // Ignorar mensajes pong
+                if (data.type === 'pong') {
+                    return;
+                }
+                
                 if (data.type === 'state_update' || data.type === 'STATE_UPDATE') {
                     gameState = data.payload;
                     updateUI();
@@ -495,8 +520,13 @@ async def websocket_display(websocket: WebSocket):
         
         while True:
             data = await websocket.receive_text()
-            # Las pantallas normalmente solo reciben, pero pueden enviar eventos táctiles
             message = json.loads(data)
+            
+            # Responder a ping con pong para mantener conexión viva
+            if message.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
+            
             # Procesar eventos táctiles si es necesario
             
     except WebSocketDisconnect:
@@ -524,16 +554,21 @@ async def websocket_mobile(websocket: WebSocket, player_id: str = Query(None), n
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
-            await handle_mobile_message(player_id, message)
+            await handle_mobile_message(player_id, message, websocket)
             
     except WebSocketDisconnect:
         ws_manager.disconnect_mobile(websocket)
         await game_state.remove_player(player_id)
 
-async def handle_mobile_message(player_id: str, message: dict):
+async def handle_mobile_message(player_id: str, message: dict, websocket: WebSocket):
     """Procesa mensajes del móvil"""
     msg_type = message.get("type")
     payload = message.get("payload", {})
+    
+    # Responder a ping con pong para mantener conexión viva
+    if msg_type == "ping":
+        await websocket.send_json({"type": "pong"})
+        return
     
     if msg_type == "ability":
         result = await game_state.execute_ability(
@@ -563,6 +598,11 @@ async def websocket_camera(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
+            
+            # Responder a ping con pong para mantener conexión viva
+            if message.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
             
             if message.get("type") == "markers_update":
                 markers = message.get("payload", {}).get("markers", [])
@@ -624,6 +664,11 @@ async def websocket_admin(websocket: WebSocket):
 async def handle_admin_message(websocket: WebSocket, message: dict):
     """Procesa mensajes del admin"""
     msg_type = message.get("type")
+    
+    # Responder a ping con pong para mantener conexión viva
+    if msg_type == "ping":
+        await websocket.send_json({"type": "pong"})
+        return
     
     if msg_type == "start_combat":
         await game_state.start_combat()

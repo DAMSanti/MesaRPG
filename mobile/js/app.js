@@ -20,6 +20,9 @@ class MobileApp {
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         this.serverUrl = `${wsProtocol}//${window.location.host}/ws/mobile`;
         
+        this.pingInterval = null;
+        this.pingIntervalMs = 25000; // Enviar ping cada 25 segundos
+        
         this.init();
     }
     
@@ -74,11 +77,13 @@ class MobileApp {
             document.getElementById('connection-error').classList.add('hidden');
             this.showScreen('select-screen');
             document.getElementById('player-display-name').textContent = this.playerName;
+            this.startPing();
         };
         
         this.ws.onclose = () => {
             console.log('❌ Desconectado');
             this.showToast('Conexión perdida', 'error');
+            this.stopPing();
             // Intentar reconectar después de 3 segundos
             setTimeout(() => {
                 if (this.playerId) {
@@ -105,6 +110,11 @@ class MobileApp {
     handleMessage(data) {
         const type = data.type;
         const payload = data.payload || {};
+        
+        // Ignorar mensajes pong (respuesta a nuestro ping)
+        if (type === 'pong') {
+            return;
+        }
         
         console.log('📨 Mensaje:', type, payload);
         
@@ -490,6 +500,22 @@ class MobileApp {
         // Limitar entradas
         while (log.children.length > 10) {
             log.removeChild(log.lastChild);
+        }
+    }
+    
+    startPing() {
+        this.stopPing();
+        this.pingInterval = setInterval(() => {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, this.pingIntervalMs);
+    }
+    
+    stopPing() {
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
         }
     }
 }
