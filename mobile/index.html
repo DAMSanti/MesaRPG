@@ -9,13 +9,13 @@
     
     <title>MesaRPG - Control</title>
     
-    <link rel="manifest" href="manifest.json">
-    <link rel="icon" type="image/png" href="assets/icon-192.png">
-    <link rel="apple-touch-icon" href="assets/icon-192.png">
+    <link rel="manifest" href="/mobile/manifest.json">
+    <link rel="icon" type="image/png" href="/mobile/assets/icon-192.png">
+    <link rel="apple-touch-icon" href="/mobile/assets/icon-192.png">
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/mobile.css">
+    <link rel="stylesheet" href="/mobile/css/mobile.css">
 </head>
 <body>
     <div id="app">
@@ -131,13 +131,13 @@
         <div id="toast-container"></div>
     </div>
     
-    <script src="js/app.js"></script>
-    <script src="js/controls.js"></script>
+    <script src="/mobile/js/app.js"></script>
+    <script src="/mobile/js/controls.js"></script>
     
     <!-- Service Worker para PWA -->
     <script>
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js')
+            navigator.serviceWorker.register('/mobile/sw.js')
                 .then(reg => console.log('SW registrado'))
                 .catch(err => console.log('Error SW:', err));
         }

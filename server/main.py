@@ -79,15 +79,7 @@ app.add_middleware(
 )
 
 
-# === Archivos Estáticos ===
-# Montar directorios de frontend
-if DISPLAY_DIR.exists():
-    app.mount("/display-static", StaticFiles(directory=str(DISPLAY_DIR)), name="display-static")
-if MOBILE_DIR.exists():
-    app.mount("/mobile-static", StaticFiles(directory=str(MOBILE_DIR)), name="mobile-static")
-
-
-# === Rutas HTML ===
+# === Rutas HTML === (deben ir ANTES de los archivos estáticos)
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
@@ -372,6 +364,61 @@ async def admin_page():
     </body>
     </html>
     """
+
+
+# === Archivos Estáticos para Display ===
+@app.get("/css/style.css")
+async def display_css():
+    return FileResponse(DISPLAY_DIR / "css" / "style.css", media_type="text/css")
+
+@app.get("/js/websocket.js")
+async def display_websocket_js():
+    return FileResponse(DISPLAY_DIR / "js" / "websocket.js", media_type="application/javascript")
+
+@app.get("/js/effects.js")
+async def display_effects_js():
+    return FileResponse(DISPLAY_DIR / "js" / "effects.js", media_type="application/javascript")
+
+@app.get("/js/renderer.js")
+async def display_renderer_js():
+    return FileResponse(DISPLAY_DIR / "js" / "renderer.js", media_type="application/javascript")
+
+@app.get("/js/app.js")
+async def display_app_js():
+    return FileResponse(DISPLAY_DIR / "js" / "app.js", media_type="application/javascript")
+
+
+# === Archivos Estáticos para Mobile ===
+@app.get("/css/mobile.css")
+async def mobile_css():
+    return FileResponse(MOBILE_DIR / "css" / "mobile.css", media_type="text/css")
+
+@app.get("/mobile/css/mobile.css")
+async def mobile_css_alt():
+    return FileResponse(MOBILE_DIR / "css" / "mobile.css", media_type="text/css")
+
+@app.get("/mobile/js/app.js")
+async def mobile_app_js():
+    return FileResponse(MOBILE_DIR / "js" / "app.js", media_type="application/javascript")
+
+@app.get("/mobile/js/controls.js")
+async def mobile_controls_js():
+    return FileResponse(MOBILE_DIR / "js" / "controls.js", media_type="application/javascript")
+
+@app.get("/mobile/manifest.json")
+async def mobile_manifest():
+    return FileResponse(MOBILE_DIR / "manifest.json", media_type="application/json")
+
+@app.get("/mobile/sw.js")
+async def mobile_sw():
+    return FileResponse(MOBILE_DIR / "sw.js", media_type="application/javascript")
+
+@app.get("/mobile/assets/{filename}")
+async def mobile_assets(filename: str):
+    file_path = MOBILE_DIR / "assets" / filename
+    if file_path.exists():
+        return FileResponse(file_path)
+    raise HTTPException(status_code=404, detail="Asset not found")
 
 
 # === API REST ===
