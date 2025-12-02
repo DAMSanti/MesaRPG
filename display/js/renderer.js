@@ -34,44 +34,80 @@ class GameRenderer {
     }
     
     setupTouchEvents() {
-        console.log('🖐️ Configurando eventos táctiles en:', this.tokensContainer);
+        if (!this.tokensContainer) {
+            console.error('❌ tokens-container no encontrado!');
+            return;
+        }
         
-        // Eventos táctiles en el contenedor
-        this.tokensContainer.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
-        this.tokensContainer.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
-        this.tokensContainer.addEventListener('touchend', (e) => this.handleTouchEnd(e), { passive: false });
-        this.tokensContainer.addEventListener('touchcancel', (e) => this.handleTouchEnd(e), { passive: false });
+        console.log('🖐️ Configurando eventos táctiles...');
         
-        // Eventos de mouse para desarrollo/debug
-        this.tokensContainer.addEventListener('mousedown', (e) => this.handleMouseDown(e));
-        this.tokensContainer.addEventListener('mousemove', (e) => this.handleMouseMove(e));
-        this.tokensContainer.addEventListener('mouseup', (e) => this.handleMouseUp(e));
-        this.tokensContainer.addEventListener('mouseleave', (e) => this.handleMouseUp(e));
+        // Mostrar mensaje de debug en pantalla
+        this.showDebugMessage('Touch habilitado - toca para crear token');
         
-        // Click simple para crear token (más fácil para testing)
-        this.tokensContainer.addEventListener('click', (e) => {
-            // Solo crear si no hay tokens en ese punto
+        // IMPORTANTE: Usar document.body como fallback
+        const target = this.tokensContainer;
+        
+        // Touch events
+        target.addEventListener('touchstart', (e) => {
+            this.showDebugMessage('touchstart: ' + e.touches[0].clientX + ',' + e.touches[0].clientY);
+            this.handleTouchStart(e);
+        }, { passive: false });
+        
+        target.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
+        
+        target.addEventListener('touchend', (e) => {
+            if (e.changedTouches.length > 0) {
+                const touch = e.changedTouches[0];
+                this.showDebugMessage('touchend: ' + touch.clientX + ',' + touch.clientY);
+                
+                // Crear token si no estábamos arrastrando
+                if (!this.dragging) {
+                    const tokenEl = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.character-token');
+                    if (!tokenEl) {
+                        this.createLocalToken(touch.clientX, touch.clientY);
+                    }
+                }
+            }
+            this.handleTouchEnd(e);
+        }, { passive: false });
+        
+        target.addEventListener('touchcancel', (e) => this.handleTouchEnd(e), { passive: false });
+        
+        // Mouse events (para debug en PC)
+        target.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        target.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        target.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+        target.addEventListener('mouseleave', (e) => this.handleMouseUp(e));
+        
+        // Click para crear token
+        target.addEventListener('click', (e) => {
+            this.showDebugMessage('click: ' + e.clientX + ',' + e.clientY);
             const tokenEl = e.target.closest('.character-token');
             if (!tokenEl) {
-                console.log('👆 Click en posición:', e.clientX, e.clientY);
                 this.createLocalToken(e.clientX, e.clientY);
             }
         });
         
-        // Touch directo para crear token
-        this.tokensContainer.addEventListener('touchend', (e) => {
-            // Si no estábamos arrastrando, crear token
-            if (!this.dragging && e.changedTouches.length === 1) {
-                const touch = e.changedTouches[0];
-                const tokenEl = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.character-token');
-                if (!tokenEl) {
-                    console.log('👆 Touch en posición:', touch.clientX, touch.clientY);
-                    this.createLocalToken(touch.clientX, touch.clientY);
-                }
-            }
-        }, { passive: true });
-        
         console.log('✅ Eventos táctiles configurados');
+    }
+    
+    showDebugMessage(msg) {
+        console.log('🔵 ' + msg);
+        // Mostrar en pantalla temporalmente
+        let debugEl = document.getElementById('touch-debug');
+        if (!debugEl) {
+            debugEl = document.createElement('div');
+            debugEl.id = 'touch-debug';
+            debugEl.style.cssText = 'position:fixed;top:10px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.8);color:#0f0;padding:10px 20px;border-radius:5px;z-index:9999;font-family:monospace;';
+            document.body.appendChild(debugEl);
+        }
+        debugEl.textContent = msg;
+        // Ocultar después de 3 segundos
+        clearTimeout(this.debugTimeout);
+        this.debugTimeout = setTimeout(() => {
+            if (debugEl) debugEl.style.display = 'none';
+        }, 3000);
+        debugEl.style.display = 'block';
     }
     
     handleTouchStart(e) {
@@ -347,39 +383,39 @@ class GameRenderer {
     }
     
     drawGrid(ctx, w, h) {
-        // Cuadrícula hexagonal - hexágonos juntos del tamaño de un token
-        const hexSize = 50; // Radio del hexágono (token de 100px diámetro)
+        // Hexágonos pointy-top (punta arriba) - tamaño para tokens de 100px
+        const size = 50; // Radio del hexágono
         
-        // Para hexágonos flat-top (punta hacia los lados)
-        const hexWidth = hexSize * 2;
-        const hexHeight = Math.sqrt(3) * hexSize;
+        // Dimensiones de un hexágono pointy-top
+        const hexWidth = Math.sqrt(3) * size;  // ~86.6px
+        const hexHeight = size * 2;             // 100px
         
-        // Distancia entre centros para que estén juntos
-        const horizDist = hexWidth * 0.75; // 3/4 del ancho
-        const vertDist = hexHeight; // altura completa
+        // Espaciado entre centros
+        const horizSpacing = hexWidth;          // Horizontal: ancho completo
+        const vertSpacing = hexHeight * 0.75;   // Vertical: 3/4 de altura
         
-        ctx.strokeStyle = 'rgba(255, 215, 0, 0.2)'; // Dorado
-        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = 'rgba(255, 215, 0, 0.25)';
+        ctx.lineWidth = 2;
         
         let row = 0;
-        for (let y = hexHeight / 2; y < h + hexHeight; y += vertDist / 2) {
-            const isOddRow = row % 2 === 1;
-            const offsetX = isOddRow ? horizDist / 2 : 0;
+        for (let y = size; y < h + hexHeight; y += vertSpacing) {
+            // Filas impares se desplazan medio hexágono
+            const offsetX = (row % 2 === 1) ? hexWidth / 2 : 0;
             
-            for (let x = offsetX; x < w + hexWidth; x += horizDist) {
-                this.drawHexagon(ctx, x, y, hexSize);
+            for (let x = offsetX + hexWidth / 2; x < w + hexWidth; x += horizSpacing) {
+                this.drawHexagon(ctx, x, y, size);
             }
             row++;
         }
     }
     
-    drawHexagon(ctx, centerX, centerY, size) {
+    drawHexagon(ctx, cx, cy, size) {
         ctx.beginPath();
         for (let i = 0; i < 6; i++) {
-            // Hexágono con punta arriba (flat-top)
-            const angle = (Math.PI / 3) * i - Math.PI / 6;
-            const x = centerX + size * Math.cos(angle);
-            const y = centerY + size * Math.sin(angle);
+            // Pointy-top: empieza desde arriba (ángulo -90° = -PI/2)
+            const angle = (Math.PI / 3) * i - Math.PI / 2;
+            const x = cx + size * Math.cos(angle);
+            const y = cy + size * Math.sin(angle);
             if (i === 0) {
                 ctx.moveTo(x, y);
             } else {
