@@ -91,29 +91,42 @@ html, body {
 .character-token {
     position: absolute;
     transform: translate(-50%, -50%);
-    transition: transform 0.3s ease, opacity 0.3s;
+    transition: left 0.1s ease-out, top 0.1s ease-out, opacity 0.3s;
     cursor: pointer;
     pointer-events: auto;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+}
+
+@keyframes tokenAppear {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.5);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
 }
 
 .token-inner {
     position: relative;
-    width: 80px;
-    height: 80px;
+    width: 100px;
+    height: 100px;
     border-radius: 50%;
-    border: 4px solid var(--color-accent);
+    border: 5px solid var(--color-accent);
     background: var(--color-secondary);
     box-shadow: var(--shadow), 0 0 20px rgba(233, 69, 96, 0.3);
     overflow: hidden;
-    transition: all 0.3s;
+    transition: all 0.2s;
 }
 
-.token-inner:hover {
-    transform: scale(1.1);
-    box-shadow: var(--shadow), 0 0 30px rgba(233, 69, 96, 0.5);
+.token-inner:active {
+    transform: scale(0.95);
 }
 
-.token-inner img {
+.token-inner img.token-image {
     width: 100%;
     height: 100%;
     object-fit: cover;
@@ -125,13 +138,16 @@ html, body {
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 32px;
+    font-size: 40px;
     font-family: var(--font-title);
     color: var(--color-accent);
+    background: linear-gradient(135deg, var(--color-secondary), var(--color-bg));
 }
 
+.character-token.selected .token-inner,
 .character-token.active .token-inner {
     border-color: var(--color-primary);
+    border-width: 6px;
     animation: pulse-active 1.5s infinite;
 }
 
@@ -142,36 +158,51 @@ html, body {
 
 .token-hp-bar {
     position: absolute;
-    bottom: -10px;
+    bottom: -12px;
     left: 50%;
     transform: translateX(-50%);
-    width: 60px;
-    height: 8px;
-    background: rgba(0, 0, 0, 0.7);
+    width: 80px;
+    height: 10px;
+    background: rgba(0, 0, 0, 0.8);
+    border-radius: 5px;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, 0.3);
     border-radius: 4px;
     overflow: hidden;
 }
 
 .token-hp-fill {
     height: 100%;
-    background: var(--color-hp);
+    background: linear-gradient(to right, var(--color-hp), #66bb6a);
     transition: width 0.5s ease, background 0.3s;
 }
 
 .token-hp-fill.low {
-    background: var(--color-hp-low);
+    background: linear-gradient(to right, var(--color-hp-low), #ff7043);
 }
 
 .token-name {
     position: absolute;
-    top: -25px;
+    top: -30px;
     left: 50%;
     transform: translateX(-50%);
     white-space: nowrap;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: bold;
-    text-shadow: 0 0 5px black, 0 0 10px black;
+    text-shadow: 0 0 5px black, 0 0 10px black, 2px 2px 4px black;
     color: white;
+    font-family: var(--font-title);
+}
+
+.token-class {
+    position: absolute;
+    bottom: -28px;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 12px;
+    color: var(--color-accent);
+    text-shadow: 0 0 5px black;
 }
 
 /* Estado de personaje */
@@ -566,4 +597,162 @@ html, body {
     #action-log {
         width: 300px;
     }
+}
+
+/* === Controles de Display === */
+
+#display-controls {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 1000;
+    display: flex;
+    gap: 10px;
+}
+
+#display-controls button {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    border: 2px solid var(--color-secondary);
+    background: rgba(15, 52, 96, 0.8);
+    color: var(--color-text);
+    font-size: 24px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    touch-action: manipulation;
+}
+
+#display-controls button:hover,
+#display-controls button:active {
+    background: var(--color-primary);
+    border-color: var(--color-accent);
+    transform: scale(1.1);
+}
+
+/* === Modal de Calibración === */
+
+#calibration-modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 2000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#calibration-modal.hidden {
+    display: none;
+}
+
+.calibration-content {
+    background: var(--color-bg);
+    padding: 30px;
+    border-radius: var(--border-radius);
+    max-width: 500px;
+    width: 90%;
+    border: 2px solid var(--color-secondary);
+    box-shadow: var(--shadow);
+}
+
+.calibration-content h2 {
+    font-family: var(--font-title);
+    color: var(--color-accent);
+    margin-bottom: 15px;
+    text-align: center;
+}
+
+.calibration-content p {
+    color: var(--color-text-dim);
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.calibration-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.calibration-controls label {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    font-size: 14px;
+}
+
+.calibration-controls input[type="range"] {
+    flex: 1;
+    height: 8px;
+    -webkit-appearance: none;
+    appearance: none;
+    background: var(--color-secondary);
+    border-radius: 4px;
+    outline: none;
+}
+
+.calibration-controls input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    background: var(--color-primary);
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.calibration-controls input[type="range"]::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    background: var(--color-primary);
+    border-radius: 50%;
+    cursor: pointer;
+    border: none;
+}
+
+.calibration-controls span {
+    min-width: 50px;
+    text-align: right;
+    color: var(--color-accent);
+    font-weight: bold;
+}
+
+.calibration-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 15px;
+}
+
+.calibration-buttons button {
+    padding: 12px 25px;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    font-weight: bold;
+    transition: all 0.2s ease;
+}
+
+#btn-cal-save {
+    background: var(--color-success);
+    color: white;
+}
+
+#btn-cal-reset {
+    background: var(--color-danger);
+    color: white;
+}
+
+#btn-cal-close {
+    background: var(--color-secondary);
+    color: white;
+}
+
+.calibration-buttons button:hover {
+    transform: scale(1.05);
+    filter: brightness(1.2);
 }

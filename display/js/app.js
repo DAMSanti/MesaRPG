@@ -198,6 +198,7 @@ class MesaRPGApp {
         }
     }
     
+    
     playEffect(effectData) {
         if (!effectData) return;
         
@@ -227,12 +228,10 @@ class MesaRPGApp {
         document.addEventListener('keydown', (e) => {
             switch (e.key) {
                 case 'F11':
+                case 'f':
                     // Toggle fullscreen
-                    if (document.fullscreenElement) {
-                        document.exitFullscreen();
-                    } else {
-                        document.documentElement.requestFullscreen();
-                    }
+                    e.preventDefault();
+                    window.gameRenderer.toggleFullscreen();
                     break;
                     
                 case 'g':
@@ -242,11 +241,137 @@ class MesaRPGApp {
                     break;
                     
                 case 'Escape':
-                    // Deseleccionar
-                    window.gameRenderer.selectCharacter(null);
+                    // Cerrar modal o deseleccionar
+                    const modal = document.getElementById('calibration-modal');
+                    if (!modal.classList.contains('hidden')) {
+                        modal.classList.add('hidden');
+                    } else {
+                        window.gameRenderer.selectCharacter(null);
+                    }
                     break;
             }
         });
+    }
+    
+    setupDisplayControls() {
+        // Botón de pantalla completa
+        const btnFullscreen = document.getElementById('btn-fullscreen');
+        if (btnFullscreen) {
+            btnFullscreen.addEventListener('click', () => {
+                window.gameRenderer.toggleFullscreen();
+            });
+        }
+        
+        // Botón de calibración
+        const btnCalibrate = document.getElementById('btn-calibrate');
+        const modal = document.getElementById('calibration-modal');
+        
+        if (btnCalibrate && modal) {
+            btnCalibrate.addEventListener('click', () => {
+                this.openCalibrationModal();
+            });
+        }
+        
+        // Controles del modal de calibración
+        this.setupCalibrationControls();
+    }
+    
+    openCalibrationModal() {
+        const modal = document.getElementById('calibration-modal');
+        modal.classList.remove('hidden');
+        
+        // Cargar valores actuales
+        const cal = window.gameRenderer.calibration;
+        document.getElementById('cal-offset-x').value = cal.offsetX;
+        document.getElementById('cal-offset-y').value = cal.offsetY;
+        document.getElementById('cal-scale-x').value = cal.scaleX;
+        document.getElementById('cal-scale-y').value = cal.scaleY;
+        
+        this.updateCalibrationLabels();
+    }
+    
+    setupCalibrationControls() {
+        const controls = ['offset-x', 'offset-y', 'scale-x', 'scale-y'];
+        
+        controls.forEach(id => {
+            const input = document.getElementById(`cal-${id}`);
+            if (input) {
+                input.addEventListener('input', () => {
+                    this.updateCalibrationLabels();
+                    this.applyCalibration();
+                });
+            }
+        });
+        
+        // Botones
+        const btnSave = document.getElementById('btn-cal-save');
+        const btnReset = document.getElementById('btn-cal-reset');
+        const btnClose = document.getElementById('btn-cal-close');
+        
+        if (btnSave) {
+            btnSave.addEventListener('click', () => {
+                this.saveCalibration();
+                document.getElementById('calibration-modal').classList.add('hidden');
+            });
+        }
+        
+        if (btnReset) {
+            btnReset.addEventListener('click', () => {
+                document.getElementById('cal-offset-x').value = 0;
+                document.getElementById('cal-offset-y').value = 0;
+                document.getElementById('cal-scale-x').value = 1;
+                document.getElementById('cal-scale-y').value = 1;
+                this.updateCalibrationLabels();
+                this.applyCalibration();
+            });
+        }
+        
+        if (btnClose) {
+            btnClose.addEventListener('click', () => {
+                document.getElementById('calibration-modal').classList.add('hidden');
+            });
+        }
+    }
+    
+    updateCalibrationLabels() {
+        document.getElementById('val-offset-x').textContent = document.getElementById('cal-offset-x').value;
+        document.getElementById('val-offset-y').textContent = document.getElementById('cal-offset-y').value;
+        document.getElementById('val-scale-x').textContent = parseFloat(document.getElementById('cal-scale-x').value).toFixed(1);
+        document.getElementById('val-scale-y').textContent = parseFloat(document.getElementById('cal-scale-y').value).toFixed(1);
+    }
+    
+    applyCalibration() {
+        const offsetX = parseFloat(document.getElementById('cal-offset-x').value);
+        const offsetY = parseFloat(document.getElementById('cal-offset-y').value);
+        const scaleX = parseFloat(document.getElementById('cal-scale-x').value);
+        const scaleY = parseFloat(document.getElementById('cal-scale-y').value);
+        
+        window.gameRenderer.setCalibration(offsetX, offsetY, scaleX, scaleY);
+    }
+    
+    saveCalibration() {
+        const calibration = {
+            offsetX: parseFloat(document.getElementById('cal-offset-x').value),
+            offsetY: parseFloat(document.getElementById('cal-offset-y').value),
+            scaleX: parseFloat(document.getElementById('cal-scale-x').value),
+            scaleY: parseFloat(document.getElementById('cal-scale-y').value)
+        };
+        
+        localStorage.setItem('mesarpg_calibration', JSON.stringify(calibration));
+        console.log('✅ Calibración guardada:', calibration);
+    }
+    
+    loadCalibration() {
+        try {
+            const saved = localStorage.getItem('mesarpg_calibration');
+            if (saved) {
+                const cal = JSON.parse(saved);
+                window.gameRenderer.setCalibration(cal.offsetX, cal.offsetY, cal.scaleX, cal.scaleY);
+                console.log('📐 Calibración cargada:', cal);
+            }
+        } catch (e) {
+            console.warn('No se pudo cargar la calibración guardada:', e);
+        }
     }
 }
 
@@ -254,4 +379,6 @@ class MesaRPGApp {
 // Iniciar cuando el DOM esté listo
 document.addEventListener('DOMContentLoaded', () => {
     window.app = new MesaRPGApp();
+    window.app.setupDisplayControls();
+    window.app.loadCalibration();
 });

@@ -74,6 +74,31 @@
         <span class="text">Conectando...</span>
     </div>
     
+    <!-- Controles de display (para mesas táctiles) -->
+    <div id="display-controls">
+        <button id="btn-fullscreen" title="Pantalla Completa (F)">⛶</button>
+        <button id="btn-calibrate" title="Calibrar">📐</button>
+    </div>
+    
+    <!-- Modal de calibración -->
+    <div id="calibration-modal" class="hidden">
+        <div class="calibration-content">
+            <h2>📐 Calibración de Cámara</h2>
+            <p>Ajusta los valores para alinear la posición de la cámara con el display:</p>
+            <div class="calibration-controls">
+                <label>Offset X: <input type="range" id="cal-offset-x" min="-500" max="500" value="0"> <span id="val-offset-x">0</span></label>
+                <label>Offset Y: <input type="range" id="cal-offset-y" min="-500" max="500" value="0"> <span id="val-offset-y">0</span></label>
+                <label>Escala X: <input type="range" id="cal-scale-x" min="0.1" max="3" step="0.1" value="1"> <span id="val-scale-x">1.0</span></label>
+                <label>Escala Y: <input type="range" id="cal-scale-y" min="0.1" max="3" step="0.1" value="1"> <span id="val-scale-y">1.0</span></label>
+            </div>
+            <div class="calibration-buttons">
+                <button id="btn-cal-reset">Resetear</button>
+                <button id="btn-cal-save">Guardar</button>
+                <button id="btn-cal-close">Cerrar</button>
+            </div>
+        </div>
+    </div>
+    
     <script src="js/websocket.js"></script>
     <script src="js/effects.js"></script>
     <script src="js/renderer.js"></script>

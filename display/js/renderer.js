@@ -1,6 +1,7 @@
 /**
  * MesaRPG - Renderer de Mapa y Tokens
  * Dibuja el mapa, personajes y elementos del juego
+ * Optimizado para pantallas táctiles
  */
 
 class GameRenderer {
@@ -17,8 +18,61 @@ class GameRenderer {
         this.gridSize = 50; // Tamaño de celda en píxeles
         this.showGrid = true;
         
+        // Configuración de calibración para la cámara
+        this.calibration = {
+            offsetX: 0,
+            offsetY: 0,
+            scaleX: 1,
+            scaleY: 1
+        };
+        
         this.resize();
         window.addEventListener('resize', () => this.resize());
+        
+        // Inicializar eventos táctiles
+        this.setupTouchEvents();
+    }
+    
+    setupTouchEvents() {
+        // Hacer que los toques en la pantalla sean responsivos
+        this.tokensContainer.addEventListener('touchstart', (e) => this.handleTouch(e), { passive: false });
+        this.tokensContainer.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
+        this.tokensContainer.addEventListener('touchend', (e) => this.handleTouchEnd(e), { passive: false });
+        
+        // También clicks de mouse para desarrollo
+        this.tokensContainer.addEventListener('click', (e) => this.handleClick(e));
+    }
+    
+    handleTouch(e) {
+        if (e.touches.length === 1) {
+            const touch = e.touches[0];
+            const x = touch.clientX;
+            const y = touch.clientY;
+            
+            // Verificar si tocamos un token
+            const token = document.elementFromPoint(x, y)?.closest('.character-token');
+            if (token) {
+                const charId = token.dataset.characterId;
+                this.selectCharacter(charId);
+            }
+        }
+    }
+    
+    handleTouchMove(e) {
+        // Permitir scroll si no estamos moviendo un personaje
+        if (!this.selectedCharacterId) return;
+        e.preventDefault();
+    }
+    
+    handleTouchEnd(e) {
+        // Nada especial por ahora
+    }
+    
+    handleClick(e) {
+        // Click en espacio vacío deselecciona
+        if (e.target === this.tokensContainer || e.target === this.mapCanvas) {
+            this.selectCharacter(null);
+        }
     }
     
     resize() {
@@ -147,6 +201,7 @@ class GameRenderer {
             <div class="token-hp-bar">
                 <div class="token-hp-fill" style="width: ${(char.hp / char.max_hp) * 100}%"></div>
             </div>
+            <div class="token-class">${char.character_class || char.class || ''}</div>
         `;
         
         // Intentar cargar imagen
@@ -154,36 +209,57 @@ class GameRenderer {
         img.onload = () => {
             const inner = token.querySelector('.token-inner');
             inner.innerHTML = '';
+            img.className = 'token-image';
             inner.appendChild(img);
         };
         img.src = `assets/tokens/${char.marker_id}.png`;
         
-        // Eventos
-        token.addEventListener('click', () => this.selectCharacter(id));
+        // Eventos táctiles y click
+        token.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.selectCharacter(id);
+        });
+        token.addEventListener('touchstart', (e) => {
+            e.stopPropagation();
+            this.selectCharacter(id);
+        }, { passive: true });
         
-        // Posición inicial
-        if (char.position) {
-            token.style.left = `${char.position.x}px`;
-            token.style.top = `${char.position.y}px`;
+        // Posición inicial - aplicar calibración
+        this.setTokenPosition(token, char.position);
+        
+        this.tokensContainer.appendChild(token);
+        this.tokens[id] = token;
+        
+        // Animación de entrada
+        token.style.animation = 'tokenAppear 0.3s ease-out';
+    }
+    
+    setTokenPosition(token, position) {
+        if (position) {
+            // Aplicar calibración de la cámara
+            const x = (position.x * this.calibration.scaleX) + this.calibration.offsetX;
+            const y = (position.y * this.calibration.scaleY) + this.calibration.offsetY;
+            
+            token.style.left = `${x}px`;
+            token.style.top = `${y}px`;
+            
+            // Aplicar rotación si está definida
+            if (position.rotation !== undefined) {
+                token.style.transform = `translate(-50%, -50%) rotate(${position.rotation}deg)`;
+            }
         } else {
             // Posición por defecto
             token.style.left = '100px';
             token.style.top = '100px';
         }
-        
-        this.tokensContainer.appendChild(token);
-        this.tokens[id] = token;
     }
     
     updateToken(id, char) {
         const token = this.tokens[id];
         if (!token) return;
         
-        // Actualizar posición con animación
-        if (char.position) {
-            token.style.left = `${char.position.x}px`;
-            token.style.top = `${char.position.y}px`;
-        }
+        // Actualizar posición en tiempo real (para tracking de marcadores)
+        this.setTokenPosition(token, char.position);
         
         // Actualizar HP
         const hpBar = token.querySelector('.token-hp-fill');
@@ -345,8 +421,90 @@ class GameRenderer {
             indicator.remove();
         }
     }
+    
+    // === Calibración de cámara ===
+    
+    setCalibration(offsetX, offsetY, scaleX, scaleY) {
+        this.calibration = {
+            offsetX: offsetX || 0,
+            offsetY: offsetY || 0,
+            scaleX: scaleX || 1,
+            scaleY: scaleY || 1
+        };
+        console.log('📐 Calibración actualizada:', this.calibration);
+        
+        // Re-aplicar posiciones a todos los tokens
+        for (const [id, char] of Object.entries(this.characters)) {
+            if (this.tokens[id]) {
+                this.setTokenPosition(this.tokens[id], char.position);
+            }
+        }
+    }
+    
+    // Calibración automática basada en 4 puntos de referencia
+    calibrateFromPoints(cameraPoints, screenPoints) {
+        // cameraPoints: [{x, y}, ...] - 4 esquinas detectadas por cámara
+        // screenPoints: [{x, y}, ...] - 4 esquinas correspondientes en pantalla
+        
+        if (cameraPoints.length >= 2 && screenPoints.length >= 2) {
+            // Calcular escala simple (usando primeros 2 puntos)
+            const camDx = cameraPoints[1].x - cameraPoints[0].x;
+            const camDy = cameraPoints[1].y - cameraPoints[0].y;
+            const scrDx = screenPoints[1].x - screenPoints[0].x;
+            const scrDy = screenPoints[1].y - screenPoints[0].y;
+            
+            const scaleX = scrDx / camDx;
+            const scaleY = scrDy / camDy;
+            
+            // Calcular offset
+            const offsetX = screenPoints[0].x - (cameraPoints[0].x * scaleX);
+            const offsetY = screenPoints[0].y - (cameraPoints[0].y * scaleY);
+            
+            this.setCalibration(offsetX, offsetY, scaleX, scaleY);
+        }
+    }
+    
+    // Método para pantalla completa (importante para mesas táctiles)
+    enterFullscreen() {
+        const elem = document.documentElement;
+        if (elem.requestFullscreen) {
+            elem.requestFullscreen();
+        } else if (elem.webkitRequestFullscreen) {
+            elem.webkitRequestFullscreen();
+        } else if (elem.msRequestFullscreen) {
+            elem.msRequestFullscreen();
+        }
+    }
+    
+    exitFullscreen() {
+        if (document.exitFullscreen) {
+            document.exitFullscreen();
+        }
+    }
+    
+    toggleFullscreen() {
+        if (document.fullscreenElement) {
+            this.exitFullscreen();
+        } else {
+            this.enterFullscreen();
+        }
+    }
 }
 
 
 // Instancia global
 window.gameRenderer = new GameRenderer();
+
+// Atajos globales
+window.addEventListener('keydown', (e) => {
+    // F11 o F para fullscreen
+    if (e.key === 'F11' || (e.key === 'f' && !e.ctrlKey)) {
+        e.preventDefault();
+        window.gameRenderer.toggleFullscreen();
+    }
+    // G para toggle grid
+    if (e.key === 'g') {
+        window.gameRenderer.showGrid = !window.gameRenderer.showGrid;
+        window.gameRenderer.redraw();
+    }
+});
