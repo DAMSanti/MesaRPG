@@ -1,0 +1,26 @@
+# MesaRPG - Docker Compose Simple (sin SSL)
+# Para pruebas rápidas o cuando no necesitas HTTPS
+# Uso: docker compose -f docker-compose.simple.yml up -d
+
+services:
+  mesarpg:
+    build: ..
+    container_name: mesarpg-server
+    ports:
+      - "80:8000"
+    volumes:
+      - ../config:/app/config:ro
+      - mesarpg-data:/app/data
+      - ../assets:/app/assets
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DEBUG=false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/state"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  mesarpg-data:

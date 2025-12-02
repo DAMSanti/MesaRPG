@@ -1,0 +1,82 @@
+{
+    "default": {
+        "name": "Mapa por Defecto",
+        "description": "Un campo de batalla genérico",
+        "image": "default.png",
+        "width": 1920,
+        "height": 1080,
+        "grid_size": 50,
+        "spawn_points": [
+            {"x": 200, "y": 300, "team": "players"},
+            {"x": 200, "y": 500, "team": "players"},
+            {"x": 200, "y": 700, "team": "players"},
+            {"x": 1720, "y": 300, "team": "enemies"},
+            {"x": 1720, "y": 500, "team": "enemies"},
+            {"x": 1720, "y": 700, "team": "enemies"}
+        ],
+        "obstacles": [],
+        "zones": []
+    },
+    "dungeon": {
+        "name": "Mazmorra",
+        "description": "Una oscura mazmorra subterránea",
+        "image": "dungeon.png",
+        "width": 1920,
+        "height": 1080,
+        "grid_size": 50,
+        "spawn_points": [
+            {"x": 100, "y": 540, "team": "players"}
+        ],
+        "obstacles": [
+            {"x": 400, "y": 200, "width": 100, "height": 300, "type": "wall"},
+            {"x": 400, "y": 600, "width": 100, "height": 300, "type": "wall"},
+            {"x": 800, "y": 300, "width": 50, "height": 200, "type": "pillar"},
+            {"x": 800, "y": 600, "width": 50, "height": 200, "type": "pillar"}
+        ],
+        "zones": [
+            {"x": 1600, "y": 400, "width": 300, "height": 300, "type": "danger", "effect": "fire"}
+        ]
+    },
+    "forest": {
+        "name": "Claro del Bosque",
+        "description": "Un claro en medio del bosque encantado",
+        "image": "forest.png",
+        "width": 1920,
+        "height": 1080,
+        "grid_size": 50,
+        "spawn_points": [
+            {"x": 960, "y": 100, "team": "players"},
+            {"x": 960, "y": 980, "team": "enemies"}
+        ],
+        "obstacles": [
+            {"x": 200, "y": 400, "width": 80, "height": 80, "type": "tree"},
+            {"x": 400, "y": 200, "width": 80, "height": 80, "type": "tree"},
+            {"x": 1500, "y": 600, "width": 80, "height": 80, "type": "tree"},
+            {"x": 1700, "y": 300, "width": 80, "height": 80, "type": "tree"}
+        ],
+        "zones": [
+            {"x": 850, "y": 400, "width": 220, "height": 220, "type": "heal", "effect": "nature"}
+        ]
+    },
+    "castle": {
+        "name": "Sala del Trono",
+        "description": "La majestuosa sala del trono del castillo",
+        "image": "castle.png",
+        "width": 1920,
+        "height": 1080,
+        "grid_size": 50,
+        "spawn_points": [
+            {"x": 960, "y": 900, "team": "players"},
+            {"x": 960, "y": 200, "team": "boss"}
+        ],
+        "obstacles": [
+            {"x": 100, "y": 100, "width": 150, "height": 880, "type": "wall"},
+            {"x": 1670, "y": 100, "width": 150, "height": 880, "type": "wall"},
+            {"x": 400, "y": 400, "width": 50, "height": 50, "type": "pillar"},
+            {"x": 1470, "y": 400, "width": 50, "height": 50, "type": "pillar"}
+        ],
+        "zones": [
+            {"x": 860, "y": 50, "width": 200, "height": 150, "type": "boss_arena"}
+        ]
+    }
+}

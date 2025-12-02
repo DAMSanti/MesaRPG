@@ -1,0 +1,52 @@
+# MesaRPG - Docker Compose
+# Configuración para desarrollo y producción
+
+services:
+  # Servidor principal
+  mesarpg:
+    build: .
+    container_name: mesarpg-server
+    ports:
+      - "8000:8000"
+    volumes:
+      # Montar configuración para edición en caliente
+      - ./config:/app/config:ro
+      # Datos persistentes
+      - ./data:/app/data
+      # Assets (mapas, marcadores)
+      - ./assets:/app/assets
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DEBUG=false
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/state"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - mesarpg-network
+
+  # Servicio opcional: Nginx como proxy reverso
+  # Descomenta si quieres usar HTTPS o servir assets estáticos
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: mesarpg-nginx
+  #   ports:
+  #     - "80:80"
+  #     - "443:443"
+  #   volumes:
+  #     - ./docker/nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./display:/usr/share/nginx/html/display:ro
+  #     - ./mobile:/usr/share/nginx/html/mobile:ro
+  #   depends_on:
+  #     - mesarpg
+  #   networks:
+  #     - mesarpg-network
+
+networks:
+  mesarpg-network:
+    driver: bridge
+
+volumes:
+  mesarpg-data:

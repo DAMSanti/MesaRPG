@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
+    <title>MesaRPG - Control</title>
+    
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" href="assets/icon-192.png">
+    <link rel="apple-touch-icon" href="assets/icon-192.png">
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="css/mobile.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Pantalla de Login -->
+        <section id="login-screen" class="screen active">
+            <div class="login-container">
+                <h1>🎲 MesaRPG</h1>
+                <p>Control de Jugador</p>
+                
+                <form id="login-form">
+                    <input type="text" id="player-name" placeholder="Tu nombre" required maxlength="20">
+                    <button type="submit" class="btn btn-primary">Entrar</button>
+                </form>
+                
+                <div id="connection-error" class="error hidden">
+                    No se pudo conectar al servidor
+                </div>
+            </div>
+        </section>
+        
+        <!-- Pantalla de Selección de Personaje -->
+        <section id="select-screen" class="screen">
+            <header>
+                <h2>Selecciona tu Personaje</h2>
+                <span id="player-display-name"></span>
+            </header>
+            
+            <div id="character-list" class="character-grid">
+                <p class="empty-message">Esperando personajes...</p>
+            </div>
+            
+            <div id="waiting-message" class="hidden">
+                <p>🎯 Coloca tu figurita en la mesa</p>
+            </div>
+        </section>
+        
+        <!-- Pantalla Principal de Control -->
+        <section id="control-screen" class="screen">
+            <header>
+                <div class="char-mini-info">
+                    <div class="char-avatar" id="control-avatar">?</div>
+                    <div>
+                        <h2 id="control-char-name">-</h2>
+                        <p id="control-char-class">-</p>
+                    </div>
+                </div>
+                <button id="btn-leave" class="btn-icon">✕</button>
+            </header>
+            
+            <!-- Stats -->
+            <div class="stats-panel">
+                <div class="stat hp">
+                    <span class="label">❤️ HP</span>
+                    <div class="bar-container">
+                        <div id="control-hp-bar" class="bar-fill"></div>
+                    </div>
+                    <span id="control-hp-text" class="value">-/-</span>
+                </div>
+                <div class="stat mana">
+                    <span class="label">💧 MP</span>
+                    <div class="bar-container">
+                        <div id="control-mana-bar" class="bar-fill"></div>
+                    </div>
+                    <span id="control-mana-text" class="value">-/-</span>
+                </div>
+            </div>
+            
+            <!-- Indicador de turno -->
+            <div id="turn-status" class="turn-status hidden">
+                <span>⚔️ ¡Tu turno!</span>
+            </div>
+            
+            <!-- Habilidades -->
+            <div class="abilities-section">
+                <h3>Habilidades</h3>
+                <div id="abilities-list" class="abilities-grid">
+                    <p class="empty-message">Sin habilidades</p>
+                </div>
+            </div>
+            
+            <!-- Acciones rápidas -->
+            <div class="quick-actions">
+                <button id="btn-attack" class="btn btn-action">
+                    <span class="icon">⚔️</span>
+                    <span>Atacar</span>
+                </button>
+                <button id="btn-defend" class="btn btn-action">
+                    <span class="icon">🛡️</span>
+                    <span>Defender</span>
+                </button>
+                <button id="btn-end-turn" class="btn btn-action">
+                    <span class="icon">⏭️</span>
+                    <span>Fin Turno</span>
+                </button>
+            </div>
+            
+            <!-- Log de acciones -->
+            <div class="action-log-mini">
+                <div id="mobile-log"></div>
+            </div>
+        </section>
+        
+        <!-- Modal de selección de objetivo -->
+        <div id="target-modal" class="modal hidden">
+            <div class="modal-content">
+                <h3>Selecciona Objetivo</h3>
+                <div id="target-list" class="target-grid"></div>
+                <button id="btn-cancel-target" class="btn btn-secondary">Cancelar</button>
+            </div>
+        </div>
+        
+        <!-- Toast notifications -->
+        <div id="toast-container"></div>
+    </div>
+    
+    <script src="js/app.js"></script>
+    <script src="js/controls.js"></script>
+    
+    <!-- Service Worker para PWA -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+                .then(reg => console.log('SW registrado'))
+                .catch(err => console.log('Error SW:', err));
+        }
+    </script>
+</body>
+</html>

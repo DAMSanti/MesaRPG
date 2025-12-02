@@ -1,0 +1,569 @@
+/* MesaRPG - Estilos de la Pantalla de Visualización */
+
+:root {
+    --color-bg: #1a1a2e;
+    --color-bg-dark: #0f0f1a;
+    --color-primary: #e94560;
+    --color-secondary: #0f3460;
+    --color-accent: #ffd700;
+    --color-text: #eee;
+    --color-text-dim: #888;
+    --color-hp: #4caf50;
+    --color-hp-low: #ff5722;
+    --color-mana: #2196f3;
+    --color-success: #4caf50;
+    --color-danger: #f44336;
+    
+    --font-title: 'MedievalSharp', cursive;
+    --font-body: 'Roboto', sans-serif;
+    
+    --shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+    --border-radius: 10px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--color-bg-dark);
+    font-family: var(--font-body);
+    color: var(--color-text);
+}
+
+/* === Capas principales === */
+
+#map-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+}
+
+#map-canvas {
+    width: 100%;
+    height: 100%;
+}
+
+#tokens-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 10;
+    pointer-events: none;
+}
+
+#effects-canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 20;
+    pointer-events: none;
+}
+
+#ui-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 100;
+    pointer-events: none;
+}
+
+#ui-overlay > * {
+    pointer-events: auto;
+}
+
+/* === Tokens de personajes === */
+
+.character-token {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    transition: transform 0.3s ease, opacity 0.3s;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.token-inner {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+    border: 4px solid var(--color-accent);
+    background: var(--color-secondary);
+    box-shadow: var(--shadow), 0 0 20px rgba(233, 69, 96, 0.3);
+    overflow: hidden;
+    transition: all 0.3s;
+}
+
+.token-inner:hover {
+    transform: scale(1.1);
+    box-shadow: var(--shadow), 0 0 30px rgba(233, 69, 96, 0.5);
+}
+
+.token-inner img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.token-inner .token-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+    font-family: var(--font-title);
+    color: var(--color-accent);
+}
+
+.character-token.active .token-inner {
+    border-color: var(--color-primary);
+    animation: pulse-active 1.5s infinite;
+}
+
+@keyframes pulse-active {
+    0%, 100% { box-shadow: var(--shadow), 0 0 20px rgba(233, 69, 96, 0.5); }
+    50% { box-shadow: var(--shadow), 0 0 40px rgba(233, 69, 96, 0.8); }
+}
+
+.token-hp-bar {
+    position: absolute;
+    bottom: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60px;
+    height: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.token-hp-fill {
+    height: 100%;
+    background: var(--color-hp);
+    transition: width 0.5s ease, background 0.3s;
+}
+
+.token-hp-fill.low {
+    background: var(--color-hp-low);
+}
+
+.token-name {
+    position: absolute;
+    top: -25px;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    font-size: 14px;
+    font-weight: bold;
+    text-shadow: 0 0 5px black, 0 0 10px black;
+    color: white;
+}
+
+/* Estado de personaje */
+.character-token.dead {
+    opacity: 0.5;
+    filter: grayscale(100%);
+}
+
+.character-token.poisoned .token-inner {
+    border-color: #9c27b0;
+}
+
+.character-token.burning .token-inner {
+    animation: burning 0.5s infinite alternate;
+}
+
+@keyframes burning {
+    from { box-shadow: var(--shadow), 0 0 20px #ff5722; }
+    to { box-shadow: var(--shadow), 0 0 40px #ff9800; }
+}
+
+/* === Indicador de turno === */
+
+#turn-indicator {
+    position: absolute;
+    top: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, var(--color-secondary), var(--color-bg));
+    padding: 15px 40px;
+    border-radius: 30px;
+    border: 2px solid var(--color-accent);
+    box-shadow: var(--shadow);
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    font-family: var(--font-title);
+}
+
+#turn-indicator #turn-number {
+    font-size: 20px;
+    color: var(--color-accent);
+}
+
+#turn-indicator #active-character {
+    font-size: 24px;
+    color: white;
+}
+
+/* === Panel de combate === */
+
+#combat-panel {
+    position: absolute;
+    top: 100px;
+    left: 20px;
+    width: 250px;
+    background: rgba(15, 52, 96, 0.9);
+    border-radius: var(--border-radius);
+    border: 2px solid var(--color-secondary);
+    box-shadow: var(--shadow);
+    padding: 15px;
+}
+
+#combat-panel h3 {
+    font-family: var(--font-title);
+    color: var(--color-accent);
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+#initiative-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.initiative-entry {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 5px;
+    transition: all 0.3s;
+}
+
+.initiative-entry.active {
+    background: var(--color-primary);
+    transform: translateX(10px);
+}
+
+.initiative-entry .init-portrait {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--color-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+}
+
+.initiative-entry .init-name {
+    flex: 1;
+    font-size: 14px;
+}
+
+.initiative-entry .init-hp {
+    font-size: 12px;
+    color: var(--color-hp);
+}
+
+/* === Log de acciones === */
+
+#action-log {
+    position: absolute;
+    bottom: 20px;
+    left: 20px;
+    width: 400px;
+    max-height: 200px;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: var(--border-radius);
+    padding: 10px;
+    overflow: hidden;
+}
+
+#log-entries {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.log-entry {
+    font-size: 14px;
+    padding: 5px 10px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 5px;
+    animation: fadeIn 0.3s ease;
+    border-left: 3px solid var(--color-accent);
+}
+
+.log-entry.damage {
+    border-left-color: var(--color-danger);
+}
+
+.log-entry.heal {
+    border-left-color: var(--color-success);
+}
+
+.log-entry.ability {
+    border-left-color: var(--color-mana);
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateX(-20px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+/* === Info de personaje === */
+
+#character-info {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 350px;
+    background: linear-gradient(135deg, rgba(15, 52, 96, 0.95), rgba(26, 26, 46, 0.95));
+    border-radius: var(--border-radius);
+    border: 2px solid var(--color-accent);
+    box-shadow: var(--shadow);
+    padding: 20px;
+}
+
+.char-header {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+#char-portrait {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: 3px solid var(--color-accent);
+    background: var(--color-secondary);
+    object-fit: cover;
+}
+
+#char-name {
+    font-family: var(--font-title);
+    font-size: 24px;
+    color: white;
+}
+
+#char-class {
+    color: var(--color-text-dim);
+    font-size: 14px;
+}
+
+.char-stats {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.stat-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.stat-bar .label {
+    width: 30px;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+.stat-bar .bar-bg {
+    flex: 1;
+    height: 16px;
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.stat-bar .bar-fill {
+    height: 100%;
+    transition: width 0.5s ease;
+}
+
+.stat-bar.hp .bar-fill {
+    background: linear-gradient(90deg, var(--color-hp-low), var(--color-hp));
+}
+
+.stat-bar.mana .bar-fill {
+    background: linear-gradient(90deg, #1565c0, var(--color-mana));
+}
+
+#char-abilities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.ability-badge {
+    padding: 5px 12px;
+    background: var(--color-secondary);
+    border-radius: 15px;
+    font-size: 12px;
+    border: 1px solid var(--color-accent);
+}
+
+.ability-badge.on-cooldown {
+    opacity: 0.5;
+    border-color: var(--color-text-dim);
+}
+
+/* === Estado de conexión === */
+
+#connection-status {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 15px;
+    background: rgba(0, 0, 0, 0.7);
+    border-radius: 20px;
+    font-size: 12px;
+    z-index: 1000;
+}
+
+#connection-status .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--color-danger);
+    transition: background 0.3s;
+}
+
+#connection-status.connected .dot {
+    background: var(--color-success);
+}
+
+/* === Utilidades === */
+
+.hidden {
+    display: none !important;
+}
+
+/* === Efectos de área === */
+
+.aoe-indicator {
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+    animation: aoe-pulse 1s infinite;
+}
+
+.aoe-indicator.fire {
+    background: radial-gradient(circle, rgba(255, 87, 34, 0.6), rgba(255, 152, 0, 0.2));
+    border: 2px solid #ff5722;
+}
+
+.aoe-indicator.ice {
+    background: radial-gradient(circle, rgba(33, 150, 243, 0.6), rgba(100, 181, 246, 0.2));
+    border: 2px solid #2196f3;
+}
+
+.aoe-indicator.heal {
+    background: radial-gradient(circle, rgba(76, 175, 80, 0.6), rgba(129, 199, 132, 0.2));
+    border: 2px solid #4caf50;
+}
+
+@keyframes aoe-pulse {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); opacity: 0.8; }
+    50% { transform: translate(-50%, -50%) scale(1.05); opacity: 1; }
+}
+
+/* === Líneas de ataque/rango === */
+
+.attack-line {
+    position: absolute;
+    height: 3px;
+    background: var(--color-primary);
+    transform-origin: left center;
+    pointer-events: none;
+    animation: attack-flash 0.3s ease;
+}
+
+@keyframes attack-flash {
+    0% { opacity: 0; }
+    50% { opacity: 1; }
+    100% { opacity: 0; }
+}
+
+/* === Números de daño flotantes === */
+
+.floating-number {
+    position: absolute;
+    font-family: var(--font-title);
+    font-size: 32px;
+    font-weight: bold;
+    pointer-events: none;
+    animation: float-up 1.5s ease forwards;
+    text-shadow: 0 0 10px black;
+}
+
+.floating-number.damage {
+    color: var(--color-danger);
+}
+
+.floating-number.heal {
+    color: var(--color-success);
+}
+
+.floating-number.critical {
+    font-size: 48px;
+    color: #ffd700;
+}
+
+@keyframes float-up {
+    0% {
+        opacity: 1;
+        transform: translate(-50%, 0) scale(0.5);
+    }
+    20% {
+        transform: translate(-50%, -20px) scale(1.2);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -80px) scale(1);
+    }
+}
+
+/* === Responsive para diferentes tamaños de pantalla === */
+
+@media (max-width: 1024px) {
+    .token-inner {
+        width: 60px;
+        height: 60px;
+    }
+    
+    #character-info {
+        width: 280px;
+    }
+    
+    #action-log {
+        width: 300px;
+    }
+}

@@ -1,0 +1,43 @@
+{
+    "server": {
+        "host": "0.0.0.0",
+        "port": 8000,
+        "debug": true,
+        "reload": true
+    },
+    "camera": {
+        "device_id": 0,
+        "resolution": {
+            "width": 1280,
+            "height": 720
+        },
+        "fps": 30,
+        "detection_interval_ms": 100,
+        "marker_dictionary": "DICT_4X4_50",
+        "min_marker_size_cm": 2.0
+    },
+    "display": {
+        "grid_size": 50,
+        "show_grid": true,
+        "default_map": "default",
+        "token_size": 80,
+        "animation_speed": 1.0
+    },
+    "game": {
+        "auto_remove_markers": true,
+        "marker_timeout_seconds": 5,
+        "combat_auto_advance": false,
+        "max_players": 8,
+        "default_initiative": "order_of_entry"
+    },
+    "audio": {
+        "enabled": true,
+        "volume": 0.5,
+        "music_volume": 0.3
+    },
+    "network": {
+        "websocket_ping_interval": 30,
+        "reconnect_attempts": 10,
+        "reconnect_delay_ms": 2000
+    }
+}

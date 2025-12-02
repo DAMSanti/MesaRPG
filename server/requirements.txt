@@ -1,0 +1,26 @@
+# MesaRPG - Dependencias del Servidor
+# Instalar con: pip install -r requirements.txt
+
+# Framework web
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# WebSockets
+websockets==12.0
+
+# Visión por computadora
+opencv-python==4.8.1.78
+opencv-contrib-python==4.8.1.78
+numpy==1.26.2
+
+# Base de datos
+aiosqlite==0.19.0
+
+# Utilidades
+pydantic==2.5.2
+python-dotenv==1.0.0
+Pillow==10.1.0
+
+# Para desarrollo
+watchfiles==0.21.0

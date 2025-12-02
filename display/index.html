@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MesaRPG - Pantalla de Juego</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Capa de fondo / Mapa -->
+    <div id="map-container">
+        <canvas id="map-canvas"></canvas>
+    </div>
+    
+    <!-- Capa de personajes y tokens -->
+    <div id="tokens-container"></div>
+    
+    <!-- Capa de efectos visuales -->
+    <canvas id="effects-canvas"></canvas>
+    
+    <!-- UI Overlay -->
+    <div id="ui-overlay">
+        <!-- Indicador de turno -->
+        <div id="turn-indicator" class="hidden">
+            <span id="turn-number">Turno 1</span>
+            <span id="active-character">-</span>
+        </div>
+        
+        <!-- Panel de combate -->
+        <div id="combat-panel" class="hidden">
+            <h3>⚔️ Combate</h3>
+            <div id="initiative-list"></div>
+        </div>
+        
+        <!-- Log de acciones -->
+        <div id="action-log">
+            <div id="log-entries"></div>
+        </div>
+        
+        <!-- Info de personaje seleccionado -->
+        <div id="character-info" class="hidden">
+            <div class="char-header">
+                <img id="char-portrait" src="" alt="">
+                <div>
+                    <h2 id="char-name">-</h2>
+                    <p id="char-class">-</p>
+                </div>
+            </div>
+            <div class="char-stats">
+                <div class="stat-bar hp">
+                    <span class="label">HP</span>
+                    <div class="bar-bg">
+                        <div id="char-hp-bar" class="bar-fill"></div>
+                    </div>
+                    <span id="char-hp-text">-</span>
+                </div>
+                <div class="stat-bar mana">
+                    <span class="label">MP</span>
+                    <div class="bar-bg">
+                        <div id="char-mana-bar" class="bar-fill"></div>
+                    </div>
+                    <span id="char-mana-text">-</span>
+                </div>
+            </div>
+            <div id="char-abilities"></div>
+        </div>
+    </div>
+    
+    <!-- Indicador de conexión -->
+    <div id="connection-status">
+        <span class="dot"></span>
+        <span class="text">Conectando...</span>
+    </div>
+    
+    <script src="js/websocket.js"></script>
+    <script src="js/effects.js"></script>
+    <script src="js/renderer.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>

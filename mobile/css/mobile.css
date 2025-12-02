@@ -1,0 +1,668 @@
+/* MesaRPG - Estilos de la App Móvil */
+
+:root {
+    --color-bg: #1a1a2e;
+    --color-bg-light: #16213e;
+    --color-bg-card: #0f3460;
+    --color-primary: #e94560;
+    --color-primary-dark: #c73e54;
+    --color-secondary: #0f3460;
+    --color-accent: #ffd700;
+    --color-text: #eee;
+    --color-text-dim: #888;
+    --color-hp: #4caf50;
+    --color-hp-low: #ff5722;
+    --color-mana: #2196f3;
+    --color-success: #4caf50;
+    --color-danger: #f44336;
+    --color-warning: #ff9800;
+    
+    --font-title: 'MedievalSharp', cursive;
+    --font-body: 'Roboto', sans-serif;
+    
+    --shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+    --border-radius: 12px;
+    --border-radius-sm: 8px;
+    
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--color-bg);
+    font-family: var(--font-body);
+    color: var(--color-text);
+}
+
+#app {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+}
+
+/* === Pantallas === */
+
+.screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: none;
+    flex-direction: column;
+    padding: var(--safe-area-top) 16px var(--safe-area-bottom) 16px;
+    overflow-y: auto;
+}
+
+.screen.active {
+    display: flex;
+}
+
+/* === Login === */
+
+#login-screen {
+    justify-content: center;
+    align-items: center;
+    background: linear-gradient(135deg, var(--color-bg), var(--color-bg-light));
+}
+
+.login-container {
+    text-align: center;
+    padding: 40px;
+    background: var(--color-bg-card);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow);
+    max-width: 350px;
+    width: 100%;
+}
+
+.login-container h1 {
+    font-family: var(--font-title);
+    font-size: 36px;
+    color: var(--color-accent);
+    margin-bottom: 10px;
+}
+
+.login-container p {
+    color: var(--color-text-dim);
+    margin-bottom: 30px;
+}
+
+#login-form {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+#login-form input {
+    padding: 15px;
+    border: 2px solid var(--color-secondary);
+    border-radius: var(--border-radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 16px;
+    text-align: center;
+}
+
+#login-form input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+}
+
+.error {
+    margin-top: 15px;
+    padding: 10px;
+    background: rgba(244, 67, 54, 0.2);
+    border-radius: var(--border-radius-sm);
+    color: var(--color-danger);
+    font-size: 14px;
+}
+
+/* === Header común === */
+
+header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 0;
+    margin-bottom: 15px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+header h2 {
+    font-family: var(--font-title);
+    font-size: 20px;
+    color: var(--color-accent);
+}
+
+.btn-icon {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 50%;
+    background: var(--color-bg-card);
+    color: var(--color-text);
+    font-size: 18px;
+    cursor: pointer;
+}
+
+/* === Selección de personaje === */
+
+.character-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 15px;
+    padding: 10px 0;
+}
+
+.character-card {
+    background: var(--color-bg-card);
+    border-radius: var(--border-radius);
+    padding: 15px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.3s;
+    border: 2px solid transparent;
+}
+
+.character-card:hover,
+.character-card:active {
+    border-color: var(--color-primary);
+    transform: scale(1.02);
+}
+
+.character-card.selected {
+    border-color: var(--color-accent);
+    background: rgba(255, 215, 0, 0.1);
+}
+
+.character-card.unavailable {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.character-card .avatar {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: var(--color-secondary);
+    margin: 0 auto 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+    font-family: var(--font-title);
+    color: var(--color-accent);
+}
+
+.character-card .name {
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.character-card .class {
+    font-size: 12px;
+    color: var(--color-text-dim);
+}
+
+.empty-message {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--color-text-dim);
+    padding: 40px;
+}
+
+#waiting-message {
+    text-align: center;
+    padding: 20px;
+    background: var(--color-bg-card);
+    border-radius: var(--border-radius);
+    margin-top: 20px;
+}
+
+#waiting-message p {
+    font-size: 18px;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* === Pantalla de Control === */
+
+.char-mini-info {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.char-avatar {
+    width: 50px;
+    height: 50px;
+    border-radius: 50%;
+    background: var(--color-secondary);
+    border: 3px solid var(--color-accent);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    font-family: var(--font-title);
+}
+
+.char-mini-info h2 {
+    font-size: 18px;
+    color: var(--color-text);
+    font-family: var(--font-body);
+}
+
+.char-mini-info p {
+    font-size: 12px;
+    color: var(--color-text-dim);
+}
+
+/* Stats */
+.stats-panel {
+    background: var(--color-bg-card);
+    border-radius: var(--border-radius);
+    padding: 15px;
+    margin-bottom: 15px;
+}
+
+.stat {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.stat:last-child {
+    margin-bottom: 0;
+}
+
+.stat .label {
+    width: 60px;
+    font-size: 14px;
+}
+
+.stat .bar-container {
+    flex: 1;
+    height: 20px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 10px;
+    overflow: hidden;
+}
+
+.stat .bar-fill {
+    height: 100%;
+    transition: width 0.5s ease;
+}
+
+.stat.hp .bar-fill {
+    background: linear-gradient(90deg, var(--color-hp-low), var(--color-hp));
+}
+
+.stat.mana .bar-fill {
+    background: linear-gradient(90deg, #1565c0, var(--color-mana));
+}
+
+.stat .value {
+    width: 60px;
+    text-align: right;
+    font-size: 14px;
+    font-weight: bold;
+}
+
+/* Turno */
+.turn-status {
+    background: var(--color-primary);
+    color: white;
+    padding: 15px;
+    border-radius: var(--border-radius);
+    text-align: center;
+    font-weight: bold;
+    font-size: 18px;
+    margin-bottom: 15px;
+    animation: glow 1.5s infinite alternate;
+}
+
+@keyframes glow {
+    from { box-shadow: 0 0 10px var(--color-primary); }
+    to { box-shadow: 0 0 25px var(--color-primary); }
+}
+
+/* Habilidades */
+.abilities-section {
+    flex: 1;
+    margin-bottom: 15px;
+}
+
+.abilities-section h3 {
+    font-size: 14px;
+    color: var(--color-text-dim);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.abilities-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+}
+
+.ability-btn {
+    background: var(--color-bg-card);
+    border: 2px solid var(--color-secondary);
+    border-radius: var(--border-radius);
+    padding: 15px;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: left;
+}
+
+.ability-btn:active {
+    transform: scale(0.98);
+}
+
+.ability-btn:disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.ability-btn.on-cooldown {
+    border-color: var(--color-text-dim);
+    position: relative;
+}
+
+.ability-btn.on-cooldown::after {
+    content: attr(data-cooldown);
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background: var(--color-danger);
+    color: white;
+    font-size: 12px;
+    padding: 2px 6px;
+    border-radius: 10px;
+}
+
+.ability-btn .ability-name {
+    font-weight: bold;
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.ability-btn .ability-info {
+    font-size: 12px;
+    color: var(--color-text-dim);
+    display: flex;
+    gap: 10px;
+}
+
+.ability-btn .ability-info .damage {
+    color: var(--color-danger);
+}
+
+.ability-btn .ability-info .heal {
+    color: var(--color-success);
+}
+
+.ability-btn .ability-info .mana {
+    color: var(--color-mana);
+}
+
+/* Acciones rápidas */
+.quick-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.btn-action {
+    background: var(--color-secondary);
+    border: none;
+    border-radius: var(--border-radius);
+    padding: 15px 10px;
+    color: var(--color-text);
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.2s;
+}
+
+.btn-action:active {
+    transform: scale(0.95);
+    background: var(--color-primary);
+}
+
+.btn-action .icon {
+    font-size: 24px;
+}
+
+.btn-action span:last-child {
+    font-size: 12px;
+}
+
+/* Log mini */
+.action-log-mini {
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: var(--border-radius);
+    padding: 10px;
+    max-height: 100px;
+    overflow-y: auto;
+}
+
+#mobile-log {
+    font-size: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.log-entry-mini {
+    padding: 5px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    animation: slideIn 0.3s ease;
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+/* === Modal === */
+
+.modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+    padding: 20px;
+}
+
+.modal.hidden {
+    display: none;
+}
+
+.modal-content {
+    background: var(--color-bg-light);
+    border-radius: var(--border-radius);
+    padding: 20px;
+    max-width: 400px;
+    width: 100%;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.modal-content h3 {
+    font-family: var(--font-title);
+    color: var(--color-accent);
+    margin-bottom: 20px;
+    text-align: center;
+}
+
+.target-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.target-item {
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 15px;
+    background: var(--color-bg-card);
+    border-radius: var(--border-radius-sm);
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: all 0.2s;
+}
+
+.target-item:active {
+    border-color: var(--color-primary);
+}
+
+.target-item .target-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: var(--color-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-title);
+}
+
+.target-item .target-info {
+    flex: 1;
+}
+
+.target-item .target-name {
+    font-weight: bold;
+}
+
+.target-item .target-hp {
+    font-size: 12px;
+    color: var(--color-hp);
+}
+
+/* === Botones generales === */
+
+.btn {
+    padding: 15px 30px;
+    border: none;
+    border-radius: var(--border-radius-sm);
+    font-size: 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.btn:active {
+    transform: scale(0.98);
+}
+
+.btn-primary {
+    background: var(--color-primary);
+    color: white;
+}
+
+.btn-primary:active {
+    background: var(--color-primary-dark);
+}
+
+.btn-secondary {
+    background: var(--color-secondary);
+    color: white;
+}
+
+/* === Toast === */
+
+#toast-container {
+    position: fixed;
+    bottom: calc(20px + var(--safe-area-bottom));
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    pointer-events: none;
+}
+
+.toast {
+    background: var(--color-bg-card);
+    padding: 12px 24px;
+    border-radius: 30px;
+    font-size: 14px;
+    box-shadow: var(--shadow);
+    animation: toastIn 0.3s ease, toastOut 0.3s ease 2.7s forwards;
+    border-left: 4px solid var(--color-accent);
+}
+
+.toast.success {
+    border-left-color: var(--color-success);
+}
+
+.toast.error {
+    border-left-color: var(--color-danger);
+}
+
+@keyframes toastIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes toastOut {
+    from { opacity: 1; }
+    to { opacity: 0; }
+}
+
+/* === Utilidades === */
+
+.hidden {
+    display: none !important;
+}
+
+/* === Scrollbar === */
+
+::-webkit-scrollbar {
+    width: 4px;
+}
+
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--color-secondary);
+    border-radius: 2px;
+}

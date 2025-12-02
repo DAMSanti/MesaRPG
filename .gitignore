@@ -1,0 +1,71 @@
+# MesaRPG - Archivos a ignorar por Git
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Entornos virtuales
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporal
+tmp/
+temp/
+*.tmp
+
+# Cache
+.cache/
+.pytest_cache/
+.mypy_cache/
+
+# Datos locales (mantener en local, no subir)
+data/*.json
+!data/.gitkeep
+
+# Marcadores generados
+assets/markers/*.png
+!assets/markers/.gitkeep
+
+# Secretos y configuración local
+*.local.json
+secrets.json
+.env.local

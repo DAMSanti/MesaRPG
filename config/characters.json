@@ -1,0 +1,112 @@
+{
+    "1": {
+        "name": "Gandalf",
+        "class": "Mago",
+        "hp": 80,
+        "max_hp": 80,
+        "mana": 150,
+        "max_mana": 150,
+        "armor": 5,
+        "speed": 5,
+        "abilities": ["fireball", "lightning", "shield", "teleport"]
+    },
+    "2": {
+        "name": "Aragorn",
+        "class": "Guerrero",
+        "hp": 120,
+        "max_hp": 120,
+        "mana": 50,
+        "max_mana": 50,
+        "armor": 15,
+        "speed": 6,
+        "abilities": ["slash", "charge", "rally", "defend"]
+    },
+    "3": {
+        "name": "Legolas",
+        "class": "Arquero",
+        "hp": 90,
+        "max_hp": 90,
+        "mana": 80,
+        "max_mana": 80,
+        "armor": 8,
+        "speed": 8,
+        "abilities": ["arrow_shot", "multishot", "poison_arrow", "evade"]
+    },
+    "4": {
+        "name": "Gimli",
+        "class": "Berserker",
+        "hp": 140,
+        "max_hp": 140,
+        "mana": 30,
+        "max_mana": 30,
+        "armor": 20,
+        "speed": 4,
+        "abilities": ["axe_throw", "whirlwind", "rage", "taunt"]
+    },
+    "5": {
+        "name": "Elrond",
+        "class": "Sanador",
+        "hp": 70,
+        "max_hp": 70,
+        "mana": 200,
+        "max_mana": 200,
+        "armor": 3,
+        "speed": 5,
+        "abilities": ["heal", "group_heal", "purify", "resurrection"]
+    },
+    "6": {
+        "name": "Saruman",
+        "class": "Nigromante",
+        "hp": 75,
+        "max_hp": 75,
+        "mana": 180,
+        "max_mana": 180,
+        "armor": 4,
+        "speed": 4,
+        "abilities": ["dark_bolt", "drain_life", "curse", "summon"]
+    },
+    "7": {
+        "name": "Frodo",
+        "class": "Pícaro",
+        "hp": 60,
+        "max_hp": 60,
+        "mana": 60,
+        "max_mana": 60,
+        "armor": 5,
+        "speed": 9,
+        "abilities": ["backstab", "stealth", "pickpocket", "escape"]
+    },
+    "8": {
+        "name": "Boromir",
+        "class": "Paladín",
+        "hp": 110,
+        "max_hp": 110,
+        "mana": 70,
+        "max_mana": 70,
+        "armor": 18,
+        "speed": 5,
+        "abilities": ["smite", "lay_hands", "divine_shield", "aura"]
+    },
+    "9": {
+        "name": "Gollum",
+        "class": "Asesino",
+        "hp": 50,
+        "max_hp": 50,
+        "mana": 40,
+        "max_mana": 40,
+        "armor": 2,
+        "speed": 10,
+        "abilities": ["bite", "strangle", "hide", "ambush"]
+    },
+    "10": {
+        "name": "Treebeard",
+        "class": "Guardian",
+        "hp": 200,
+        "max_hp": 200,
+        "mana": 50,
+        "max_mana": 50,
+        "armor": 25,
+        "speed": 2,
+        "abilities": ["stomp", "entangle", "regenerate", "fortify"]
+    }
+}
