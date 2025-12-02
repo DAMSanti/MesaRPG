@@ -24,11 +24,13 @@ class ArucoDetector:
     def __init__(
         self,
         camera_id: int = 0,
+        camera_url: str = None,
         server_url: str = "ws://localhost:8000/ws/camera",
         dictionary_type: int = cv2.aruco.DICT_4X4_50,
         marker_size_cm: float = 3.0
     ):
         self.camera_id = camera_id
+        self.camera_url = camera_url  # URL para cámara IP (DroidCam, IP Webcam)
         self.server_url = server_url
         self.marker_size_cm = marker_size_cm
         
@@ -62,10 +64,16 @@ class ArucoDetector:
     
     def start_camera(self) -> bool:
         """Inicia la captura de cámara"""
-        self.cap = cv2.VideoCapture(self.camera_id)
+        if self.camera_url:
+            print(f"📱 Conectando a cámara IP: {self.camera_url}")
+            self.cap = cv2.VideoCapture(self.camera_url)
+        else:
+            print(f"📷 Abriendo cámara USB ID: {self.camera_id}")
+            self.cap = cv2.VideoCapture(self.camera_id)
         
         if not self.cap.isOpened():
-            print(f"❌ No se pudo abrir la cámara {self.camera_id}")
+            source = self.camera_url or f"cámara {self.camera_id}"
+            print(f"❌ No se pudo abrir: {source}")
             return False
         
         # Configurar resolución
@@ -272,7 +280,9 @@ class ArucoDetector:
 async def main():
     """Función principal"""
     parser = argparse.ArgumentParser(description="MesaRPG - Detector de Marcadores")
-    parser.add_argument("--camera", type=int, default=0, help="ID de la cámara")
+    parser.add_argument("--camera", type=int, default=0, help="ID de la cámara USB")
+    parser.add_argument("--url", type=str, default=None, 
+                       help="URL de cámara IP (ej: http://192.168.1.100:4747/video)")
     parser.add_argument("--server", type=str, default="ws://localhost:8000/ws/camera",
                        help="URL del servidor WebSocket")
     parser.add_argument("--no-preview", action="store_true", help="Desactivar preview")
@@ -280,6 +290,7 @@ async def main():
     
     detector = ArucoDetector(
         camera_id=args.camera,
+        camera_url=args.url,
         server_url=args.server
     )
     
