@@ -6,6 +6,7 @@ FastAPI server que coordina todo el sistema
 import asyncio
 import json
 import uuid
+from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -22,6 +23,20 @@ from .models import (
 )
 from .game_state import GameStateManager
 from .websocket_manager import ConnectionManager
+
+
+# === Utilidades ===
+def json_serial(obj):
+    """Serializador JSON para objetos que no son serializables por defecto"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
+async def send_json_safe(websocket: WebSocket, data: dict):
+    """Envía JSON de forma segura, manejando tipos como datetime"""
+    text = json.dumps(data, default=json_serial)
+    await websocket.send_text(text)
 
 
 # === Configuración ===
