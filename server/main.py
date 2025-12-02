@@ -618,7 +618,9 @@ async def websocket_display(websocket: WebSocket):
                     await send_json_safe(websocket, {"type": "pong"})
                     continue
                 
-                # Procesar eventos táctiles si es necesario
+                # Procesar eventos táctiles del display
+                await handle_display_message(message, websocket)
+                
             except json.JSONDecodeError as e:
                 print(f"⚠️ Error parseando mensaje de display: {e}")
             
@@ -627,6 +629,86 @@ async def websocket_display(websocket: WebSocket):
     except Exception as e:
         print(f"❌ Error en WebSocket display: {e}")
         ws_manager.disconnect_display(websocket)
+
+
+async def handle_display_message(message: dict, websocket: WebSocket):
+    """Procesa mensajes enviados desde el display táctil"""
+    msg_type = message.get("type", "")
+    payload = message.get("payload", {})
+    
+    if msg_type == "character_move":
+        # Mover un personaje existente
+        char_id = payload.get("character_id")
+        position = payload.get("position", {})
+        
+        if char_id and char_id in game_state.state.characters:
+            char = game_state.state.characters[char_id]
+            char.position = Position(
+                x=position.get("x", 0),
+                y=position.get("y", 0),
+                rotation=position.get("rotation", 0)
+            )
+            
+            # Notificar a todos los clientes
+            await ws_manager.broadcast_all({
+                "type": "character_update",
+                "payload": {
+                    "character_id": char_id,
+                    "position": char.position.model_dump()
+                }
+            })
+            print(f"📍 Personaje {char.name} movido a ({position.get('x')}, {position.get('y')})")
+    
+    elif msg_type == "character_create":
+        # Crear un nuevo personaje desde el display táctil
+        char_id = payload.get("id", f"touch_{uuid.uuid4().hex[:6]}")
+        name = payload.get("name", "Aventurero")
+        char_class = payload.get("character_class", "Guerrero")
+        position = payload.get("position", {"x": 100, "y": 100})
+        
+        # Crear personaje
+        from .models import Character
+        character = Character(
+            id=char_id,
+            marker_id=None,
+            name=name,
+            character_class=char_class,
+            hp=100,
+            max_hp=100,
+            mana=50,
+            max_mana=50,
+            armor=0,
+            speed=6,
+            abilities=["attack", "defend"],
+            position=Position(
+                x=position.get("x", 0),
+                y=position.get("y", 0),
+                rotation=position.get("rotation", 0)
+            )
+        )
+        
+        game_state.state.characters[char_id] = character
+        
+        # Notificar a todos los clientes
+        await ws_manager.broadcast_all({
+            "type": "character_added",
+            "payload": {"character": character.model_dump()}
+        })
+        print(f"✨ Personaje creado desde display: {name} en ({position.get('x')}, {position.get('y')})")
+    
+    elif msg_type == "character_remove":
+        # Eliminar un personaje
+        char_id = payload.get("character_id")
+        if char_id and char_id in game_state.state.characters:
+            char = game_state.state.characters.pop(char_id)
+            await ws_manager.broadcast_all({
+                "type": "character_removed",
+                "payload": {
+                    "character_id": char_id,
+                    "name": char.name
+                }
+            })
+            print(f"🗑️ Personaje eliminado: {char.name}")
 
 @app.websocket("/ws/mobile")
 async def websocket_mobile(websocket: WebSocket, player_id: str = Query(None), name: str = Query("Jugador")):

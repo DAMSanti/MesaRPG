@@ -18,13 +18,13 @@ class GameRenderer {
         this.gridSize = 50; // Tamaño de celda en píxeles
         this.showGrid = true;
         
-        // Configuración de calibración para la cámara
-        this.calibration = {
-            offsetX: 0,
-            offsetY: 0,
-            scaleX: 1,
-            scaleY: 1
-        };
+        // Estado de arrastre
+        this.dragging = null; // { tokenId, offsetX, offsetY }
+        this.longPressTimer = null;
+        this.longPressPos = null;
+        
+        // Contador para IDs únicos de tokens locales
+        this.localTokenCounter = 0;
         
         this.resize();
         window.addEventListener('resize', () => this.resize());
@@ -34,44 +34,233 @@ class GameRenderer {
     }
     
     setupTouchEvents() {
-        // Hacer que los toques en la pantalla sean responsivos
-        this.tokensContainer.addEventListener('touchstart', (e) => this.handleTouch(e), { passive: false });
+        // Eventos táctiles en el contenedor
+        this.tokensContainer.addEventListener('touchstart', (e) => this.handleTouchStart(e), { passive: false });
         this.tokensContainer.addEventListener('touchmove', (e) => this.handleTouchMove(e), { passive: false });
         this.tokensContainer.addEventListener('touchend', (e) => this.handleTouchEnd(e), { passive: false });
+        this.tokensContainer.addEventListener('touchcancel', (e) => this.handleTouchEnd(e), { passive: false });
         
-        // También clicks de mouse para desarrollo
-        this.tokensContainer.addEventListener('click', (e) => this.handleClick(e));
+        // Eventos de mouse para desarrollo/debug
+        this.tokensContainer.addEventListener('mousedown', (e) => this.handleMouseDown(e));
+        this.tokensContainer.addEventListener('mousemove', (e) => this.handleMouseMove(e));
+        this.tokensContainer.addEventListener('mouseup', (e) => this.handleMouseUp(e));
+        this.tokensContainer.addEventListener('mouseleave', (e) => this.handleMouseUp(e));
+        
+        // Doble click para crear token (desarrollo)
+        this.tokensContainer.addEventListener('dblclick', (e) => this.createLocalToken(e.clientX, e.clientY));
     }
     
-    handleTouch(e) {
-        if (e.touches.length === 1) {
-            const touch = e.touches[0];
-            const x = touch.clientX;
-            const y = touch.clientY;
+    handleTouchStart(e) {
+        if (e.touches.length !== 1) return;
+        
+        const touch = e.touches[0];
+        const x = touch.clientX;
+        const y = touch.clientY;
+        
+        // Verificar si tocamos un token
+        const tokenEl = document.elementFromPoint(x, y)?.closest('.character-token');
+        
+        if (tokenEl) {
+            // Iniciar arrastre del token
+            e.preventDefault();
+            const charId = tokenEl.dataset.characterId;
+            const rect = tokenEl.getBoundingClientRect();
             
-            // Verificar si tocamos un token
-            const token = document.elementFromPoint(x, y)?.closest('.character-token');
-            if (token) {
-                const charId = token.dataset.characterId;
-                this.selectCharacter(charId);
-            }
+            this.dragging = {
+                tokenId: charId,
+                offsetX: x - (rect.left + rect.width / 2),
+                offsetY: y - (rect.top + rect.height / 2)
+            };
+            
+            tokenEl.classList.add('dragging');
+            this.selectCharacter(charId);
+            console.log('🎯 Iniciando arrastre de:', charId);
+        } else {
+            // Toque en espacio vacío - iniciar long press para crear token
+            this.longPressPos = { x, y };
+            this.longPressTimer = setTimeout(() => {
+                this.createLocalToken(x, y);
+                this.longPressPos = null;
+            }, 500); // 500ms para long press
         }
     }
     
     handleTouchMove(e) {
-        // Permitir scroll si no estamos moviendo un personaje
-        if (!this.selectedCharacterId) return;
-        e.preventDefault();
+        // Cancelar long press si se mueve
+        if (this.longPressTimer && this.longPressPos) {
+            const touch = e.touches[0];
+            const dx = touch.clientX - this.longPressPos.x;
+            const dy = touch.clientY - this.longPressPos.y;
+            if (Math.sqrt(dx*dx + dy*dy) > 10) {
+                clearTimeout(this.longPressTimer);
+                this.longPressTimer = null;
+            }
+        }
+        
+        // Arrastrar token
+        if (this.dragging && e.touches.length === 1) {
+            e.preventDefault();
+            const touch = e.touches[0];
+            const x = touch.clientX - this.dragging.offsetX;
+            const y = touch.clientY - this.dragging.offsetY;
+            
+            this.moveToken(this.dragging.tokenId, x, y);
+        }
     }
     
     handleTouchEnd(e) {
-        // Nada especial por ahora
+        // Cancelar long press
+        if (this.longPressTimer) {
+            clearTimeout(this.longPressTimer);
+            this.longPressTimer = null;
+        }
+        
+        // Finalizar arrastre
+        if (this.dragging) {
+            const token = this.tokens[this.dragging.tokenId];
+            if (token) {
+                token.classList.remove('dragging');
+            }
+            
+            // Notificar al servidor la nueva posición
+            this.notifyPositionChange(this.dragging.tokenId);
+            
+            console.log('✅ Arrastre finalizado:', this.dragging.tokenId);
+            this.dragging = null;
+        }
     }
     
-    handleClick(e) {
-        // Click en espacio vacío deselecciona
-        if (e.target === this.tokensContainer || e.target === this.mapCanvas) {
-            this.selectCharacter(null);
+    // === Eventos de Mouse (para desarrollo) ===
+    
+    handleMouseDown(e) {
+        if (e.button !== 0) return; // Solo click izquierdo
+        
+        const tokenEl = e.target.closest('.character-token');
+        
+        if (tokenEl) {
+            e.preventDefault();
+            const charId = tokenEl.dataset.characterId;
+            const rect = tokenEl.getBoundingClientRect();
+            
+            this.dragging = {
+                tokenId: charId,
+                offsetX: e.clientX - (rect.left + rect.width / 2),
+                offsetY: e.clientY - (rect.top + rect.height / 2)
+            };
+            
+            tokenEl.classList.add('dragging');
+            this.selectCharacter(charId);
+        }
+    }
+    
+    handleMouseMove(e) {
+        if (this.dragging) {
+            e.preventDefault();
+            const x = e.clientX - this.dragging.offsetX;
+            const y = e.clientY - this.dragging.offsetY;
+            
+            this.moveToken(this.dragging.tokenId, x, y);
+        }
+    }
+    
+    handleMouseUp(e) {
+        if (this.dragging) {
+            const token = this.tokens[this.dragging.tokenId];
+            if (token) {
+                token.classList.remove('dragging');
+            }
+            
+            this.notifyPositionChange(this.dragging.tokenId);
+            this.dragging = null;
+        }
+    }
+    
+    // === Mover y crear tokens ===
+    
+    moveToken(tokenId, x, y) {
+        const token = this.tokens[tokenId];
+        if (!token) return;
+        
+        token.style.left = `${x}px`;
+        token.style.top = `${y}px`;
+        
+        // Actualizar estado local
+        if (this.characters[tokenId]) {
+            this.characters[tokenId].position = { x, y, rotation: 0 };
+        }
+    }
+    
+    createLocalToken(x, y) {
+        // Crear un token local (sin servidor)
+        this.localTokenCounter++;
+        const localId = `local_${this.localTokenCounter}`;
+        
+        const names = ['Guerrero', 'Mago', 'Arquera', 'Clérigo', 'Pícaro', 'Bárbaro', 'Druida', 'Paladín'];
+        const classes = ['Guerrero', 'Mago', 'Ranger', 'Clérigo', 'Pícaro', 'Bárbaro', 'Druida', 'Paladín'];
+        const idx = (this.localTokenCounter - 1) % names.length;
+        
+        const char = {
+            id: localId,
+            name: names[idx],
+            character_class: classes[idx],
+            hp: 100,
+            max_hp: 100,
+            position: { x, y, rotation: 0 }
+        };
+        
+        this.characters[localId] = char;
+        this.createToken(localId, char);
+        
+        console.log('✨ Token local creado:', char.name, 'en', x, y);
+        
+        // Notificar al servidor (si está conectado)
+        this.notifyTokenCreated(localId, char);
+        
+        // Feedback visual
+        this.showTouchFeedback(x, y);
+    }
+    
+    showTouchFeedback(x, y) {
+        const feedback = document.createElement('div');
+        feedback.className = 'touch-feedback';
+        feedback.style.cssText = `
+            position: absolute;
+            left: ${x}px;
+            top: ${y}px;
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            border: 3px solid #4ecdc4;
+            transform: translate(-50%, -50%) scale(0);
+            animation: touchPulse 0.5s ease-out forwards;
+            pointer-events: none;
+        `;
+        this.tokensContainer.appendChild(feedback);
+        setTimeout(() => feedback.remove(), 500);
+    }
+    
+    notifyPositionChange(tokenId) {
+        // Enviar al servidor la nueva posición
+        if (window.wsManager && window.wsManager.isConnected) {
+            const char = this.characters[tokenId];
+            if (char && char.position) {
+                window.wsManager.send('character_move', {
+                    character_id: tokenId,
+                    position: char.position
+                });
+            }
+        }
+    }
+    
+    notifyTokenCreated(tokenId, char) {
+        // Notificar al servidor que se creó un token
+        if (window.wsManager && window.wsManager.isConnected) {
+            window.wsManager.send('character_create', {
+                id: tokenId,
+                name: char.name,
+                character_class: char.character_class,
+                position: char.position
+            });
         }
     }
     

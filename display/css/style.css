@@ -91,12 +91,35 @@ html, body {
 .character-token {
     position: absolute;
     transform: translate(-50%, -50%);
-    transition: left 0.1s ease-out, top 0.1s ease-out, opacity 0.3s;
+    transition: left 0.1s ease-out, top 0.1s ease-out, opacity 0.3s, transform 0.15s;
     cursor: pointer;
     pointer-events: auto;
     touch-action: none;
     -webkit-tap-highlight-color: transparent;
     user-select: none;
+    z-index: 10;
+}
+
+.character-token.dragging {
+    transition: none !important;
+    z-index: 100;
+    transform: translate(-50%, -50%) scale(1.15);
+}
+
+.character-token.dragging .token-inner {
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.6), 0 0 30px rgba(233, 69, 96, 0.6);
+    border-color: var(--color-primary);
+}
+
+@keyframes touchPulse {
+    0% {
+        transform: translate(-50%, -50%) scale(0);
+        opacity: 1;
+    }
+    100% {
+        transform: translate(-50%, -50%) scale(1.5);
+        opacity: 0;
+    }
 }
 
 @keyframes tokenAppear {
