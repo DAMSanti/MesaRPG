@@ -228,6 +228,10 @@ async def admin_page():
                     <div id="character-list" class="character-list">
                         <p>No hay personajes detectados</p>
                     </div>
+                    <div style="margin-top: 10px;">
+                        <button class="success" onclick="addTestCharacter()">+ Añadir Personaje Test</button>
+                        <button onclick="clearCharacters()">🗑️ Limpiar</button>
+                    </div>
                 </div>
                 
                 <div class="card">
@@ -235,6 +239,7 @@ async def admin_page():
                     <div class="status">
                         <div>Pantallas: <span id="display-count">0</span></div>
                         <div>Móviles: <span id="mobile-count">0</span></div>
+                        <div>Jugadores: <span id="player-list">-</span></div>
                         <div>Cámara: <span id="camera-status">❌</span></div>
                     </div>
                     <button onclick="refreshState()">Actualizar Estado</button>
@@ -251,6 +256,7 @@ async def admin_page():
             let ws;
             let gameState = {};
             let pingInterval = null;
+            let testCharacterCount = 0;
             const pingIntervalMs = 25000;
             
             function startPing() {
@@ -355,6 +361,12 @@ async def admin_page():
                 document.getElementById('display-count').textContent = stats.displays || 0;
                 document.getElementById('mobile-count').textContent = stats.mobiles || 0;
                 document.getElementById('camera-status').textContent = stats.camera ? '✅' : '❌';
+                
+                // Mostrar lista de jugadores móviles
+                const players = stats.mobile_players || [];
+                document.getElementById('player-list').textContent = players.length > 0 
+                    ? players.join(', ') 
+                    : 'Ninguno';
             }
             
             function log(message, type = 'system') {
@@ -375,6 +387,33 @@ async def admin_page():
             function startCombat() { sendCommand('start_combat'); log('Iniciando combate...', 'action'); }
             function endCombat() { sendCommand('end_combat'); log('Finalizando combate...', 'action'); }
             function nextTurn() { sendCommand('next_turn'); log('Siguiente turno...', 'action'); }
+            
+            function addTestCharacter() {
+                testCharacterCount++;
+                fetch('/api/debug/add-test-character?marker_id=' + testCharacterCount, {method: 'POST'})
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            log('Personaje añadido: ' + data.character.name, 'action');
+                            refreshState();
+                        } else {
+                            log('Error: ' + data.message, 'error');
+                        }
+                    })
+                    .catch(e => log('Error añadiendo personaje: ' + e, 'error'));
+            }
+            
+            function clearCharacters() {
+                fetch('/api/debug/clear-characters', {method: 'DELETE'})
+                    .then(r => r.json())
+                    .then(data => {
+                        log('Personajes eliminados', 'system');
+                        testCharacterCount = 0;
+                        refreshState();
+                    })
+                    .catch(e => log('Error: ' + e, 'error'));
+            }
+            
             function refreshState() { 
                 fetch('/api/state').then(r => r.json()).then(data => {
                     gameState = data;
@@ -384,7 +423,7 @@ async def admin_page():
             }
             
             connect();
-            setInterval(refreshState, 5000);
+            setInterval(refreshState, 3000);  // Actualizar cada 3 segundos
         </script>
     </body>
     </html>
@@ -503,6 +542,37 @@ async def next_turn():
     """Avanza al siguiente turno"""
     await game_state.next_turn()
     return {"status": "turn_advanced", "turn": game_state.state.current_turn}
+
+
+@app.post("/api/debug/add-test-character")
+async def add_test_character(marker_id: int = 1, name: str = "Test Character"):
+    """Añade un personaje de prueba (para desarrollo sin cámara)"""
+    from .models import DetectedMarker, Position
+    
+    # Crear un marcador ficticio
+    marker = DetectedMarker(
+        marker_id=marker_id,
+        position=Position(x=400, y=300, rotation=0),
+        corners=[[0,0], [100,0], [100,100], [0,100]]
+    )
+    
+    # Añadir personaje desde el marcador
+    character = await game_state.add_character_from_marker(marker)
+    
+    if character:
+        return {"status": "success", "character": character.model_dump()}
+    else:
+        return {"status": "error", "message": "No hay template para ese marker_id"}
+
+
+@app.delete("/api/debug/clear-characters")
+async def clear_characters():
+    """Elimina todos los personajes (para desarrollo)"""
+    for char_id in list(game_state.state.characters.keys()):
+        await game_state.remove_character_by_marker(
+            game_state.state.characters[char_id].marker_id
+        )
+    return {"status": "success", "message": "Todos los personajes eliminados"}
 
 
 # === WebSocket Endpoints ===
