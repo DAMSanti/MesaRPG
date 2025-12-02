@@ -58,6 +58,19 @@ class GameRenderer {
             }
         });
         
+        // Touch directo para crear token
+        this.tokensContainer.addEventListener('touchend', (e) => {
+            // Si no estábamos arrastrando, crear token
+            if (!this.dragging && e.changedTouches.length === 1) {
+                const touch = e.changedTouches[0];
+                const tokenEl = document.elementFromPoint(touch.clientX, touch.clientY)?.closest('.character-token');
+                if (!tokenEl) {
+                    console.log('👆 Touch en posición:', touch.clientX, touch.clientY);
+                    this.createLocalToken(touch.clientX, touch.clientY);
+                }
+            }
+        }, { passive: true });
+        
         console.log('✅ Eventos táctiles configurados');
     }
     
@@ -325,39 +338,35 @@ class GameRenderer {
     }
     
     drawDefaultBackground(ctx, w, h) {
-        // Gradiente de fondo
+        // Gradiente de fondo oscuro
         const gradient = ctx.createRadialGradient(w/2, h/2, 0, w/2, h/2, Math.max(w, h)/2);
         gradient.addColorStop(0, '#2a2a4a');
         gradient.addColorStop(1, '#1a1a2e');
         ctx.fillStyle = gradient;
         ctx.fillRect(0, 0, w, h);
-        
-        // Patrón de piedra/mazmorra
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
-        ctx.lineWidth = 1;
-        
-        for (let x = 0; x < w; x += this.gridSize * 2) {
-            for (let y = 0; y < h; y += this.gridSize * 2) {
-                ctx.strokeRect(x, y, this.gridSize * 2, this.gridSize * 2);
-            }
-        }
     }
     
     drawGrid(ctx, w, h) {
-        // Cuadrícula hexagonal del tamaño de un token (100px)
-        const hexSize = 50; // Radio del hexágono (mitad del token)
+        // Cuadrícula hexagonal - hexágonos juntos del tamaño de un token
+        const hexSize = 50; // Radio del hexágono (token de 100px diámetro)
+        
+        // Para hexágonos flat-top (punta hacia los lados)
         const hexWidth = hexSize * 2;
         const hexHeight = Math.sqrt(3) * hexSize;
-        const vertDist = hexHeight;
-        const horizDist = hexSize * 1.5;
         
-        ctx.strokeStyle = 'rgba(255, 215, 0, 0.15)'; // Dorado sutil
-        ctx.lineWidth = 1;
+        // Distancia entre centros para que estén juntos
+        const horizDist = hexWidth * 0.75; // 3/4 del ancho
+        const vertDist = hexHeight; // altura completa
+        
+        ctx.strokeStyle = 'rgba(255, 215, 0, 0.2)'; // Dorado
+        ctx.lineWidth = 1.5;
         
         let row = 0;
-        for (let y = 0; y < h + hexHeight; y += vertDist) {
-            const offsetX = (row % 2) * horizDist;
-            for (let x = -hexSize + offsetX; x < w + hexWidth; x += horizDist * 2) {
+        for (let y = hexHeight / 2; y < h + hexHeight; y += vertDist / 2) {
+            const isOddRow = row % 2 === 1;
+            const offsetX = isOddRow ? horizDist / 2 : 0;
+            
+            for (let x = offsetX; x < w + hexWidth; x += horizDist) {
                 this.drawHexagon(ctx, x, y, hexSize);
             }
             row++;
