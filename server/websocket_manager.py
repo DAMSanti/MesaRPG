@@ -8,7 +8,7 @@ import json
 from datetime import datetime
 from typing import Dict, Set, Optional, Any
 from fastapi import WebSocket, WebSocketDisconnect
-from models import WSMessage, WSMessageType, PlayerRole
+from .models import WSMessage, WSMessageType, PlayerRole
 
 
 class ConnectionManager:

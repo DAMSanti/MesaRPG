@@ -16,12 +16,12 @@ from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from models import (
+from .models import (
     WSMessageType, Position, DetectedMarker, PlayerRole,
     ActionRequest
 )
-from game_state import GameStateManager
-from websocket_manager import ConnectionManager
+from .game_state import GameStateManager
+from .websocket_manager import ConnectionManager
 
 
 # === Configuración ===

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Optional, List, Callable, Any
 import uuid
 
-from models import (
+from .models import (
     GameState, Character, Player, Ability, Position,
     GameAction, DetectedMarker, PlayerRole, ActionResult
 )
