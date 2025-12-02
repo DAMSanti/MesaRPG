@@ -344,24 +344,41 @@ class GameRenderer {
     }
     
     drawGrid(ctx, w, h) {
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+        // Cuadrícula hexagonal del tamaño de un token (100px)
+        const hexSize = 50; // Radio del hexágono (mitad del token)
+        const hexWidth = hexSize * 2;
+        const hexHeight = Math.sqrt(3) * hexSize;
+        const vertDist = hexHeight;
+        const horizDist = hexSize * 1.5;
+        
+        ctx.strokeStyle = 'rgba(255, 215, 0, 0.15)'; // Dorado sutil
         ctx.lineWidth = 1;
         
-        // Líneas verticales
-        for (let x = 0; x <= w; x += this.gridSize) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, h);
-            ctx.stroke();
+        let row = 0;
+        for (let y = 0; y < h + hexHeight; y += vertDist) {
+            const offsetX = (row % 2) * horizDist;
+            for (let x = -hexSize + offsetX; x < w + hexWidth; x += horizDist * 2) {
+                this.drawHexagon(ctx, x, y, hexSize);
+            }
+            row++;
         }
-        
-        // Líneas horizontales
-        for (let y = 0; y <= h; y += this.gridSize) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(w, y);
-            ctx.stroke();
+    }
+    
+    drawHexagon(ctx, centerX, centerY, size) {
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            // Hexágono con punta arriba (flat-top)
+            const angle = (Math.PI / 3) * i - Math.PI / 6;
+            const x = centerX + size * Math.cos(angle);
+            const y = centerY + size * Math.sin(angle);
+            if (i === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
         }
+        ctx.closePath();
+        ctx.stroke();
     }
     
     // === Tokens de personajes ===
@@ -405,15 +422,17 @@ class GameRenderer {
             <div class="token-class">${char.character_class || char.class || ''}</div>
         `;
         
-        // Intentar cargar imagen
-        const img = new Image();
-        img.onload = () => {
-            const inner = token.querySelector('.token-inner');
-            inner.innerHTML = '';
-            img.className = 'token-image';
-            inner.appendChild(img);
-        };
-        img.src = `assets/tokens/${char.marker_id}.png`;
+        // Intentar cargar imagen solo si tiene marker_id válido
+        if (char.marker_id !== undefined && char.marker_id !== null) {
+            const img = new Image();
+            img.onload = () => {
+                const inner = token.querySelector('.token-inner');
+                inner.innerHTML = '';
+                img.className = 'token-image';
+                inner.appendChild(img);
+            };
+            img.src = `assets/tokens/${char.marker_id}.png`;
+        }
         
         // Eventos táctiles y click
         token.addEventListener('click', (e) => {
