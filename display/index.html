@@ -99,6 +99,56 @@
         </div>
     </div>
     
+    <!-- Debug táctil directo - funciona sin depender de otros scripts -->
+    <script>
+        (function() {
+            // Crear indicador de debug visible
+            var debug = document.createElement('div');
+            debug.id = 'direct-debug';
+            debug.style.cssText = 'position:fixed;top:50px;left:10px;right:10px;background:rgba(0,0,0,0.9);color:lime;padding:15px;z-index:99999;font-family:monospace;font-size:14px;border:2px solid lime;border-radius:10px;';
+            debug.innerHTML = '🔧 Debug cargado - esperando touch...';
+            document.body.appendChild(debug);
+            
+            var tokenCount = 0;
+            
+            function createToken(x, y) {
+                tokenCount++;
+                var token = document.createElement('div');
+                token.style.cssText = 'position:absolute;left:'+x+'px;top:'+y+'px;width:80px;height:80px;background:linear-gradient(135deg,#e94560,#0f3460);border:4px solid gold;border-radius:50%;transform:translate(-50%,-50%);z-index:1000;display:flex;align-items:center;justify-content:center;color:white;font-weight:bold;font-size:24px;box-shadow:0 0 20px rgba(233,69,96,0.8);';
+                token.textContent = tokenCount;
+                token.className = 'debug-token';
+                document.body.appendChild(token);
+                debug.innerHTML = '✅ Token #' + tokenCount + ' creado en (' + Math.round(x) + ', ' + Math.round(y) + ')';
+            }
+            
+            // Touch events
+            document.body.addEventListener('touchstart', function(e) {
+                debug.innerHTML = '👆 Touch detectado: ' + e.touches.length + ' dedos';
+            }, {passive: true});
+            
+            document.body.addEventListener('touchend', function(e) {
+                if (e.changedTouches.length > 0) {
+                    var t = e.changedTouches[0];
+                    debug.innerHTML = '👆 TouchEnd en (' + Math.round(t.clientX) + ', ' + Math.round(t.clientY) + ')';
+                    // Solo crear si no tocamos un token existente
+                    if (!e.target.classList.contains('debug-token')) {
+                        createToken(t.clientX, t.clientY);
+                    }
+                }
+            }, {passive: true});
+            
+            // Mouse click como fallback
+            document.body.addEventListener('click', function(e) {
+                debug.innerHTML = '🖱️ Click en (' + Math.round(e.clientX) + ', ' + Math.round(e.clientY) + ')';
+                if (!e.target.classList.contains('debug-token')) {
+                    createToken(e.clientX, e.clientY);
+                }
+            });
+            
+            console.log('✅ Debug táctil directo cargado');
+        })();
+    </script>
+    
     <script src="js/websocket.js"></script>
     <script src="js/effects.js"></script>
     <script src="js/renderer.js"></script>
