@@ -374,22 +374,33 @@ class GameStateManager:
         
         return available
     
+    def _serialize_datetime(self, obj):
+        """Convierte datetime a string ISO para JSON"""
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        elif isinstance(obj, dict):
+            return {k: self._serialize_datetime(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._serialize_datetime(item) for item in obj]
+        return obj
+    
     def get_full_state(self) -> dict:
         """Obtiene el estado completo para enviar a clientes"""
-        return {
+        state = {
             "session_id": self.state.session_id,
             "current_turn": self.state.current_turn,
             "is_combat": self.state.is_combat,
             "active_character_id": self.state.active_character_id,
             "characters": {
-                cid: char.model_dump() for cid, char in self.state.characters.items()
+                cid: self._serialize_datetime(char.model_dump()) for cid, char in self.state.characters.items()
             },
             "players": {
-                pid: player.model_dump() for pid, player in self.state.players.items()
+                pid: self._serialize_datetime(player.model_dump()) for pid, player in self.state.players.items()
             },
             "initiative_order": self.state.initiative_order,
             "current_map": self.state.current_map,
             "recent_actions": [
-                action.model_dump() for action in self.state.action_history[-10:]
+                self._serialize_datetime(action.model_dump()) for action in self.state.action_history[-10:]
             ]
         }
+        return state
