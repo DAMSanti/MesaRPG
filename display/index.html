@@ -83,7 +83,25 @@
     <!-- Modal de calibración -->
     <div id="calibration-modal" class="hidden">
         <div class="calibration-content">
-            <h2>📐 Calibración de Cámara</h2>
+            <h2>📐 Calibración</h2>
+            
+            <!-- Configuración de pantalla -->
+            <h3>📺 Tamaño de Pantalla</h3>
+            <p>Indica el tamaño diagonal de tu pantalla para que la grid sea de 1 pulgada real:</p>
+            <div class="calibration-controls">
+                <label>Diagonal (pulgadas): 
+                    <input type="number" id="screen-diagonal" min="10" max="100" value="24" step="0.5"> 
+                    <span id="screen-info"></span>
+                </label>
+                <label>Tamaño de celda (pulgadas): 
+                    <input type="number" id="grid-target-size" min="0.5" max="3" value="1" step="0.25">
+                </label>
+                <div id="screen-resolution-info"></div>
+            </div>
+            
+            <hr style="margin: 15px 0; border-color: #444;">
+            
+            <h3>🎯 Calibración de Cámara</h3>
             <p>Ajusta los valores para alinear la posición de la cámara con el display:</p>
             <div class="calibration-controls">
                 <label>Offset X: <input type="range" id="cal-offset-x" min="-500" max="500" value="0"> <span id="val-offset-x">0</span></label>

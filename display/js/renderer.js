@@ -15,9 +15,20 @@ class GameRenderer {
         this.tokens = {};
         this.selectedCharacterId = null;
         
-        this.gridSize = 50; // Tamaño de celda en píxeles
+        this.gridSize = 50; // Tamaño de celda en píxeles (se recalcula según pantalla)
         this.showGrid = true;
         this.gridType = 'hexagonal'; // 'hexagonal' o 'square'
+        
+        // Configuración de pantalla para grid de 1 pulgada
+        this.screenConfig = {
+            dpi: 96,              // DPI detectado o configurado
+            diagonalInches: 24,   // Tamaño diagonal en pulgadas
+            pixelsPerInch: 96,    // Píxeles por pulgada calculados
+            targetGridInches: 1   // Tamaño objetivo de cada celda en pulgadas
+        };
+        
+        // Detectar configuración de pantalla
+        this.detectScreenConfig();
         
         // Estado de arrastre
         this.dragging = null; // { tokenId, offsetX, offsetY }
@@ -44,6 +55,98 @@ class GameRenderer {
         } else {
             console.log('🖐️ Eventos táctiles del renderer deshabilitados (usando sistema multitouch)');
         }
+    }
+    
+    // Detectar configuración de pantalla para calcular píxeles por pulgada
+    detectScreenConfig() {
+        // Intentar obtener DPI real del dispositivo
+        const dpi = window.devicePixelRatio * 96; // Aproximación basada en devicePixelRatio
+        
+        // Obtener resolución de pantalla
+        const screenWidth = window.screen.width * window.devicePixelRatio;
+        const screenHeight = window.screen.height * window.devicePixelRatio;
+        
+        // Cargar configuración guardada o usar valores por defecto
+        const savedConfig = localStorage.getItem('mesarpg_screen_config');
+        if (savedConfig) {
+            try {
+                const config = JSON.parse(savedConfig);
+                this.screenConfig = { ...this.screenConfig, ...config };
+            } catch (e) {
+                console.warn('Error cargando configuración de pantalla:', e);
+            }
+        }
+        
+        // Calcular píxeles por pulgada basado en diagonal configurada
+        this.calculatePixelsPerInch();
+        
+        // Recalcular tamaño de grid
+        this.updateGridSize();
+        
+        console.log(`📺 Pantalla detectada: ${screenWidth}x${screenHeight}, DPI: ${dpi.toFixed(0)}, Grid: ${this.gridSize}px`);
+    }
+    
+    // Calcular píxeles por pulgada basado en la diagonal configurada
+    calculatePixelsPerInch() {
+        const screenWidth = window.screen.width;
+        const screenHeight = window.screen.height;
+        
+        // Diagonal en píxeles
+        const diagonalPixels = Math.sqrt(screenWidth * screenWidth + screenHeight * screenHeight);
+        
+        // Píxeles por pulgada
+        this.screenConfig.pixelsPerInch = diagonalPixels / this.screenConfig.diagonalInches;
+        
+        console.log(`📐 Diagonal: ${this.screenConfig.diagonalInches}" = ${diagonalPixels.toFixed(0)}px → ${this.screenConfig.pixelsPerInch.toFixed(1)} PPI`);
+    }
+    
+    // Actualizar tamaño de grid para que sea 1 pulgada real
+    updateGridSize() {
+        this.gridSize = Math.round(this.screenConfig.pixelsPerInch * this.screenConfig.targetGridInches);
+        
+        // Mínimo y máximo razonable
+        this.gridSize = Math.max(30, Math.min(200, this.gridSize));
+        
+        console.log(`📏 Grid size: ${this.gridSize}px = ${this.screenConfig.targetGridInches}" real`);
+    }
+    
+    // Configurar tamaño de pantalla en pulgadas (llamado desde UI de calibración)
+    setScreenSize(diagonalInches) {
+        this.screenConfig.diagonalInches = diagonalInches;
+        this.calculatePixelsPerInch();
+        this.updateGridSize();
+        
+        // Guardar configuración
+        localStorage.setItem('mesarpg_screen_config', JSON.stringify(this.screenConfig));
+        
+        // Redibujar
+        this.redraw();
+        
+        console.log(`✅ Pantalla configurada: ${diagonalInches}" diagonal, grid ${this.gridSize}px`);
+    }
+    
+    // Configurar tamaño objetivo de grid en pulgadas
+    setGridTargetSize(inches) {
+        this.screenConfig.targetGridInches = inches;
+        this.updateGridSize();
+        
+        // Guardar configuración
+        localStorage.setItem('mesarpg_screen_config', JSON.stringify(this.screenConfig));
+        
+        // Redibujar
+        this.redraw();
+    }
+    
+    // Obtener información de pantalla para mostrar en UI
+    getScreenInfo() {
+        return {
+            resolution: `${window.screen.width}x${window.screen.height}`,
+            devicePixelRatio: window.devicePixelRatio,
+            diagonalInches: this.screenConfig.diagonalInches,
+            pixelsPerInch: this.screenConfig.pixelsPerInch.toFixed(1),
+            gridSizePixels: this.gridSize,
+            gridSizeInches: this.screenConfig.targetGridInches
+        };
     }
     
     setupTouchEvents() {
@@ -435,12 +538,12 @@ class GameRenderer {
     }
     
     drawHexGrid(ctx, w, h) {
-        // Hexágonos pointy-top (punta arriba) - tamaño para tokens de 100px
-        const size = 50; // Radio del hexágono
+        // Hexágonos pointy-top (punta arriba) - tamaño basado en gridSize (1 pulgada)
+        const size = this.gridSize / 2; // Radio del hexágono (la mitad del gridSize)
         
         // Dimensiones de un hexágono pointy-top
-        const hexWidth = Math.sqrt(3) * size;  // ~86.6px
-        const hexHeight = size * 2;             // 100px
+        const hexWidth = Math.sqrt(3) * size;  
+        const hexHeight = size * 2;             
         
         // Espaciado entre centros
         const horizSpacing = hexWidth;          // Horizontal: ancho completo

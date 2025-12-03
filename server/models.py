@@ -163,7 +163,7 @@ class GameSession(BaseModel):
     """Sesión de juego con sistema seleccionado"""
     id: str
     name: str = "Nueva Partida"
-    game_system: str = "generic"  # dnd5e, battletech, generic
+    game_system: str = ""  # dnd5e, battletech, generic - vacío por defecto
     created_at: datetime = Field(default_factory=datetime.now)
     is_active: bool = True
 
@@ -171,7 +171,7 @@ class GameSession(BaseModel):
 class GameState(BaseModel):
     """Estado completo del juego"""
     session_id: str
-    game_system: str = "generic"  # Sistema de juego activo
+    game_system: str = ""  # Sistema de juego activo - vacío por defecto
     current_turn: int = 0
     active_character_id: Optional[str] = None
     characters: Dict[str, Character] = {}

@@ -311,12 +311,22 @@ class MesaRPGApp {
         const modal = document.getElementById('calibration-modal');
         modal.classList.remove('hidden');
         
-        // Cargar valores actuales
+        // Cargar valores actuales de calibración de cámara
         const cal = window.gameRenderer.calibration;
         document.getElementById('cal-offset-x').value = cal.offsetX;
         document.getElementById('cal-offset-y').value = cal.offsetY;
         document.getElementById('cal-scale-x').value = cal.scaleX;
         document.getElementById('cal-scale-y').value = cal.scaleY;
+        
+        // Cargar valores de pantalla
+        const screenConfig = window.gameRenderer.screenConfig;
+        document.getElementById('screen-diagonal').value = screenConfig.diagonalInches;
+        document.getElementById('grid-target-size').value = screenConfig.targetGridInches;
+        
+        // Mostrar info de resolución
+        const info = window.gameRenderer.getScreenInfo();
+        document.getElementById('screen-resolution-info').innerHTML = 
+            `Resolución: ${info.resolution} | PPI: ${info.pixelsPerInch} | Grid: ${info.gridSizePixels}px`;
         
         this.updateCalibrationLabels();
     }
@@ -333,6 +343,24 @@ class MesaRPGApp {
                 });
             }
         });
+        
+        // Controles de pantalla
+        const screenDiagonal = document.getElementById('screen-diagonal');
+        const gridTargetSize = document.getElementById('grid-target-size');
+        
+        if (screenDiagonal) {
+            screenDiagonal.addEventListener('change', () => {
+                window.gameRenderer.setScreenSize(parseFloat(screenDiagonal.value));
+                this.updateScreenInfo();
+            });
+        }
+        
+        if (gridTargetSize) {
+            gridTargetSize.addEventListener('change', () => {
+                window.gameRenderer.setGridTargetSize(parseFloat(gridTargetSize.value));
+                this.updateScreenInfo();
+            });
+        }
         
         // Botones
         const btnSave = document.getElementById('btn-cal-save');
@@ -369,6 +397,14 @@ class MesaRPGApp {
         document.getElementById('val-offset-y').textContent = document.getElementById('cal-offset-y').value;
         document.getElementById('val-scale-x').textContent = parseFloat(document.getElementById('cal-scale-x').value).toFixed(1);
         document.getElementById('val-scale-y').textContent = parseFloat(document.getElementById('cal-scale-y').value).toFixed(1);
+    }
+    
+    updateScreenInfo() {
+        const info = window.gameRenderer.getScreenInfo();
+        const infoEl = document.getElementById('screen-resolution-info');
+        if (infoEl) {
+            infoEl.innerHTML = `Resolución: ${info.resolution} | PPI: ${info.pixelsPerInch} | Grid: ${info.gridSizePixels}px`;
+        }
     }
     
     applyCalibration() {
