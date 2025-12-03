@@ -1208,6 +1208,12 @@ body {
     gap: 20px;
 }
 
+.token-assignment-grid-simple {
+    display: grid;
+    grid-template-columns: 1fr 2fr;
+    gap: 20px;
+}
+
 .assignment-step {
     background: var(--bg-dark);
     border-radius: 8px;
@@ -1471,13 +1477,15 @@ body {
     color: var(--text-muted);
 }
 
-.assigned-token-card .marker-badge {
+.assigned-token-card .marker-badge,
+.assigned-token-card .token-type-badge {
     background: var(--primary);
     color: white;
     padding: 4px 10px;
     border-radius: 12px;
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 600;
+    white-space: nowrap;
 }
 
 .assigned-token-card .token-footer {
@@ -1512,7 +1520,8 @@ body {
         flex: 0 0 calc(50% - 5px);
     }
     
-    .token-assignment-grid {
+    .token-assignment-grid,
+    .token-assignment-grid-simple {
         grid-template-columns: 1fr;
     }
 }

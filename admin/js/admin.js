@@ -455,12 +455,6 @@ function initTokenCategoryTabs() {
             renderTokenGallery();
         });
     });
-    
-    // Add listener for marker input
-    const markerInput = document.getElementById('marker-id-input');
-    if (markerInput) {
-        markerInput.addEventListener('input', updateAssignButtonState);
-    }
 }
 
 // Render sheets available for token assignment
@@ -557,31 +551,29 @@ function selectToken(tokenId) {
 // Update assign button state
 function updateAssignButtonState() {
     const btn = document.getElementById('assign-token-btn');
-    const markerInput = document.getElementById('marker-id-input');
-    
     if (!btn) return;
     
-    const markerId = markerInput ? markerInput.value : '';
-    const isValid = selectedTokenSheetId && selectedTokenId && markerId;
-    
+    // Solo necesitamos ficha y token seleccionados
+    const isValid = selectedTokenSheetId && selectedTokenId;
     btn.disabled = !isValid;
 }
 
 // Assign token visually
 async function assignTokenVisual() {
-    const markerId = document.getElementById('marker-id-input').value;
-    
-    if (!selectedTokenSheetId || !selectedTokenId || !markerId) {
-        alert('Completa todos los campos: ficha, token visual y marcador ArUco');
+    if (!selectedTokenSheetId || !selectedTokenId) {
+        alert('Selecciona una ficha y un token');
         return;
     }
+    
+    // Generar un ID único basado en el token visual (sin ArUco)
+    const markerId = Date.now() % 10000;  // ID numérico simple
     
     try {
         const response = await fetch(`/api/sheets/${selectedTokenSheetId}/assign-token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
-                marker_id: parseInt(markerId),
+                marker_id: markerId,
                 token_visual: selectedTokenId
             })
         });
@@ -589,12 +581,11 @@ async function assignTokenVisual() {
         if (response.ok) {
             loadApprovedSheets();
             loadCharacters();
-            logAction('Token', `Token ${selectedTokenId} asignado con marcador #${markerId}`);
+            logAction('Token', `Token ${selectedTokenId} asignado`);
             
             // Reset selections
             selectedTokenSheetId = null;
             selectedTokenId = null;
-            document.getElementById('marker-id-input').value = '';
             renderSheetsForToken();
             renderTokenGallery();
             updateAssignButtonState();
@@ -621,7 +612,7 @@ function renderAssignedTokens() {
     const container = document.getElementById('assigned-tokens');
     if (!container) return;
     
-    const assigned = approvedSheets.filter(s => s.marker_id);
+    const assigned = approvedSheets.filter(s => s.marker_id || s.token_visual);
     
     if (assigned.length === 0) {
         container.innerHTML = '<p class="empty-state">No hay tokens asignados</p>';
@@ -631,6 +622,7 @@ function renderAssignedTokens() {
     container.innerHTML = assigned.map(sheet => {
         // Determine token image path
         let tokenImagePath = '/assets/markers/generic/player1.svg'; // default
+        let tokenName = 'Token';
         
         if (sheet.token_visual && tokenLibrary) {
             // Find the token in library
@@ -642,6 +634,7 @@ function renderAssignedTokens() {
             const token = allTokens.find(t => t.id === sheet.token_visual);
             if (token) {
                 tokenImagePath = `/assets/markers/${token.file}`;
+                tokenName = token.name;
             }
         }
         
@@ -653,7 +646,7 @@ function renderAssignedTokens() {
                         <div class="character-name">${escapeHtml(sheet.character_name)}</div>
                         <div class="player-name">${escapeHtml(sheet.player_name)}</div>
                     </div>
-                    <span class="marker-badge">#${sheet.marker_id}</span>
+                    <span class="token-type-badge">${tokenName}</span>
                 </div>
                 <div class="token-footer">
                     <button class="btn btn-danger btn-sm" onclick="removeToken('${sheet.id}')">
