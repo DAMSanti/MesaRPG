@@ -173,15 +173,19 @@ class SheetManager {
     
     showFormScreen() {
         console.log('📝 showFormScreen() llamado');
-        console.log('   Template:', this.systemTemplate);
+        console.log('   currentSystem:', this.currentSystem?.id);
         
-        this.buildFormFields();
+        // Determinar si usar el formulario D&D estilizado o el genérico
+        if (this.currentSystem?.id === 'dnd5e') {
+            this.setupDnDForm();
+        } else {
+            this.buildFormFields();
+        }
         
         if (this.app && this.app.showScreen) {
             this.app.showScreen('sheet-form-screen');
         } else {
             console.error('❌ app.showScreen no disponible');
-            // Fallback manual
             document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
             document.getElementById('sheet-form-screen')?.classList.add('active');
         }
@@ -192,9 +196,119 @@ class SheetManager {
         }
     }
     
+    setupDnDForm() {
+        // Mostrar el formulario D&D y ocultar el genérico
+        const form = document.getElementById('character-sheet-form');
+        const genericContainer = document.getElementById('form-fields-container');
+        
+        form.classList.add('dnd-sheet');
+        form.classList.remove('sheet-form');
+        genericContainer?.classList.add('hidden');
+        
+        // Mostrar los elementos específicos de D&D
+        const dndElements = form.querySelectorAll('.sheet-header, .sheet-top-row, .sheet-row, .sheet-main, .saving-throws, .skills-section, .equipment-section, .spells-section, .features-section, .personality-section');
+        dndElements.forEach(el => el.style.display = '');
+        
+        // Poblar los selects con opciones
+        this.populateDnDSelects();
+        
+        // Configurar listeners para calcular modificadores
+        this.setupAttributeModifiers();
+        
+        // Mostrar/ocultar sección de conjuros según la clase
+        this.setupSpellsVisibility();
+    }
+    
+    populateDnDSelects() {
+        // Razas
+        const raceSelect = document.getElementById('field-race');
+        if (raceSelect && raceSelect.options.length <= 1) {
+            const races = ["Humano", "Elfo", "Enano", "Halfling", "Gnomo", "Semielfo", "Semiorco", "Tiefling", "Dracónido"];
+            races.forEach(race => {
+                const opt = document.createElement('option');
+                opt.value = race;
+                opt.textContent = race;
+                raceSelect.appendChild(opt);
+            });
+        }
+        
+        // Clases
+        const classSelect = document.getElementById('field-class');
+        if (classSelect && classSelect.options.length <= 1) {
+            const classes = ["Bárbaro", "Bardo", "Clérigo", "Druida", "Guerrero", "Monje", "Paladín", "Explorador", "Pícaro", "Hechicero", "Brujo", "Mago"];
+            classes.forEach(cls => {
+                const opt = document.createElement('option');
+                opt.value = cls;
+                opt.textContent = cls;
+                classSelect.appendChild(opt);
+            });
+            
+            // Listener para mostrar/ocultar conjuros
+            classSelect.addEventListener('change', () => this.setupSpellsVisibility());
+        }
+        
+        // Alineamiento
+        const alignSelect = document.getElementById('field-alignment');
+        if (alignSelect && alignSelect.options.length <= 1) {
+            const alignments = ["Legal Bueno", "Neutral Bueno", "Caótico Bueno", "Legal Neutral", "Neutral", "Caótico Neutral", "Legal Malvado", "Neutral Malvado", "Caótico Malvado"];
+            alignments.forEach(align => {
+                const opt = document.createElement('option');
+                opt.value = align;
+                opt.textContent = align;
+                alignSelect.appendChild(opt);
+            });
+        }
+    }
+    
+    setupAttributeModifiers() {
+        const attributes = ['strength', 'dexterity', 'constitution', 'intelligence', 'wisdom', 'charisma'];
+        
+        attributes.forEach(attr => {
+            const input = document.getElementById(`field-${attr}`);
+            const modSpan = document.getElementById(`mod-${attr}`);
+            
+            if (input && modSpan) {
+                const updateModifier = () => {
+                    const value = parseInt(input.value) || 10;
+                    const modifier = Math.floor((value - 10) / 2);
+                    modSpan.textContent = modifier >= 0 ? `+${modifier}` : modifier.toString();
+                };
+                
+                input.addEventListener('input', updateModifier);
+                updateModifier(); // Calcular valor inicial
+            }
+        });
+    }
+    
+    setupSpellsVisibility() {
+        const classSelect = document.getElementById('field-class');
+        const spellsSection = document.getElementById('spells-section');
+        
+        if (!classSelect || !spellsSection) return;
+        
+        const magicClasses = ["Bardo", "Clérigo", "Druida", "Hechicero", "Brujo", "Mago", "Paladín", "Explorador"];
+        const selectedClass = classSelect.value;
+        
+        if (magicClasses.includes(selectedClass)) {
+            spellsSection.style.display = 'block';
+        } else {
+            spellsSection.style.display = 'none';
+        }
+    }
+    
     buildFormFields() {
+        const form = document.getElementById('character-sheet-form');
         const container = document.getElementById('form-fields-container');
         if (!container) return;
+        
+        // Para sistemas que no son D&D 5e, usar el formulario genérico
+        form.classList.remove('dnd-sheet');
+        form.classList.add('sheet-form');
+        container.classList.remove('hidden');
+        
+        // Ocultar los elementos específicos de D&D
+        const dndElements = form.querySelectorAll('.sheet-header, .sheet-top-row, .sheet-row, .sheet-main, .saving-throws, .skills-section, .equipment-section, .spells-section, .features-section, .personality-section');
+        dndElements.forEach(el => el.style.display = 'none');
         
         container.innerHTML = '';
         
@@ -498,17 +612,64 @@ class SheetManager {
     async startCamera() {
         try {
             const video = document.getElementById('camera-video');
+            if (!video) {
+                console.error('Video element not found');
+                this.app.showToast('Error: elemento de video no encontrado', 'error');
+                return;
+            }
+            
+            console.log('📷 Solicitando acceso a la cámara...');
+            
             this.cameraStream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment' }
+                video: { 
+                    facingMode: 'environment',
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
             });
+            
+            console.log('📷 Stream obtenido:', this.cameraStream);
+            
             video.srcObject = this.cameraStream;
+            
+            // Esperar a que el video esté listo para reproducir
+            video.onloadedmetadata = () => {
+                console.log('📷 Video metadata cargada, dimensiones:', video.videoWidth, 'x', video.videoHeight);
+                video.play().then(() => {
+                    console.log('📷 Video reproduciendo');
+                }).catch(err => {
+                    console.error('Error al reproducir video:', err);
+                });
+            };
+            
+            // También intentar play directamente
+            try {
+                await video.play();
+                console.log('📷 Video.play() exitoso');
+            } catch (playError) {
+                console.log('📷 Esperando onloadedmetadata para play()');
+            }
             
             document.getElementById('scan-result')?.classList.add('hidden');
             document.getElementById('scan-processing')?.classList.add('hidden');
             video.classList.remove('hidden');
+            
         } catch (error) {
             console.error('Error accediendo a la cámara:', error);
-            this.app.showToast('No se pudo acceder a la cámara', 'error');
+            
+            // Mensajes de error más específicos
+            let errorMsg = 'No se pudo acceder a la cámara';
+            if (error.name === 'NotAllowedError') {
+                errorMsg = 'Permiso de cámara denegado. Por favor, permite el acceso.';
+            } else if (error.name === 'NotFoundError') {
+                errorMsg = 'No se encontró ninguna cámara en el dispositivo.';
+            } else if (error.name === 'NotReadableError') {
+                errorMsg = 'La cámara está siendo usada por otra aplicación.';
+            } else if (error.name === 'OverconstrainedError') {
+                errorMsg = 'La configuración de cámara no es compatible.';
+            }
+            
+            this.app.showToast(errorMsg, 'error');
         }
     }
     

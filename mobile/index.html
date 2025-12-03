@@ -63,18 +63,13 @@
                     <div class="sheet-options">
                         <button id="btn-create-manual" class="btn btn-large btn-primary">
                             <span class="btn-icon">✏️</span>
-                            <span class="btn-text">Rellenar Formulario</span>
+                            <span class="btn-text">Crear Ficha</span>
                         </button>
                         
                         <button id="btn-scan-sheet" class="btn btn-large btn-secondary">
                             <span class="btn-icon">📷</span>
                             <span class="btn-text">Escanear Ficha</span>
                         </button>
-                        
-                        <a id="btn-download-pdf" class="btn btn-large btn-outline" href="#" download>
-                            <span class="btn-icon">📄</span>
-                            <span class="btn-text">Descargar PDF</span>
-                        </a>
                     </div>
                 </div>
 
@@ -125,21 +120,289 @@
             </div>
         </section>
 
-        <!-- Pantalla: Formulario de Ficha -->
+        <!-- Pantalla: Formulario de Ficha (Estilo D&D Paper) -->
         <section id="sheet-form-screen" class="screen">
             <header class="mobile-header">
                 <button id="btn-back-from-form" class="btn-icon">←</button>
-                <h2 id="form-title">Crear Personaje</h2>
-                <button id="btn-save-draft" class="btn btn-sm">Guardar</button>
+                <h2 id="form-title">Ficha de Personaje</h2>
+                <button id="btn-save-draft" class="btn btn-sm">💾</button>
             </header>
 
-            <form id="character-sheet-form" class="sheet-form">
-                <!-- Los campos se generan dinámicamente según el sistema de juego -->
-                <div id="form-fields-container"></div>
+            <form id="character-sheet-form" class="dnd-sheet">
+                <!-- Header con logo y título -->
+                <div class="sheet-header">
+                    <div class="sheet-logo">🐉</div>
+                    <h1 class="sheet-title">FICHA DE PERSONAJE</h1>
+                </div>
+
+                <!-- Fila superior: Nombre, Clase, Nivel, Raza -->
+                <div class="sheet-top-row">
+                    <div class="field-box name-box">
+                        <input type="text" id="field-name" name="name" required placeholder=" ">
+                        <label>Nombre del Personaje</label>
+                    </div>
+                    <div class="field-box-group">
+                        <div class="field-box small">
+                            <select id="field-class" name="class" required>
+                                <option value="">-</option>
+                            </select>
+                            <label>Clase</label>
+                        </div>
+                        <div class="field-box small">
+                            <input type="number" id="field-level" name="level" min="1" max="20" value="1">
+                            <label>Nivel</label>
+                        </div>
+                        <div class="field-box small">
+                            <select id="field-race" name="race" required>
+                                <option value="">-</option>
+                            </select>
+                            <label>Raza</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Segunda fila: Trasfondo, Alineamiento -->
+                <div class="sheet-row">
+                    <div class="field-box">
+                        <input type="text" id="field-background" name="background" placeholder=" ">
+                        <label>Trasfondo</label>
+                    </div>
+                    <div class="field-box">
+                        <select id="field-alignment" name="alignment">
+                            <option value="">-</option>
+                        </select>
+                        <label>Alineamiento</label>
+                    </div>
+                </div>
+
+                <!-- Área principal: Atributos + Combate -->
+                <div class="sheet-main">
+                    <!-- Columna izquierda: Atributos -->
+                    <div class="attributes-column">
+                        <h3 class="section-title">ATRIBUTOS</h3>
+                        <div class="attribute-box" data-attr="strength">
+                            <span class="attr-name">FUE</span>
+                            <input type="number" id="field-strength" name="strength" min="1" max="30" value="10" class="attr-value">
+                            <span class="attr-modifier" id="mod-strength">+0</span>
+                        </div>
+                        <div class="attribute-box" data-attr="dexterity">
+                            <span class="attr-name">DES</span>
+                            <input type="number" id="field-dexterity" name="dexterity" min="1" max="30" value="10" class="attr-value">
+                            <span class="attr-modifier" id="mod-dexterity">+0</span>
+                        </div>
+                        <div class="attribute-box" data-attr="constitution">
+                            <span class="attr-name">CON</span>
+                            <input type="number" id="field-constitution" name="constitution" min="1" max="30" value="10" class="attr-value">
+                            <span class="attr-modifier" id="mod-constitution">+0</span>
+                        </div>
+                        <div class="attribute-box" data-attr="intelligence">
+                            <span class="attr-name">INT</span>
+                            <input type="number" id="field-intelligence" name="intelligence" min="1" max="30" value="10" class="attr-value">
+                            <span class="attr-modifier" id="mod-intelligence">+0</span>
+                        </div>
+                        <div class="attribute-box" data-attr="wisdom">
+                            <span class="attr-name">SAB</span>
+                            <input type="number" id="field-wisdom" name="wisdom" min="1" max="30" value="10" class="attr-value">
+                            <span class="attr-modifier" id="mod-wisdom">+0</span>
+                        </div>
+                        <div class="attribute-box" data-attr="charisma">
+                            <span class="attr-name">CAR</span>
+                            <input type="number" id="field-charisma" name="charisma" min="1" max="30" value="10" class="attr-value">
+                            <span class="attr-modifier" id="mod-charisma">+0</span>
+                        </div>
+                    </div>
+
+                    <!-- Columna central: Stats de combate -->
+                    <div class="combat-column">
+                        <div class="combat-stats">
+                            <div class="combat-box ac">
+                                <span class="combat-label">CLASE DE ARMADURA</span>
+                                <input type="number" id="field-armor_class" name="armor_class" value="10" class="combat-value">
+                            </div>
+                            <div class="combat-box initiative">
+                                <span class="combat-label">INICIATIVA</span>
+                                <input type="number" id="field-initiative_bonus" name="initiative_bonus" value="0" class="combat-value">
+                            </div>
+                            <div class="combat-box speed">
+                                <span class="combat-label">VELOCIDAD</span>
+                                <input type="number" id="field-speed" name="speed" value="30" class="combat-value">
+                                <span class="unit">pies</span>
+                            </div>
+                        </div>
+
+                        <!-- HP Box -->
+                        <div class="hp-section">
+                            <h4>PUNTOS DE GOLPE</h4>
+                            <div class="hp-boxes">
+                                <div class="hp-box">
+                                    <label>Máximo</label>
+                                    <input type="number" id="field-max_hp" name="max_hp" min="1" value="10">
+                                </div>
+                                <div class="hp-box current">
+                                    <label>Actuales</label>
+                                    <input type="number" id="field-hp" name="hp" min="0" value="10">
+                                </div>
+                                <div class="hp-box temp">
+                                    <label>Temp</label>
+                                    <input type="number" id="field-temp_hp" name="temp_hp" min="0" value="0">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Dados de golpe -->
+                        <div class="hit-dice-section">
+                            <label>Dados de Golpe</label>
+                            <input type="text" id="field-hit_dice" name="hit_dice" value="1d8" placeholder="1d8">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tiradas de salvación -->
+                <div class="sheet-section saving-throws">
+                    <h3 class="section-title">TIRADAS DE SALVACIÓN</h3>
+                    <div class="saves-grid">
+                        <label class="save-item"><input type="checkbox" name="saving_throws" value="Fuerza"> FUE</label>
+                        <label class="save-item"><input type="checkbox" name="saving_throws" value="Destreza"> DES</label>
+                        <label class="save-item"><input type="checkbox" name="saving_throws" value="Constitución"> CON</label>
+                        <label class="save-item"><input type="checkbox" name="saving_throws" value="Inteligencia"> INT</label>
+                        <label class="save-item"><input type="checkbox" name="saving_throws" value="Sabiduría"> SAB</label>
+                        <label class="save-item"><input type="checkbox" name="saving_throws" value="Carisma"> CAR</label>
+                    </div>
+                </div>
+
+                <!-- Habilidades (Skills) - Contraído por defecto -->
+                <details class="sheet-section skills-section">
+                    <summary class="section-title">COMPETENCIAS EN HABILIDADES</summary>
+                    <div class="skills-grid">
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Acrobacias"> Acrobacias (DES)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Arcanos"> Arcanos (INT)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Atletismo"> Atletismo (FUE)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Engaño"> Engaño (CAR)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Historia"> Historia (INT)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Interpretación"> Interpretación (CAR)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Intimidación"> Intimidación (CAR)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Investigación"> Investigación (INT)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Juego de manos"> Juego de manos (DES)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Medicina"> Medicina (SAB)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Naturaleza"> Naturaleza (INT)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Percepción"> Percepción (SAB)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Perspicacia"> Perspicacia (SAB)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Persuasión"> Persuasión (CAR)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Religión"> Religión (INT)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Sigilo"> Sigilo (DES)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Supervivencia"> Supervivencia (SAB)</label>
+                        <label class="skill-item"><input type="checkbox" name="skill_proficiencies" value="Trato con animales"> Trato con animales (SAB)</label>
+                    </div>
+                </details>
+
+                <!-- Equipo -->
+                <details class="sheet-section equipment-section">
+                    <summary class="section-title">EQUIPO</summary>
+                    <div class="equipment-content">
+                        <div class="field-box">
+                            <input type="text" id="field-armor" name="armor" placeholder=" ">
+                            <label>Armadura</label>
+                        </div>
+                        <div class="field-box">
+                            <textarea id="field-inventory" name="inventory" rows="3" placeholder="Escribe tu equipo aquí..."></textarea>
+                            <label>Inventario</label>
+                        </div>
+                        <div class="field-box small">
+                            <input type="number" id="field-gold" name="gold" value="0" min="0">
+                            <label>Oro (PO)</label>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Conjuros (solo para clases mágicas) -->
+                <details class="sheet-section spells-section" id="spells-section">
+                    <summary class="section-title">🔮 CONJUROS</summary>
+                    <div class="spells-content">
+                        <div class="spell-stats">
+                            <div class="field-box small">
+                                <select id="field-spellcasting_ability" name="spellcasting_ability">
+                                    <option value="">-</option>
+                                    <option value="Inteligencia">INT</option>
+                                    <option value="Sabiduría">SAB</option>
+                                    <option value="Carisma">CAR</option>
+                                </select>
+                                <label>Aptitud</label>
+                            </div>
+                            <div class="field-box small">
+                                <input type="number" id="field-spell_save_dc" name="spell_save_dc" value="10">
+                                <label>CD Salvación</label>
+                            </div>
+                            <div class="field-box small">
+                                <input type="number" id="field-spell_attack_bonus" name="spell_attack_bonus" value="0">
+                                <label>Ataque</label>
+                            </div>
+                        </div>
+                        <div class="field-box">
+                            <textarea id="field-cantrips" name="cantrips" rows="2" placeholder="Trucos..."></textarea>
+                            <label>Trucos</label>
+                        </div>
+                        <div class="field-box">
+                            <textarea id="field-spells_known" name="spells_known" rows="4" placeholder="Conjuros conocidos..."></textarea>
+                            <label>Conjuros</label>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Rasgos y características -->
+                <details class="sheet-section features-section">
+                    <summary class="section-title">RASGOS Y CARACTERÍSTICAS</summary>
+                    <div class="features-content">
+                        <div class="field-box">
+                            <textarea id="field-racial_traits" name="racial_traits" rows="2" placeholder="Rasgos de tu raza..."></textarea>
+                            <label>Rasgos Raciales</label>
+                        </div>
+                        <div class="field-box">
+                            <textarea id="field-class_features" name="class_features" rows="2" placeholder="Rasgos de tu clase..."></textarea>
+                            <label>Rasgos de Clase</label>
+                        </div>
+                        <div class="field-box">
+                            <textarea id="field-feats" name="feats" rows="2" placeholder="Dotes..."></textarea>
+                            <label>Dotes</label>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Personalidad -->
+                <details class="sheet-section personality-section">
+                    <summary class="section-title">PERSONALIDAD E HISTORIA</summary>
+                    <div class="personality-content">
+                        <div class="field-box">
+                            <textarea id="field-personality_traits" name="personality_traits" rows="2" placeholder="Describe tu personalidad..."></textarea>
+                            <label>Rasgos de Personalidad</label>
+                        </div>
+                        <div class="personality-grid">
+                            <div class="field-box">
+                                <textarea id="field-ideals" name="ideals" rows="2" placeholder="Tus ideales..."></textarea>
+                                <label>Ideales</label>
+                            </div>
+                            <div class="field-box">
+                                <textarea id="field-bonds" name="bonds" rows="2" placeholder="Tus vínculos..."></textarea>
+                                <label>Vínculos</label>
+                            </div>
+                        </div>
+                        <div class="field-box">
+                            <textarea id="field-flaws" name="flaws" rows="2" placeholder="Tus defectos..."></textarea>
+                            <label>Defectos</label>
+                        </div>
+                        <div class="field-box">
+                            <textarea id="field-backstory" name="backstory" rows="4" placeholder="Tu historia de fondo..."></textarea>
+                            <label>Historia</label>
+                        </div>
+                    </div>
+                </details>
+
+                <!-- Container para campos dinámicos de otros sistemas -->
+                <div id="form-fields-container" class="hidden"></div>
                 
-                <div class="form-actions">
+                <!-- Acciones del formulario -->
+                <div class="sheet-actions">
                     <button type="button" id="btn-form-save" class="btn btn-secondary">💾 Guardar Borrador</button>
-                    <button type="submit" id="btn-form-submit" class="btn btn-success">📤 Enviar al GM</button>
+                    <button type="submit" id="btn-form-submit" class="btn btn-success btn-large">📤 Enviar al GM</button>
                 </div>
             </form>
         </section>

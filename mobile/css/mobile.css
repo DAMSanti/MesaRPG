@@ -1022,3 +1022,512 @@ header h2 {
     color: white;
 }
 
+/* ============================================
+   D&D Character Sheet Styles
+   ============================================ */
+
+.dnd-sheet {
+    background: #fdf6e3;
+    background-image: 
+        linear-gradient(rgba(139, 90, 43, 0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(139, 90, 43, 0.05) 1px, transparent 1px);
+    background-size: 20px 20px;
+    padding: 15px;
+    font-family: 'Crimson Text', 'Georgia', serif;
+    color: #2c1810;
+    min-height: 100%;
+    border: 3px double #8b5a2b;
+    box-shadow: inset 0 0 30px rgba(139, 90, 43, 0.1);
+}
+
+.sheet-header {
+    text-align: center;
+    border-bottom: 2px solid #8b5a2b;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.sheet-logo {
+    font-size: 32px;
+    margin-bottom: 5px;
+}
+
+.sheet-title {
+    font-size: 18px;
+    font-weight: bold;
+    letter-spacing: 3px;
+    color: #4a2c17;
+    margin: 0;
+    text-transform: uppercase;
+}
+
+/* Field boxes - estilo vintage */
+.field-box {
+    position: relative;
+    margin-bottom: 12px;
+}
+
+.field-box label {
+    position: absolute;
+    bottom: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #5a3d2b;
+    background: #fdf6e3;
+    padding: 0 5px;
+    white-space: nowrap;
+}
+
+.field-box input,
+.field-box select,
+.field-box textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #8b5a2b;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.6);
+    font-family: inherit;
+    font-size: 14px;
+    color: #2c1810;
+    text-align: center;
+}
+
+.field-box input:focus,
+.field-box select:focus,
+.field-box textarea:focus {
+    outline: none;
+    border-color: #4a2c17;
+    background: rgba(255, 255, 255, 0.9);
+    box-shadow: 0 0 5px rgba(139, 90, 43, 0.3);
+}
+
+.field-box textarea {
+    text-align: left;
+    resize: vertical;
+    min-height: 60px;
+}
+
+.field-box.small {
+    flex: 1;
+    min-width: 70px;
+}
+
+/* Top row - Nombre prominente */
+.sheet-top-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.name-box input {
+    font-size: 18px;
+    font-weight: bold;
+    padding: 12px;
+}
+
+.field-box-group {
+    display: flex;
+    gap: 8px;
+}
+
+/* Rows */
+.sheet-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.sheet-row .field-box {
+    flex: 1;
+}
+
+/* Main area - Attributes + Combat */
+.sheet-main {
+    display: flex;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+/* Attributes Column */
+.attributes-column {
+    width: 100px;
+    flex-shrink: 0;
+}
+
+.section-title {
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #4a2c17;
+    text-align: center;
+    margin-bottom: 10px;
+    border-bottom: 1px solid #8b5a2b;
+    padding-bottom: 5px;
+}
+
+.attribute-box {
+    background: linear-gradient(145deg, #f5e6d3 0%, #e8d5c4 100%);
+    border: 2px solid #8b5a2b;
+    border-radius: 8px;
+    padding: 8px 5px;
+    text-align: center;
+    margin-bottom: 8px;
+    position: relative;
+}
+
+.attr-name {
+    display: block;
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    color: #4a2c17;
+    margin-bottom: 3px;
+}
+
+.attr-value {
+    width: 45px !important;
+    height: 30px;
+    font-size: 18px !important;
+    font-weight: bold;
+    text-align: center !important;
+    padding: 2px !important;
+    margin: 0 auto;
+    display: block;
+}
+
+.attr-modifier {
+    display: block;
+    width: 35px;
+    height: 25px;
+    line-height: 25px;
+    margin: 5px auto 0;
+    background: #4a2c17;
+    color: #fdf6e3;
+    border-radius: 50%;
+    font-size: 12px;
+    font-weight: bold;
+}
+
+/* Combat Column */
+.combat-column {
+    flex: 1;
+}
+
+.combat-stats {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 15px;
+}
+
+.combat-box {
+    flex: 1;
+    background: linear-gradient(145deg, #f5e6d3 0%, #e8d5c4 100%);
+    border: 2px solid #8b5a2b;
+    border-radius: 8px;
+    padding: 8px;
+    text-align: center;
+}
+
+.combat-box.ac {
+    position: relative;
+}
+
+.combat-box.ac::before {
+    content: '🛡️';
+    position: absolute;
+    top: -8px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 16px;
+}
+
+.combat-label {
+    display: block;
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #5a3d2b;
+    margin-bottom: 5px;
+}
+
+.combat-value {
+    width: 50px !important;
+    height: 35px;
+    font-size: 20px !important;
+    font-weight: bold;
+    text-align: center !important;
+    padding: 2px !important;
+    margin: 0 auto;
+    display: block;
+}
+
+.combat-box .unit {
+    display: block;
+    font-size: 9px;
+    color: #5a3d2b;
+    margin-top: 2px;
+}
+
+/* HP Section */
+.hp-section {
+    background: linear-gradient(145deg, #ffe4e4 0%, #ffd0d0 100%);
+    border: 2px solid #c44;
+    border-radius: 8px;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+
+.hp-section h4 {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #922;
+    text-align: center;
+    margin: 0 0 10px 0;
+}
+
+.hp-boxes {
+    display: flex;
+    gap: 8px;
+}
+
+.hp-box {
+    flex: 1;
+    text-align: center;
+}
+
+.hp-box label {
+    display: block;
+    font-size: 9px;
+    color: #922;
+    margin-bottom: 3px;
+    position: static;
+    transform: none;
+    background: transparent;
+}
+
+.hp-box input {
+    width: 100%;
+    height: 35px;
+    font-size: 18px;
+    font-weight: bold;
+    text-align: center;
+    border: 1px solid #c44;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.8);
+}
+
+.hp-box.current input {
+    background: #fff;
+    border-width: 2px;
+}
+
+.hp-box.temp input {
+    background: rgba(200, 200, 255, 0.5);
+    border-color: #66a;
+}
+
+/* Hit Dice */
+.hit-dice-section {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.hit-dice-section label {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: #5a3d2b;
+    position: static;
+    transform: none;
+    background: transparent;
+}
+
+.hit-dice-section input {
+    flex: 1;
+    text-align: center;
+    padding: 8px;
+    border: 1px solid #8b5a2b;
+    border-radius: 4px;
+    background: rgba(255,255,255,0.6);
+}
+
+/* Collapsible Sections */
+.sheet-section {
+    background: rgba(255, 255, 255, 0.4);
+    border: 1px solid #8b5a2b;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+}
+
+.sheet-section summary {
+    cursor: pointer;
+    padding: 10px 15px;
+    background: linear-gradient(145deg, #e8d5c4 0%, #dcc9b8 100%);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.sheet-section summary::-webkit-details-marker {
+    display: none;
+}
+
+.sheet-section summary::before {
+    content: '▶';
+    font-size: 10px;
+    transition: transform 0.2s;
+}
+
+.sheet-section[open] summary::before {
+    transform: rotate(90deg);
+}
+
+.sheet-section summary .section-title {
+    margin: 0;
+    border: none;
+    padding: 0;
+}
+
+/* Saving Throws */
+.saving-throws {
+    padding: 10px;
+}
+
+.saving-throws .section-title {
+    margin-bottom: 10px;
+}
+
+.saves-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+}
+
+.save-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    padding: 5px;
+    background: rgba(255,255,255,0.5);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.save-item input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    accent-color: #4a2c17;
+}
+
+/* Skills Grid */
+.skills-grid {
+    padding: 10px;
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+}
+
+.skill-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    padding: 4px 8px;
+    background: rgba(255,255,255,0.5);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.skill-item input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    accent-color: #4a2c17;
+}
+
+/* Equipment, Spells, Features, Personality content */
+.equipment-content,
+.spells-content,
+.features-content,
+.personality-content {
+    padding: 15px;
+}
+
+.spell-stats {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+}
+
+.personality-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+/* Sheet Actions */
+.sheet-actions {
+    display: flex;
+    gap: 10px;
+    padding: 20px 0 10px;
+    border-top: 2px solid #8b5a2b;
+    margin-top: 20px;
+}
+
+.sheet-actions .btn {
+    flex: 1;
+    padding: 15px;
+    font-size: 14px;
+    font-weight: bold;
+    border-radius: 8px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.sheet-actions .btn-secondary {
+    background: #8b5a2b;
+    color: #fdf6e3;
+    border: none;
+}
+
+.sheet-actions .btn-success {
+    background: linear-gradient(145deg, #2d5016 0%, #1f3a0f 100%);
+    color: #fff;
+    border: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 400px) {
+    .sheet-main {
+        flex-direction: column;
+    }
+    
+    .attributes-column {
+        width: 100%;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+    }
+    
+    .attributes-column .section-title {
+        grid-column: 1 / -1;
+    }
+    
+    .combat-stats {
+        flex-wrap: wrap;
+    }
+    
+    .personality-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+
