@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MesaRPG - Panel de Admin</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/admin/css/admin.css">
+</head>
+<body>
+    <div id="connection-status" class="disconnected">Desconectado</div>
+    
+    <div class="container">
+        <header class="header">
+            <h1>🎮 MesaRPG - Panel de Control</h1>
+            <div id="game-system-selector" class="system-selector">
+                <label>Sistema de Juego:</label>
+                <select id="system-select" onchange="setGameSystem(this.value)">
+                    <option value="">Cargando...</option>
+                </select>
+            </div>
+        </header>
+
+        <!-- Tabs de navegación -->
+        <nav class="tabs">
+            <button class="tab active" data-tab="game">🎲 Partida</button>
+            <button class="tab" data-tab="sheets">📋 Fichas</button>
+            <button class="tab" data-tab="tokens">🎯 Tokens</button>
+            <button class="tab" data-tab="combat">⚔️ Combate</button>
+        </nav>
+
+        <!-- Tab: Partida -->
+        <section id="tab-game" class="tab-content active">
+            <div class="grid">
+                <div class="card">
+                    <h2>📡 Estado de Conexiones</h2>
+                    <div class="status-grid">
+                        <div class="status-item">
+                            <span class="status-label">Pantallas</span>
+                            <span id="display-count" class="status-value">0</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Móviles</span>
+                            <span id="mobile-count" class="status-value">0</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Cámara</span>
+                            <span id="camera-status" class="status-value">❌</span>
+                        </div>
+                    </div>
+                    <div id="player-list-container" class="player-list">
+                        <h3>Jugadores Conectados</h3>
+                        <div id="player-list">Ninguno</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>👥 Personajes en Juego</h2>
+                    <div id="active-characters" class="character-list">
+                        <p class="empty-state">No hay personajes en juego</p>
+                    </div>
+                </div>
+
+                <div class="card full-width">
+                    <h2>📜 Log de Acciones</h2>
+                    <div id="action-log" class="log"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab: Fichas de Personaje -->
+        <section id="tab-sheets" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>⏳ Fichas Pendientes de Aprobación</h2>
+                    <div id="pending-sheets" class="sheet-list">
+                        <p class="empty-state">No hay fichas pendientes</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>✅ Fichas Aprobadas</h2>
+                    <div id="approved-sheets" class="sheet-list">
+                        <p class="empty-state">No hay fichas aprobadas</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Modal para ver/editar ficha -->
+            <div id="sheet-modal" class="modal hidden">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 id="sheet-modal-title">Ficha de Personaje</h2>
+                        <button class="close-btn" onclick="closeSheetModal()">×</button>
+                    </div>
+                    <div id="sheet-modal-body" class="modal-body">
+                        <!-- Contenido dinámico -->
+                    </div>
+                    <div class="modal-footer" id="sheet-modal-footer">
+                        <!-- Botones dinámicos -->
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab: Asignación de Tokens -->
+        <section id="tab-tokens" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>🎯 Asignar Tokens a Personajes</h2>
+                    <p class="help-text">Selecciona una ficha aprobada y asígnale un token/marcador ArUco.</p>
+                    
+                    <div id="token-assignment">
+                        <div class="token-form">
+                            <label>Ficha:</label>
+                            <select id="sheet-for-token">
+                                <option value="">Selecciona una ficha aprobada</option>
+                            </select>
+                        </div>
+                        <div class="token-form">
+                            <label>Marcador ArUco:</label>
+                            <select id="marker-select">
+                                <option value="">Selecciona un marcador</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" onclick="assignToken()">Asignar Token</button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📋 Tokens Asignados</h2>
+                    <div id="assigned-tokens" class="token-list">
+                        <p class="empty-state">No hay tokens asignados</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab: Combate -->
+        <section id="tab-combat" class="tab-content">
+            <div class="grid">
+                <div class="card">
+                    <h2>⚔️ Control de Combate</h2>
+                    <div class="combat-controls">
+                        <button class="btn btn-success" onclick="startCombat()">▶️ Iniciar Combate</button>
+                        <button class="btn btn-danger" onclick="endCombat()">⏹️ Finalizar Combate</button>
+                        <button class="btn btn-primary" onclick="nextTurn()">⏭️ Siguiente Turno</button>
+                    </div>
+                    <div class="combat-status">
+                        <div class="status-row">
+                            <span>Estado:</span>
+                            <span id="combat-state">Fuera de combate</span>
+                        </div>
+                        <div class="status-row">
+                            <span>Turno:</span>
+                            <span id="current-turn">-</span>
+                        </div>
+                        <div class="status-row">
+                            <span>Personaje Activo:</span>
+                            <span id="active-character">-</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📊 Orden de Iniciativa</h2>
+                    <div id="initiative-order" class="initiative-list">
+                        <p class="empty-state">No hay combate activo</p>
+                    </div>
+                </div>
+
+                <div class="card full-width">
+                    <h2>🧪 Herramientas de Debug</h2>
+                    <div class="debug-tools">
+                        <button class="btn" onclick="addTestCharacter()">+ Añadir Personaje Test</button>
+                        <button class="btn btn-danger" onclick="clearCharacters()">🗑️ Limpiar Personajes</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="/admin/js/admin.js"></script>
+</body>
+</html>

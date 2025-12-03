@@ -1,0 +1,297 @@
+{
+    "systems": {
+        "dnd5e": {
+            "id": "dnd5e",
+            "name": "Dungeons & Dragons 5e",
+            "shortName": "D&D 5e",
+            "icon": "🐉",
+            "gridType": "square",
+            "gridSize": 50,
+            "distanceUnit": "pies",
+            "distancePerSquare": 5,
+            "characterSheet": {
+                "sections": [
+                    {
+                        "id": "basic",
+                        "name": "Información Básica",
+                        "fields": [
+                            {"id": "name", "name": "Nombre", "type": "text", "required": true},
+                            {"id": "race", "name": "Raza", "type": "select", "options": ["Humano", "Elfo", "Enano", "Halfling", "Gnomo", "Semielfo", "Semiorco", "Tiefling", "Dracónido"], "required": true},
+                            {"id": "class", "name": "Clase", "type": "select", "options": ["Bárbaro", "Bardo", "Clérigo", "Druida", "Guerrero", "Monje", "Paladín", "Explorador", "Pícaro", "Hechicero", "Brujo", "Mago"], "required": true},
+                            {"id": "level", "name": "Nivel", "type": "number", "min": 1, "max": 20, "default": 1, "required": true},
+                            {"id": "background", "name": "Trasfondo", "type": "text"},
+                            {"id": "alignment", "name": "Alineamiento", "type": "select", "options": ["Legal Bueno", "Neutral Bueno", "Caótico Bueno", "Legal Neutral", "Neutral", "Caótico Neutral", "Legal Malvado", "Neutral Malvado", "Caótico Malvado"]}
+                        ]
+                    },
+                    {
+                        "id": "attributes",
+                        "name": "Atributos",
+                        "fields": [
+                            {"id": "strength", "name": "Fuerza", "type": "number", "min": 1, "max": 30, "default": 10, "showModifier": true},
+                            {"id": "dexterity", "name": "Destreza", "type": "number", "min": 1, "max": 30, "default": 10, "showModifier": true},
+                            {"id": "constitution", "name": "Constitución", "type": "number", "min": 1, "max": 30, "default": 10, "showModifier": true},
+                            {"id": "intelligence", "name": "Inteligencia", "type": "number", "min": 1, "max": 30, "default": 10, "showModifier": true},
+                            {"id": "wisdom", "name": "Sabiduría", "type": "number", "min": 1, "max": 30, "default": 10, "showModifier": true},
+                            {"id": "charisma", "name": "Carisma", "type": "number", "min": 1, "max": 30, "default": 10, "showModifier": true}
+                        ]
+                    },
+                    {
+                        "id": "combat",
+                        "name": "Combate",
+                        "fields": [
+                            {"id": "hp", "name": "Puntos de Golpe", "type": "number", "min": 1, "default": 10, "required": true},
+                            {"id": "max_hp", "name": "PG Máximos", "type": "number", "min": 1, "default": 10, "required": true},
+                            {"id": "temp_hp", "name": "PG Temporales", "type": "number", "min": 0, "default": 0},
+                            {"id": "armor_class", "name": "Clase de Armadura", "type": "number", "min": 1, "default": 10},
+                            {"id": "initiative_bonus", "name": "Bonificador de Iniciativa", "type": "number", "default": 0},
+                            {"id": "speed", "name": "Velocidad (pies)", "type": "number", "min": 0, "default": 30},
+                            {"id": "hit_dice", "name": "Dados de Golpe", "type": "text", "default": "1d8"}
+                        ]
+                    },
+                    {
+                        "id": "skills",
+                        "name": "Habilidades",
+                        "fields": [
+                            {"id": "proficiency_bonus", "name": "Bonificador de Competencia", "type": "number", "default": 2},
+                            {"id": "saving_throws", "name": "Tiradas de Salvación", "type": "multiselect", "options": ["Fuerza", "Destreza", "Constitución", "Inteligencia", "Sabiduría", "Carisma"]},
+                            {"id": "skill_proficiencies", "name": "Competencias", "type": "multiselect", "options": ["Acrobacias", "Arcanos", "Atletismo", "Engaño", "Historia", "Interpretación", "Intimidación", "Investigación", "Juego de manos", "Medicina", "Naturaleza", "Percepción", "Perspicacia", "Persuasión", "Religión", "Sigilo", "Supervivencia", "Trato con animales"]}
+                        ]
+                    },
+                    {
+                        "id": "equipment",
+                        "name": "Equipo",
+                        "fields": [
+                            {"id": "weapons", "name": "Armas", "type": "list", "itemFields": [
+                                {"id": "name", "name": "Nombre", "type": "text"},
+                                {"id": "damage", "name": "Daño", "type": "text"},
+                                {"id": "type", "name": "Tipo", "type": "text"}
+                            ]},
+                            {"id": "armor", "name": "Armadura", "type": "text"},
+                            {"id": "inventory", "name": "Inventario", "type": "textarea"},
+                            {"id": "gold", "name": "Oro", "type": "number", "default": 0}
+                        ]
+                    },
+                    {
+                        "id": "spells",
+                        "name": "Conjuros",
+                        "conditionalOn": {"field": "class", "values": ["Bardo", "Clérigo", "Druida", "Hechicero", "Brujo", "Mago", "Paladín", "Explorador"]},
+                        "fields": [
+                            {"id": "spellcasting_ability", "name": "Aptitud Mágica", "type": "select", "options": ["Inteligencia", "Sabiduría", "Carisma"]},
+                            {"id": "spell_save_dc", "name": "CD de Salvación", "type": "number"},
+                            {"id": "spell_attack_bonus", "name": "Bonificador de Ataque", "type": "number"},
+                            {"id": "cantrips", "name": "Trucos", "type": "textarea"},
+                            {"id": "spells_known", "name": "Conjuros Conocidos", "type": "textarea"}
+                        ]
+                    },
+                    {
+                        "id": "features",
+                        "name": "Rasgos y Características",
+                        "fields": [
+                            {"id": "racial_traits", "name": "Rasgos Raciales", "type": "textarea"},
+                            {"id": "class_features", "name": "Rasgos de Clase", "type": "textarea"},
+                            {"id": "feats", "name": "Dotes", "type": "textarea"}
+                        ]
+                    },
+                    {
+                        "id": "personality",
+                        "name": "Personalidad",
+                        "fields": [
+                            {"id": "personality_traits", "name": "Rasgos de Personalidad", "type": "textarea"},
+                            {"id": "ideals", "name": "Ideales", "type": "textarea"},
+                            {"id": "bonds", "name": "Vínculos", "type": "textarea"},
+                            {"id": "flaws", "name": "Defectos", "type": "textarea"},
+                            {"id": "backstory", "name": "Historia", "type": "textarea"}
+                        ]
+                    }
+                ],
+                "derivedValues": {
+                    "modifier": "(value) => Math.floor((value - 10) / 2)",
+                    "proficiency_by_level": [2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 6, 6, 6, 6]
+                }
+            },
+            "actions": [
+                {"id": "attack", "name": "Atacar", "icon": "⚔️", "type": "combat"},
+                {"id": "cast_spell", "name": "Lanzar Conjuro", "icon": "✨", "type": "magic"},
+                {"id": "dash", "name": "Carrera", "icon": "🏃", "type": "movement"},
+                {"id": "dodge", "name": "Esquivar", "icon": "🛡️", "type": "defense"},
+                {"id": "disengage", "name": "Desengancharse", "icon": "↩️", "type": "movement"},
+                {"id": "help", "name": "Ayudar", "icon": "🤝", "type": "support"},
+                {"id": "hide", "name": "Esconderse", "icon": "👤", "type": "stealth"},
+                {"id": "ready", "name": "Preparar", "icon": "⏳", "type": "special"},
+                {"id": "use_object", "name": "Usar Objeto", "icon": "🎒", "type": "item"}
+            ]
+        },
+        "battletech": {
+            "id": "battletech",
+            "name": "BattleTech",
+            "shortName": "BattleTech",
+            "icon": "🤖",
+            "gridType": "hex",
+            "gridSize": 60,
+            "distanceUnit": "hexágonos",
+            "distancePerSquare": 1,
+            "characterSheet": {
+                "sections": [
+                    {
+                        "id": "mech_info",
+                        "name": "Información del Mech",
+                        "fields": [
+                            {"id": "name", "name": "Nombre del Piloto", "type": "text", "required": true},
+                            {"id": "callsign", "name": "Indicativo", "type": "text"},
+                            {"id": "mech_model", "name": "Modelo de Mech", "type": "text", "required": true},
+                            {"id": "mech_variant", "name": "Variante", "type": "text"},
+                            {"id": "tonnage", "name": "Tonelaje", "type": "number", "min": 20, "max": 100, "required": true},
+                            {"id": "tech_base", "name": "Base Tecnológica", "type": "select", "options": ["Inner Sphere", "Clan", "Mixed"]}
+                        ]
+                    },
+                    {
+                        "id": "pilot_stats",
+                        "name": "Estadísticas del Piloto",
+                        "fields": [
+                            {"id": "gunnery", "name": "Artillería", "type": "number", "min": 0, "max": 8, "default": 4},
+                            {"id": "piloting", "name": "Pilotaje", "type": "number", "min": 0, "max": 8, "default": 5},
+                            {"id": "edge", "name": "Edge Points", "type": "number", "min": 0, "default": 0}
+                        ]
+                    },
+                    {
+                        "id": "mech_stats",
+                        "name": "Estadísticas del Mech",
+                        "fields": [
+                            {"id": "walk_mp", "name": "Movimiento Andando", "type": "number", "min": 0, "default": 4},
+                            {"id": "run_mp", "name": "Movimiento Corriendo", "type": "number", "min": 0, "default": 6},
+                            {"id": "jump_mp", "name": "Movimiento Saltando", "type": "number", "min": 0, "default": 0}
+                        ]
+                    },
+                    {
+                        "id": "armor",
+                        "name": "Blindaje",
+                        "fields": [
+                            {"id": "armor_head", "name": "Cabeza", "type": "number", "min": 0, "default": 9},
+                            {"id": "armor_ct", "name": "Torso Central", "type": "number", "min": 0, "default": 30},
+                            {"id": "armor_ct_rear", "name": "Torso Central (Trasero)", "type": "number", "min": 0, "default": 10},
+                            {"id": "armor_lt", "name": "Torso Izquierdo", "type": "number", "min": 0, "default": 20},
+                            {"id": "armor_lt_rear", "name": "Torso Izq. (Trasero)", "type": "number", "min": 0, "default": 6},
+                            {"id": "armor_rt", "name": "Torso Derecho", "type": "number", "min": 0, "default": 20},
+                            {"id": "armor_rt_rear", "name": "Torso Der. (Trasero)", "type": "number", "min": 0, "default": 6},
+                            {"id": "armor_la", "name": "Brazo Izquierdo", "type": "number", "min": 0, "default": 16},
+                            {"id": "armor_ra", "name": "Brazo Derecho", "type": "number", "min": 0, "default": 16},
+                            {"id": "armor_ll", "name": "Pierna Izquierda", "type": "number", "min": 0, "default": 20},
+                            {"id": "armor_rl", "name": "Pierna Derecha", "type": "number", "min": 0, "default": 20}
+                        ]
+                    },
+                    {
+                        "id": "internal",
+                        "name": "Estructura Interna",
+                        "fields": [
+                            {"id": "internal_head", "name": "Cabeza", "type": "number", "min": 0, "default": 3},
+                            {"id": "internal_ct", "name": "Torso Central", "type": "number", "min": 0, "default": 21},
+                            {"id": "internal_lt", "name": "Torso Izquierdo", "type": "number", "min": 0, "default": 14},
+                            {"id": "internal_rt", "name": "Torso Derecho", "type": "number", "min": 0, "default": 14},
+                            {"id": "internal_la", "name": "Brazo Izquierdo", "type": "number", "min": 0, "default": 10},
+                            {"id": "internal_ra", "name": "Brazo Derecho", "type": "number", "min": 0, "default": 10},
+                            {"id": "internal_ll", "name": "Pierna Izquierda", "type": "number", "min": 0, "default": 14},
+                            {"id": "internal_rl", "name": "Pierna Derecha", "type": "number", "min": 0, "default": 14}
+                        ]
+                    },
+                    {
+                        "id": "weapons",
+                        "name": "Armamento",
+                        "fields": [
+                            {"id": "weapons_list", "name": "Armas", "type": "list", "itemFields": [
+                                {"id": "name", "name": "Arma", "type": "text"},
+                                {"id": "location", "name": "Ubicación", "type": "select", "options": ["LA", "RA", "LT", "RT", "CT", "HD"]},
+                                {"id": "damage", "name": "Daño", "type": "text"},
+                                {"id": "heat", "name": "Calor", "type": "number"},
+                                {"id": "range_min", "name": "Alcance Mín", "type": "number"},
+                                {"id": "range_short", "name": "Corto", "type": "number"},
+                                {"id": "range_medium", "name": "Medio", "type": "number"},
+                                {"id": "range_long", "name": "Largo", "type": "number"}
+                            ]}
+                        ]
+                    },
+                    {
+                        "id": "heat",
+                        "name": "Gestión de Calor",
+                        "fields": [
+                            {"id": "heat_sinks", "name": "Disipadores", "type": "number", "min": 0, "default": 10},
+                            {"id": "heat_sink_type", "name": "Tipo", "type": "select", "options": ["Single", "Double"]},
+                            {"id": "current_heat", "name": "Calor Actual", "type": "number", "min": 0, "default": 0}
+                        ]
+                    },
+                    {
+                        "id": "ammo",
+                        "name": "Munición",
+                        "fields": [
+                            {"id": "ammo_list", "name": "Munición", "type": "list", "itemFields": [
+                                {"id": "type", "name": "Tipo", "type": "text"},
+                                {"id": "location", "name": "Ubicación", "type": "text"},
+                                {"id": "shots", "name": "Disparos", "type": "number"}
+                            ]}
+                        ]
+                    }
+                ]
+            },
+            "actions": [
+                {"id": "move_walk", "name": "Andar", "icon": "🚶", "type": "movement"},
+                {"id": "move_run", "name": "Correr", "icon": "🏃", "type": "movement"},
+                {"id": "move_jump", "name": "Saltar", "icon": "⬆️", "type": "movement"},
+                {"id": "fire_weapons", "name": "Disparar", "icon": "🎯", "type": "combat"},
+                {"id": "physical_attack", "name": "Ataque Físico", "icon": "👊", "type": "combat"},
+                {"id": "torso_twist", "name": "Girar Torso", "icon": "🔄", "type": "special"},
+                {"id": "stand", "name": "Levantarse", "icon": "⬆️", "type": "special"}
+            ]
+        },
+        "generic": {
+            "id": "generic",
+            "name": "Sistema Genérico",
+            "shortName": "Genérico",
+            "icon": "🎲",
+            "gridType": "square",
+            "gridSize": 50,
+            "distanceUnit": "casillas",
+            "distancePerSquare": 1,
+            "characterSheet": {
+                "sections": [
+                    {
+                        "id": "basic",
+                        "name": "Información Básica",
+                        "fields": [
+                            {"id": "name", "name": "Nombre", "type": "text", "required": true},
+                            {"id": "description", "name": "Descripción", "type": "textarea"}
+                        ]
+                    },
+                    {
+                        "id": "stats",
+                        "name": "Estadísticas",
+                        "fields": [
+                            {"id": "hp", "name": "Puntos de Vida", "type": "number", "min": 1, "default": 10, "required": true},
+                            {"id": "max_hp", "name": "PV Máximos", "type": "number", "min": 1, "default": 10, "required": true},
+                            {"id": "speed", "name": "Velocidad", "type": "number", "min": 0, "default": 6},
+                            {"id": "armor", "name": "Armadura", "type": "number", "min": 0, "default": 0}
+                        ]
+                    },
+                    {
+                        "id": "abilities",
+                        "name": "Habilidades",
+                        "fields": [
+                            {"id": "abilities_list", "name": "Lista de Habilidades", "type": "textarea"}
+                        ]
+                    },
+                    {
+                        "id": "notes",
+                        "name": "Notas",
+                        "fields": [
+                            {"id": "notes", "name": "Notas adicionales", "type": "textarea"}
+                        ]
+                    }
+                ]
+            },
+            "actions": [
+                {"id": "attack", "name": "Atacar", "icon": "⚔️", "type": "combat"},
+                {"id": "defend", "name": "Defender", "icon": "🛡️", "type": "defense"},
+                {"id": "move", "name": "Mover", "icon": "🏃", "type": "movement"},
+                {"id": "use_ability", "name": "Usar Habilidad", "icon": "✨", "type": "special"}
+            ]
+        }
+    }
+}

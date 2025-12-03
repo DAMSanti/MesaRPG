@@ -171,278 +171,30 @@ async def mobile_page():
 
 @app.get("/admin", response_class=HTMLResponse)
 async def admin_page():
-    """Panel de administración del GM"""
-    # Por simplicidad, admin está inline. En producción sería un archivo separado.
-    return """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>MesaRPG - Admin</title>
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-            * { box-sizing: border-box; }
-            body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a2e; color: #eee; }
-            h1 { color: #ffd700; }
-            .container { max-width: 1200px; margin: 0 auto; }
-            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
-            .card { background: #16213e; padding: 20px; border-radius: 10px; }
-            .card h2 { margin-top: 0; color: #00d9ff; }
-            button { 
-                background: #e94560; color: white; border: none; padding: 10px 20px; 
-                border-radius: 5px; cursor: pointer; margin: 5px; font-size: 14px;
-            }
-            button:hover { background: #ff6b6b; }
-            button.success { background: #4caf50; }
-            button.success:hover { background: #66bb6a; }
-            .status { padding: 10px; background: #0f3460; border-radius: 5px; margin: 10px 0; }
-            .character-list { max-height: 300px; overflow-y: auto; }
-            .character-item { 
-                padding: 10px; margin: 5px 0; background: #0f3460; border-radius: 5px;
-                display: flex; justify-content: space-between; align-items: center;
-            }
-            .hp-bar { 
-                width: 100px; height: 10px; background: #333; border-radius: 5px; overflow: hidden;
-            }
-            .hp-fill { height: 100%; background: #4caf50; transition: width 0.3s; }
-            .log { 
-                height: 200px; overflow-y: auto; background: #0a0a15; 
-                padding: 10px; border-radius: 5px; font-family: monospace; font-size: 12px;
-            }
-            .log-entry { margin: 2px 0; }
-            .log-entry.action { color: #ffd700; }
-            .log-entry.system { color: #00d9ff; }
-            .log-entry.error { color: #ff6b6b; }
-            #connection-status { 
-                position: fixed; top: 10px; right: 10px; padding: 10px 20px;
-                border-radius: 20px; font-weight: bold;
-            }
-            #connection-status.connected { background: #4caf50; }
-            #connection-status.disconnected { background: #e94560; }
-        </style>
-    </head>
-    <body>
-        <div id="connection-status" class="disconnected">Desconectado</div>
-        <div class="container">
-            <h1>🎮 Panel de Control - Game Master</h1>
-            
-            <div class="grid">
-                <div class="card">
-                    <h2>⚔️ Combate</h2>
-                    <button class="success" onclick="startCombat()">Iniciar Combate</button>
-                    <button onclick="endCombat()">Finalizar Combate</button>
-                    <button onclick="nextTurn()">Siguiente Turno</button>
-                    <div class="status">
-                        <div>Turno: <span id="current-turn">-</span></div>
-                        <div>Personaje activo: <span id="active-char">-</span></div>
-                        <div>Estado: <span id="combat-status">Fuera de combate</span></div>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <h2>👥 Personajes</h2>
-                    <div id="character-list" class="character-list">
-                        <p>No hay personajes detectados</p>
-                    </div>
-                    <div style="margin-top: 10px;">
-                        <button class="success" onclick="addTestCharacter()">+ Añadir Personaje Test</button>
-                        <button onclick="clearCharacters()">🗑️ Limpiar</button>
-                    </div>
-                </div>
-                
-                <div class="card">
-                    <h2>📡 Conexiones</h2>
-                    <div class="status">
-                        <div>Pantallas: <span id="display-count">0</span></div>
-                        <div>Móviles: <span id="mobile-count">0</span></div>
-                        <div>Jugadores: <span id="player-list">-</span></div>
-                        <div>Cámara: <span id="camera-status">❌</span></div>
-                    </div>
-                    <button onclick="refreshState()">Actualizar Estado</button>
-                </div>
-                
-                <div class="card">
-                    <h2>📜 Log de Acciones</h2>
-                    <div id="action-log" class="log"></div>
-                </div>
-            </div>
-        </div>
-        
-        <script>
-            let ws;
-            let gameState = {};
-            let pingInterval = null;
-            let testCharacterCount = 0;
-            const pingIntervalMs = 25000;
-            
-            function startPing() {
-                stopPing();
-                pingInterval = setInterval(() => {
-                    if (ws && ws.readyState === WebSocket.OPEN) {
-                        ws.send(JSON.stringify({ type: 'ping' }));
-                    }
-                }, pingIntervalMs);
-            }
-            
-            function stopPing() {
-                if (pingInterval) {
-                    clearInterval(pingInterval);
-                    pingInterval = null;
-                }
-            }
-            
-            function connect() {
-                const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/admin`);
-                
-                ws.onopen = () => {
-                    document.getElementById('connection-status').className = 'connected';
-                    document.getElementById('connection-status').textContent = 'Conectado';
-                    log('Conectado al servidor', 'system');
-                    refreshState();
-                    startPing();
-                };
-                
-                ws.onclose = () => {
-                    document.getElementById('connection-status').className = 'disconnected';
-                    document.getElementById('connection-status').textContent = 'Desconectado';
-                    log('Desconectado del servidor', 'error');
-                    stopPing();
-                    setTimeout(connect, 3000);
-                };
-                
-                ws.onmessage = (event) => {
-                    const data = JSON.parse(event.data);
-                    handleMessage(data);
-                };
-            }
-            
-            function handleMessage(data) {
-                // Ignorar mensajes pong
-                if (data.type === 'pong') {
-                    return;
-                }
-                
-                if (data.type === 'state_update' || data.type === 'STATE_UPDATE') {
-                    gameState = data.payload;
-                    updateUI();
-                } else if (data.type === 'action_executed') {
-                    log(data.payload.result?.message || 'Acción ejecutada', 'action');
-                } else if (data.type === 'character_added') {
-                    log(`Personaje añadido: ${data.payload.character?.name}`, 'system');
-                } else if (data.type === 'character_removed') {
-                    log(`Personaje removido: ${data.payload.name}`, 'system');
-                } else if (data.type === 'stats') {
-                    updateConnectionStats(data.payload);
-                }
-                
-                // Actualizar estado si viene en el mensaje
-                if (data.payload?.characters) {
-                    gameState.characters = data.payload.characters;
-                    updateUI();
-                }
-            }
-            
-            function updateUI() {
-                // Actualizar info de combate
-                document.getElementById('current-turn').textContent = gameState.current_turn || '-';
-                document.getElementById('active-char').textContent = 
-                    gameState.characters?.[gameState.active_character_id]?.name || '-';
-                document.getElementById('combat-status').textContent = 
-                    gameState.is_combat ? '⚔️ En combate' : '🕊️ Fuera de combate';
-                
-                // Actualizar lista de personajes
-                const charList = document.getElementById('character-list');
-                if (gameState.characters && Object.keys(gameState.characters).length > 0) {
-                    charList.innerHTML = Object.values(gameState.characters).map(char => `
-                        <div class="character-item">
-                            <div>
-                                <strong>${char.name}</strong><br>
-                                <small>${char.class || char.character_class}</small>
-                            </div>
-                            <div>
-                                <div class="hp-bar">
-                                    <div class="hp-fill" style="width: ${(char.hp/char.max_hp)*100}%"></div>
-                                </div>
-                                <small>${char.hp}/${char.max_hp} HP</small>
-                            </div>
-                        </div>
-                    `).join('');
-                } else {
-                    charList.innerHTML = '<p>No hay personajes detectados</p>';
-                }
-            }
-            
-            function updateConnectionStats(stats) {
-                document.getElementById('display-count').textContent = stats.displays || 0;
-                document.getElementById('mobile-count').textContent = stats.mobiles || 0;
-                document.getElementById('camera-status').textContent = stats.camera ? '✅' : '❌';
-                
-                // Mostrar lista de jugadores móviles
-                const players = stats.mobile_players || [];
-                document.getElementById('player-list').textContent = players.length > 0 
-                    ? players.join(', ') 
-                    : 'Ninguno';
-            }
-            
-            function log(message, type = 'system') {
-                const logDiv = document.getElementById('action-log');
-                const entry = document.createElement('div');
-                entry.className = `log-entry ${type}`;
-                entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
-                logDiv.appendChild(entry);
-                logDiv.scrollTop = logDiv.scrollHeight;
-            }
-            
-            function sendCommand(command, data = {}) {
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ type: command, payload: data }));
-                }
-            }
-            
-            function startCombat() { sendCommand('start_combat'); log('Iniciando combate...', 'action'); }
-            function endCombat() { sendCommand('end_combat'); log('Finalizando combate...', 'action'); }
-            function nextTurn() { sendCommand('next_turn'); log('Siguiente turno...', 'action'); }
-            
-            function addTestCharacter() {
-                testCharacterCount++;
-                fetch('/api/debug/add-test-character?marker_id=' + testCharacterCount, {method: 'POST'})
-                    .then(r => r.json())
-                    .then(data => {
-                        if (data.status === 'success') {
-                            log('Personaje añadido: ' + data.character.name, 'action');
-                            refreshState();
-                        } else {
-                            log('Error: ' + data.message, 'error');
-                        }
-                    })
-                    .catch(e => log('Error añadiendo personaje: ' + e, 'error'));
-            }
-            
-            function clearCharacters() {
-                fetch('/api/debug/clear-characters', {method: 'DELETE'})
-                    .then(r => r.json())
-                    .then(data => {
-                        log('Personajes eliminados', 'system');
-                        testCharacterCount = 0;
-                        refreshState();
-                    })
-                    .catch(e => log('Error: ' + e, 'error'));
-            }
-            
-            function refreshState() { 
-                fetch('/api/state').then(r => r.json()).then(data => {
-                    gameState = data;
-                    updateUI();
-                });
-                fetch('/api/connections').then(r => r.json()).then(updateConnectionStats);
-            }
-            
-            connect();
-            setInterval(refreshState, 3000);  // Actualizar cada 3 segundos
-        </script>
-    </body>
-    </html>
-    """
+    """Panel de administración del GM - Nuevo panel con soporte de sistemas de juego"""
+    admin_dir = BASE_DIR / "admin"
+    html_file = admin_dir / "index.html"
+    if html_file.exists():
+        return FileResponse(html_file)
+    return HTMLResponse("<h1>Admin no configurado</h1><p>Falta el archivo admin/index.html</p>")
+
+
+# === Archivos Estáticos para Admin ===
+ADMIN_DIR = BASE_DIR / "admin"
+
+@app.get("/admin/css/{filename}")
+async def admin_css(filename: str):
+    file_path = ADMIN_DIR / "css" / filename
+    if file_path.exists():
+        return FileResponse(file_path, media_type="text/css")
+    raise HTTPException(status_code=404, detail="CSS file not found")
+
+@app.get("/admin/js/{filename}")
+async def admin_js(filename: str):
+    file_path = ADMIN_DIR / "js" / filename
+    if file_path.exists():
+        return FileResponse(file_path, media_type="application/javascript")
+    raise HTTPException(status_code=404, detail="JS file not found")
 
 
 # === Archivos Estáticos para Display ===
@@ -558,6 +310,121 @@ async def next_turn():
     await game_state.next_turn()
     return {"status": "turn_advanced", "turn": game_state.state.current_turn}
 
+
+# === API de Sistemas de Juego ===
+
+@app.get("/api/systems")
+async def get_game_systems():
+    """Obtiene los sistemas de juego disponibles"""
+    return {"systems": game_state.get_available_systems()}
+
+@app.get("/api/systems/{system_id}")
+async def get_system_config(system_id: str):
+    """Obtiene la configuración completa de un sistema"""
+    config = game_state.get_system_config(system_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Sistema no encontrado")
+    return config
+
+@app.post("/api/systems/set/{system_id}")
+async def set_game_system(system_id: str):
+    """Establece el sistema de juego activo (solo GM)"""
+    success = await game_state.set_game_system(system_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Sistema no válido")
+    return {"status": "success", "system_id": system_id}
+
+@app.post("/api/session/select-system")
+async def select_game_system(data: dict):
+    """Establece el sistema de juego activo (endpoint alternativo para admin panel)"""
+    system_id = data.get("system_id")
+    if not system_id:
+        raise HTTPException(status_code=400, detail="system_id es requerido")
+    success = await game_state.set_game_system(system_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Sistema no válido")
+    return {"status": "success", "system_id": system_id}
+
+
+# === API de Fichas de Personaje ===
+
+@app.get("/api/sheets")
+async def get_all_sheets(status: Optional[str] = None):
+    """Obtiene fichas de personaje, opcionalmente filtradas por estado"""
+    sheets = game_state.state.character_sheets.values()
+    
+    # Filtrar por estado si se especifica
+    if status:
+        sheets = [s for s in sheets if s.status.value == status]
+    
+    return [game_state._serialize_sheet(s) for s in sheets]
+
+@app.get("/api/sheets/pending")
+async def get_pending_sheets():
+    """Obtiene las fichas pendientes de aprobación"""
+    return [game_state._serialize_sheet(s) for s in game_state.get_pending_sheets()]
+
+@app.get("/api/sheets/{sheet_id}")
+async def get_sheet(sheet_id: str):
+    """Obtiene una ficha específica"""
+    sheet = game_state.state.character_sheets.get(sheet_id)
+    if not sheet:
+        raise HTTPException(status_code=404, detail="Ficha no encontrada")
+    return game_state._serialize_sheet(sheet)
+
+@app.post("/api/sheets")
+async def create_sheet(player_id: str, player_name: str, data: dict):
+    """Crea una nueva ficha de personaje"""
+    sheet = await game_state.create_character_sheet(player_id, player_name, data)
+    return {"status": "success", "sheet": game_state._serialize_sheet(sheet)}
+
+@app.put("/api/sheets/{sheet_id}")
+async def update_sheet(sheet_id: str, player_id: str, data: dict):
+    """Actualiza una ficha existente"""
+    sheet = await game_state.update_character_sheet(sheet_id, data, player_id)
+    if not sheet:
+        raise HTTPException(status_code=400, detail="No se pudo actualizar la ficha")
+    return {"status": "success", "sheet": game_state._serialize_sheet(sheet)}
+
+@app.post("/api/sheets/{sheet_id}/submit")
+async def submit_sheet(sheet_id: str, player_id: str):
+    """Envía una ficha para aprobación"""
+    success = await game_state.submit_character_sheet(sheet_id, player_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="No se pudo enviar la ficha")
+    return {"status": "success"}
+
+@app.post("/api/sheets/{sheet_id}/approve")
+async def approve_sheet(sheet_id: str):
+    """Aprueba una ficha (solo GM)"""
+    success = await game_state.approve_character_sheet(sheet_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="No se pudo aprobar la ficha")
+    return {"status": "success"}
+
+@app.post("/api/sheets/{sheet_id}/reject")
+async def reject_sheet(sheet_id: str, reason: str = ""):
+    """Rechaza una ficha (solo GM)"""
+    success = await game_state.reject_character_sheet(sheet_id, reason)
+    if not success:
+        raise HTTPException(status_code=400, detail="No se pudo rechazar la ficha")
+    return {"status": "success"}
+
+@app.post("/api/sheets/{sheet_id}/assign-token")
+async def assign_token(sheet_id: str, marker_id: int):
+    """Asigna un token/marcador a una ficha aprobada (solo GM)"""
+    success = await game_state.assign_token_to_sheet(sheet_id, marker_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="No se pudo asignar el token")
+    return {"status": "success", "marker_id": marker_id}
+
+@app.get("/api/markers/available")
+async def get_available_markers():
+    """Obtiene los marcadores disponibles para asignar"""
+    return {"markers": game_state.state.available_markers}
+
+
+# === Debug API ===
 
 @app.post("/api/debug/add-test-character")
 async def add_test_character(marker_id: int = 1, name: str = "Test Character"):

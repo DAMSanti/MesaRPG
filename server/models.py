@@ -16,6 +16,15 @@ class PlayerRole(str, Enum):
     SPECTATOR = "spectator"
 
 
+class CharacterStatus(str, Enum):
+    """Estados de la ficha de personaje"""
+    DRAFT = "draft"           # Jugador editando
+    PENDING = "pending"       # Enviada, esperando aprobación
+    APPROVED = "approved"     # Aprobada por el GM
+    REJECTED = "rejected"     # Rechazada, necesita cambios
+    IN_GAME = "in_game"       # En partida con token asignado
+
+
 class EffectType(str, Enum):
     """Tipos de efectos visuales"""
     FIRE = "fire"
@@ -35,14 +44,44 @@ class Position(BaseModel):
     rotation: float = 0.0  # Rotación en grados
 
 
-class Character(BaseModel):
-    """Modelo de personaje"""
+class CharacterSheet(BaseModel):
+    """Ficha de personaje dinámica"""
     id: str
+    player_id: str
+    player_name: str
+    game_system: str  # dnd5e, battletech, generic, etc.
+    status: CharacterStatus = CharacterStatus.DRAFT
+    data: Dict[str, Any] = {}  # Datos de la ficha según el sistema
+    marker_id: Optional[int] = None  # Token asignado (solo cuando está aprobado)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+    approved_at: Optional[datetime] = None
+    rejection_reason: Optional[str] = None
+    
+    def get_name(self) -> str:
+        """Obtiene el nombre del personaje de los datos"""
+        return self.data.get("name", "Sin nombre")
+    
+    def get_display_info(self) -> Dict[str, Any]:
+        """Obtiene info para mostrar en el display"""
+        # Valores comunes que intentamos extraer
+        return {
+            "name": self.data.get("name", "Sin nombre"),
+            "hp": self.data.get("hp", self.data.get("max_hp", 0)),
+            "max_hp": self.data.get("max_hp", 0),
+            "class": self.data.get("class", self.data.get("mech_model", "")),
+        }
+
+
+class Character(BaseModel):
+    """Modelo de personaje en juego (derivado de CharacterSheet)"""
+    id: str
+    sheet_id: str  # Referencia a la ficha
     marker_id: int
     name: str
-    character_class: str = Field(alias="class")
-    hp: int
-    max_hp: int
+    character_class: str = Field(alias="class", default="")
+    hp: int = 10
+    max_hp: int = 10
     mana: int = 100
     max_mana: int = 100
     armor: int = 0
@@ -52,9 +91,26 @@ class Character(BaseModel):
     position: Optional[Position] = None
     owner_id: Optional[str] = None  # ID del jugador que controla
     is_visible: bool = True
+    sheet_data: Dict[str, Any] = {}  # Datos completos de la ficha
     
     class Config:
         populate_by_name = True
+    
+    @classmethod
+    def from_sheet(cls, sheet: CharacterSheet) -> "Character":
+        """Crea un Character desde una CharacterSheet"""
+        info = sheet.get_display_info()
+        return cls(
+            id=f"char_{sheet.id}",
+            sheet_id=sheet.id,
+            marker_id=sheet.marker_id or 0,
+            name=info["name"],
+            character_class=info["class"],
+            hp=info["hp"],
+            max_hp=info["max_hp"],
+            owner_id=sheet.player_id,
+            sheet_data=sheet.data
+        )
 
 
 class Ability(BaseModel):
@@ -103,18 +159,30 @@ class GameAction(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
+class GameSession(BaseModel):
+    """Sesión de juego con sistema seleccionado"""
+    id: str
+    name: str = "Nueva Partida"
+    game_system: str = "generic"  # dnd5e, battletech, generic
+    created_at: datetime = Field(default_factory=datetime.now)
+    is_active: bool = True
+
+
 class GameState(BaseModel):
     """Estado completo del juego"""
     session_id: str
+    game_system: str = "generic"  # Sistema de juego activo
     current_turn: int = 0
     active_character_id: Optional[str] = None
     characters: Dict[str, Character] = {}
+    character_sheets: Dict[str, CharacterSheet] = {}  # Fichas de personajes
     players: Dict[str, Player] = {}
     action_history: List[GameAction] = []
     is_combat: bool = False
     initiative_order: List[str] = []
     current_map: str = "default"
     settings: Dict[str, Any] = {}
+    available_markers: List[int] = list(range(1, 51))  # Marcadores disponibles (1-50)
 
 
 # Mensajes WebSocket
@@ -130,9 +198,23 @@ class WSMessageType(str, Enum):
     READY = "ready"
     CHAT = "chat"
     
+    # Fichas de personaje
+    SUBMIT_SHEET = "submit_sheet"
+    UPDATE_SHEET = "update_sheet"
+    APPROVE_SHEET = "approve_sheet"
+    REJECT_SHEET = "reject_sheet"
+    ASSIGN_TOKEN = "assign_token"
+    
+    # Sistema de juego
+    SET_GAME_SYSTEM = "set_game_system"
+    GAME_SYSTEM_CHANGED = "game_system_changed"
+    
     # Servidor -> Cliente
     STATE_UPDATE = "state_update"
     CHARACTER_UPDATE = "character_update"
+    SHEET_UPDATE = "sheet_update"
+    SHEET_APPROVED = "sheet_approved"
+    SHEET_REJECTED = "sheet_rejected"
     EFFECT = "effect"
     ERROR = "error"
     PLAYER_JOINED = "player_joined"

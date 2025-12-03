@@ -11,7 +11,7 @@ from typing import Dict, Optional, List, Callable, Any
 import uuid
 
 from .models import (
-    GameState, Character, Player, Ability, Position,
+    GameState, Character, CharacterSheet, CharacterStatus, Player, Ability, Position,
     GameAction, DetectedMarker, PlayerRole, ActionResult
 )
 
@@ -27,6 +27,7 @@ class GameStateManager:
         self.state = GameState(session_id=str(uuid.uuid4()))
         self.abilities: Dict[str, Ability] = {}
         self.character_templates: Dict[int, dict] = {}  # marker_id -> template
+        self.game_systems: Dict[str, dict] = {}  # Sistemas de juego disponibles
         self.cooldowns: Dict[str, Dict[str, int]] = {}  # character_id -> {ability_id: turns_left}
         self.callbacks: List[Callable] = []
         
@@ -36,7 +37,14 @@ class GameStateManager:
     def _load_config(self):
         """Carga la configuración desde archivos JSON"""
         try:
-            # Cargar personajes
+            # Cargar sistemas de juego
+            systems_file = self.config_path / "game_systems.json"
+            if systems_file.exists():
+                with open(systems_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    self.game_systems = data.get("systems", {})
+            
+            # Cargar personajes (templates legacy)
             chars_file = self.config_path / "characters.json"
             if chars_file.exists():
                 with open(chars_file, 'r', encoding='utf-8') as f:
@@ -59,7 +67,7 @@ class GameStateManager:
                 with open(settings_file, 'r', encoding='utf-8') as f:
                     self.state.settings = json.load(f)
                     
-            print(f"✅ Configuración cargada: {len(self.character_templates)} personajes, {len(self.abilities)} habilidades")
+            print(f"✅ Configuración cargada: {len(self.character_templates)} personajes, {len(self.abilities)} habilidades, {len(self.game_systems)} sistemas")
             
         except Exception as e:
             print(f"⚠️ Error cargando configuración: {e}")
@@ -79,13 +87,188 @@ class GameStateManager:
             except Exception as e:
                 print(f"Error en callback: {e}")
     
+    # === Gestión de Sistemas de Juego ===
+    
+    def get_available_systems(self) -> List[dict]:
+        """Obtiene los sistemas de juego disponibles"""
+        result = []
+        for sys_id, sys_data in self.game_systems.items():
+            # Extraer campos planos del characterSheet para el frontend
+            character_template = []
+            char_sheet = sys_data.get("characterSheet", {})
+            for section in char_sheet.get("sections", []):
+                for field in section.get("fields", []):
+                    character_template.append(field)
+            
+            result.append({
+                "id": sys_id,
+                "name": sys_data.get("name"),
+                "shortName": sys_data.get("shortName"),
+                "icon": sys_data.get("icon"),
+                "gridType": sys_data.get("gridType"),
+                "character_template": character_template
+            })
+        return result
+    
+    def get_system_config(self, system_id: str) -> Optional[dict]:
+        """Obtiene la configuración completa de un sistema"""
+        return self.game_systems.get(system_id)
+    
+    async def set_game_system(self, system_id: str) -> bool:
+        """Establece el sistema de juego activo"""
+        if system_id not in self.game_systems:
+            return False
+        
+        self.state.game_system = system_id
+        await self._notify_change("game_system_changed", {
+            "system_id": system_id,
+            "system": self.game_systems[system_id]
+        })
+        return True
+    
+    # === Gestión de Fichas de Personaje ===
+    
+    async def create_character_sheet(self, player_id: str, player_name: str, sheet_data: dict) -> CharacterSheet:
+        """Crea una nueva ficha de personaje"""
+        sheet_id = str(uuid.uuid4())[:8]
+        sheet = CharacterSheet(
+            id=sheet_id,
+            player_id=player_id,
+            player_name=player_name,
+            game_system=self.state.game_system,
+            data=sheet_data,
+            status=CharacterStatus.DRAFT
+        )
+        self.state.character_sheets[sheet_id] = sheet
+        await self._notify_change("sheet_created", {"sheet": self._serialize_sheet(sheet)})
+        return sheet
+    
+    async def update_character_sheet(self, sheet_id: str, sheet_data: dict, player_id: str) -> Optional[CharacterSheet]:
+        """Actualiza una ficha existente"""
+        sheet = self.state.character_sheets.get(sheet_id)
+        if not sheet:
+            return None
+        
+        # Solo el propietario o GM puede editar
+        if sheet.player_id != player_id:
+            player = self.state.players.get(player_id)
+            if not player or player.role != PlayerRole.GM:
+                return None
+        
+        # No se puede editar si ya está en juego
+        if sheet.status == CharacterStatus.IN_GAME:
+            return None
+        
+        sheet.data = sheet_data
+        sheet.updated_at = datetime.now()
+        sheet.status = CharacterStatus.DRAFT  # Vuelve a borrador si estaba rechazada
+        
+        await self._notify_change("sheet_updated", {"sheet": self._serialize_sheet(sheet)})
+        return sheet
+    
+    async def submit_character_sheet(self, sheet_id: str, player_id: str) -> bool:
+        """Envía una ficha para aprobación"""
+        sheet = self.state.character_sheets.get(sheet_id)
+        if not sheet or sheet.player_id != player_id:
+            return False
+        
+        if sheet.status not in [CharacterStatus.DRAFT, CharacterStatus.REJECTED]:
+            return False
+        
+        sheet.status = CharacterStatus.PENDING
+        sheet.updated_at = datetime.now()
+        
+        await self._notify_change("sheet_pending", {"sheet": self._serialize_sheet(sheet)})
+        return True
+    
+    async def approve_character_sheet(self, sheet_id: str) -> bool:
+        """Aprueba una ficha de personaje (solo GM)"""
+        sheet = self.state.character_sheets.get(sheet_id)
+        if not sheet or sheet.status != CharacterStatus.PENDING:
+            return False
+        
+        sheet.status = CharacterStatus.APPROVED
+        sheet.approved_at = datetime.now()
+        sheet.rejection_reason = None
+        
+        await self._notify_change("sheet_approved", {"sheet": self._serialize_sheet(sheet)})
+        return True
+    
+    async def reject_character_sheet(self, sheet_id: str, reason: str = "") -> bool:
+        """Rechaza una ficha de personaje (solo GM)"""
+        sheet = self.state.character_sheets.get(sheet_id)
+        if not sheet or sheet.status != CharacterStatus.PENDING:
+            return False
+        
+        sheet.status = CharacterStatus.REJECTED
+        sheet.rejection_reason = reason
+        sheet.updated_at = datetime.now()
+        
+        await self._notify_change("sheet_rejected", {
+            "sheet": self._serialize_sheet(sheet),
+            "reason": reason
+        })
+        return True
+    
+    async def assign_token_to_sheet(self, sheet_id: str, marker_id: int) -> bool:
+        """Asigna un token/marcador a una ficha aprobada"""
+        sheet = self.state.character_sheets.get(sheet_id)
+        if not sheet or sheet.status != CharacterStatus.APPROVED:
+            return False
+        
+        # Verificar que el marcador está disponible
+        if marker_id not in self.state.available_markers:
+            return False
+        
+        # Asignar marcador
+        sheet.marker_id = marker_id
+        sheet.status = CharacterStatus.IN_GAME
+        self.state.available_markers.remove(marker_id)
+        
+        await self._notify_change("token_assigned", {
+            "sheet": self._serialize_sheet(sheet),
+            "marker_id": marker_id
+        })
+        return True
+    
+    def get_player_sheet(self, player_id: str) -> Optional[CharacterSheet]:
+        """Obtiene la ficha de un jugador"""
+        for sheet in self.state.character_sheets.values():
+            if sheet.player_id == player_id:
+                return sheet
+        return None
+    
+    def get_pending_sheets(self) -> List[CharacterSheet]:
+        """Obtiene todas las fichas pendientes de aprobación"""
+        return [s for s in self.state.character_sheets.values() if s.status == CharacterStatus.PENDING]
+    
+    def get_approved_sheets(self) -> List[CharacterSheet]:
+        """Obtiene todas las fichas aprobadas (con o sin token)"""
+        return [s for s in self.state.character_sheets.values() 
+                if s.status in [CharacterStatus.APPROVED, CharacterStatus.IN_GAME]]
+    
+    def _serialize_sheet(self, sheet: CharacterSheet) -> dict:
+        """Serializa una ficha para enviar por WebSocket"""
+        data = sheet.model_dump()
+        # Convertir datetimes a ISO strings
+        for key in ['created_at', 'updated_at', 'approved_at']:
+            if data.get(key):
+                data[key] = data[key].isoformat() if hasattr(data[key], 'isoformat') else str(data[key])
+        
+        # Añadir campos para compatibilidad con el admin panel
+        data['system_id'] = data.get('game_system')  # alias para el frontend
+        data['character_name'] = sheet.data.get('name', sheet.data.get('mech_name', 'Sin nombre'))
+        data['submitted_at'] = data.get('updated_at')  # para ordenamiento en pendientes
+        
+        return data
+    
     # === Gestión de Jugadores ===
     
     async def add_player(self, player_id: str, name: str, role: PlayerRole = PlayerRole.PLAYER) -> Player:
         """Añade un nuevo jugador a la sesión"""
         player = Player(id=player_id, name=name, role=role)
         self.state.players[player_id] = player
-        await self._notify_change("player_joined", {"player": player.model_dump()})
+        await self._notify_change("player_joined", {"player": self._serialize_datetime(player.model_dump())})
         return player
     
     async def remove_player(self, player_id: str):
@@ -389,17 +572,25 @@ class GameStateManager:
         try:
             return {
                 "session_id": str(self.state.session_id) if self.state.session_id else "",
+                "game_system": self.state.game_system,
+                "game_system_id": self.state.game_system,  # alias para frontend
+                "game_system_info": self.game_systems.get(self.state.game_system, {}),
                 "current_turn": self.state.current_turn or 0,
                 "is_combat": bool(self.state.is_combat),
                 "active_character_id": self.state.active_character_id,
                 "characters": {
                     str(cid): self._serialize_datetime(char.model_dump()) for cid, char in self.state.characters.items()
                 } if self.state.characters else {},
+                "character_sheets": {
+                    str(sid): self._serialize_sheet(sheet) for sid, sheet in self.state.character_sheets.items()
+                } if self.state.character_sheets else {},
                 "players": {
                     str(pid): self._serialize_datetime(player.model_dump()) for pid, player in self.state.players.items()
                 } if self.state.players else {},
                 "initiative_order": list(self.state.initiative_order) if self.state.initiative_order else [],
                 "current_map": self.state.current_map,
+                "available_markers": self.state.available_markers,
+                "available_systems": self.get_available_systems(),
                 "recent_actions": [
                     self._serialize_datetime(action.model_dump()) for action in (self.state.action_history[-10:] if self.state.action_history else [])
                 ]
@@ -408,12 +599,16 @@ class GameStateManager:
             print(f"⚠️ Error en get_full_state: {e}")
             return {
                 "session_id": "",
+                "game_system": "generic",
                 "current_turn": 0,
                 "is_combat": False,
                 "active_character_id": None,
                 "characters": {},
+                "character_sheets": {},
                 "players": {},
                 "initiative_order": [],
                 "current_map": None,
+                "available_markers": [],
+                "available_systems": [],
                 "recent_actions": []
             }
