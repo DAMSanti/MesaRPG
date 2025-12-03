@@ -924,26 +924,26 @@ header h2 {
 
 .camera-preview {
     position: relative;
-    width: 100%;
-    max-height: 70vh;
+    width: 56.25vw; /* 9/16 del ancho de pantalla para un video 16:9 rotado */
+    height: 100vw;  /* El alto es el ancho completo porque está rotado */
+    max-height: 80vh;
     background: #000;
     border-radius: var(--border-radius);
     overflow: hidden;
     margin: 0 auto;
-    display: flex;
-    align-items: center;
-    justify-content: center;
 }
 
 .camera-preview video {
-    /* Video 16:9 rotado 90° = 9:16 visible */
-    /* Para no cropear: width del video rotado = width del contenedor */
-    /* width rotado = height original del video */
-    /* Así que height del elemento = 100% del ancho del contenedor */
-    transform: rotate(90deg);
-    height: 100vw;
-    width: auto;
-    max-width: none;
+    position: absolute;
+    /* Centrar el video */
+    top: 50%;
+    left: 50%;
+    /* El video es 16:9, al rotar sus dimensiones se intercambian */
+    /* width del video = height del contenedor (porque está rotado) */
+    width: 100vw;
+    max-width: calc(80vh * 16 / 9);
+    height: auto;
+    transform: translate(-50%, -50%) rotate(90deg);
 }
 
 .scan-overlay {
