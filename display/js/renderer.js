@@ -59,12 +59,10 @@ class GameRenderer {
     
     // Detectar configuración de pantalla para calcular píxeles por pulgada
     detectScreenConfig() {
-        // Intentar obtener DPI real del dispositivo
-        const dpi = window.devicePixelRatio * 96; // Aproximación basada en devicePixelRatio
-        
-        // Obtener resolución de pantalla
-        const screenWidth = window.screen.width * window.devicePixelRatio;
-        const screenHeight = window.screen.height * window.devicePixelRatio;
+        // Obtener resolución FÍSICA de pantalla (multiplicando por devicePixelRatio)
+        const dpr = window.devicePixelRatio || 1;
+        const physicalWidth = window.screen.width * dpr;
+        const physicalHeight = window.screen.height * dpr;
         
         // Cargar configuración guardada o usar valores por defecto
         const savedConfig = localStorage.getItem('mesarpg_screen_config');
@@ -83,21 +81,27 @@ class GameRenderer {
         // Recalcular tamaño de grid
         this.updateGridSize();
         
-        console.log(`📺 Pantalla detectada: ${screenWidth}x${screenHeight}, DPI: ${dpi.toFixed(0)}, Grid: ${this.gridSize}px`);
+        console.log(`📺 Pantalla: ${physicalWidth}x${physicalHeight} física, DPR: ${dpr}, Grid: ${this.gridSize}px CSS`);
     }
     
-    // Calcular píxeles por pulgada basado en la diagonal configurada
+    // Calcular píxeles CSS por pulgada basado en la diagonal configurada
     calculatePixelsPerInch() {
-        const screenWidth = window.screen.width;
-        const screenHeight = window.screen.height;
+        const dpr = window.devicePixelRatio || 1;
         
-        // Diagonal en píxeles
-        const diagonalPixels = Math.sqrt(screenWidth * screenWidth + screenHeight * screenHeight);
+        // Resolución FÍSICA de pantalla
+        const physicalWidth = window.screen.width * dpr;
+        const physicalHeight = window.screen.height * dpr;
         
-        // Píxeles por pulgada
-        this.screenConfig.pixelsPerInch = diagonalPixels / this.screenConfig.diagonalInches;
+        // Diagonal en píxeles FÍSICOS
+        const diagonalPhysicalPixels = Math.sqrt(physicalWidth * physicalWidth + physicalHeight * physicalHeight);
         
-        console.log(`📐 Diagonal: ${this.screenConfig.diagonalInches}" = ${diagonalPixels.toFixed(0)}px → ${this.screenConfig.pixelsPerInch.toFixed(1)} PPI`);
+        // PPI físico (píxeles físicos por pulgada)
+        const physicalPPI = diagonalPhysicalPixels / this.screenConfig.diagonalInches;
+        
+        // PPI en CSS (dividir por devicePixelRatio porque la grid se dibuja en píxeles CSS)
+        this.screenConfig.pixelsPerInch = physicalPPI / dpr;
+        
+        console.log(`📐 Diagonal: ${this.screenConfig.diagonalInches}" | PPI físico: ${physicalPPI.toFixed(1)} | PPI CSS: ${this.screenConfig.pixelsPerInch.toFixed(1)} (DPR: ${dpr})`);
     }
     
     // Actualizar tamaño de grid para que sea 1 pulgada real
@@ -139,9 +143,14 @@ class GameRenderer {
     
     // Obtener información de pantalla para mostrar en UI
     getScreenInfo() {
+        const dpr = window.devicePixelRatio || 1;
+        const physicalWidth = window.screen.width * dpr;
+        const physicalHeight = window.screen.height * dpr;
+        
         return {
-            resolution: `${window.screen.width}x${window.screen.height}`,
-            devicePixelRatio: window.devicePixelRatio,
+            resolution: `${physicalWidth}x${physicalHeight}`,
+            cssResolution: `${window.screen.width}x${window.screen.height}`,
+            devicePixelRatio: dpr,
             diagonalInches: this.screenConfig.diagonalInches,
             pixelsPerInch: this.screenConfig.pixelsPerInch.toFixed(1),
             gridSizePixels: this.gridSize,
