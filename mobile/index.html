@@ -35,8 +35,158 @@
                 </div>
             </div>
         </section>
+
+        <!-- Pantalla: Esperando Sistema de Juego -->
+        <section id="waiting-system-screen" class="screen">
+            <div class="centered-content">
+                <div class="spinner"></div>
+                <h2>Esperando al Game Master</h2>
+                <p>El GM debe seleccionar un sistema de juego</p>
+                <p id="player-welcome" class="welcome-text"></p>
+            </div>
+        </section>
+
+        <!-- Pantalla: Estado de Ficha -->
+        <section id="sheet-status-screen" class="screen">
+            <header class="mobile-header">
+                <h2>📋 Tu Ficha</h2>
+                <span id="sheet-game-system" class="badge"></span>
+            </header>
+
+            <div class="sheet-status-container">
+                <!-- Sin ficha -->
+                <div id="no-sheet-panel" class="status-panel">
+                    <div class="status-icon">📝</div>
+                    <h3>Crea tu Personaje</h3>
+                    <p>Elige cómo quieres crear tu ficha:</p>
+                    
+                    <div class="sheet-options">
+                        <button id="btn-create-manual" class="btn btn-large btn-primary">
+                            <span class="btn-icon">✏️</span>
+                            <span class="btn-text">Rellenar Formulario</span>
+                        </button>
+                        
+                        <button id="btn-scan-sheet" class="btn btn-large btn-secondary">
+                            <span class="btn-icon">📷</span>
+                            <span class="btn-text">Escanear Ficha</span>
+                        </button>
+                        
+                        <a id="btn-download-pdf" class="btn btn-large btn-outline" href="#" download>
+                            <span class="btn-icon">📄</span>
+                            <span class="btn-text">Descargar PDF</span>
+                        </a>
+                    </div>
+                </div>
+
+                <!-- Ficha en borrador -->
+                <div id="draft-sheet-panel" class="status-panel hidden">
+                    <div class="status-icon">📝</div>
+                    <h3>Ficha en Borrador</h3>
+                    <p id="draft-char-name" class="char-name-display"></p>
+                    <div class="action-buttons">
+                        <button id="btn-edit-sheet" class="btn btn-primary">✏️ Editar</button>
+                        <button id="btn-submit-sheet" class="btn btn-success">📤 Enviar al GM</button>
+                    </div>
+                </div>
+
+                <!-- Ficha pendiente -->
+                <div id="pending-sheet-panel" class="status-panel hidden">
+                    <div class="status-icon pending">⏳</div>
+                    <h3>Pendiente de Aprobación</h3>
+                    <p id="pending-char-name" class="char-name-display"></p>
+                    <p class="status-message">El Game Master está revisando tu ficha...</p>
+                </div>
+
+                <!-- Ficha rechazada -->
+                <div id="rejected-sheet-panel" class="status-panel hidden">
+                    <div class="status-icon rejected">❌</div>
+                    <h3>Ficha Rechazada</h3>
+                    <p id="rejected-char-name" class="char-name-display"></p>
+                    <p id="rejection-reason" class="rejection-reason"></p>
+                    <button id="btn-fix-sheet" class="btn btn-primary">✏️ Corregir y Reenviar</button>
+                </div>
+
+                <!-- Ficha aprobada, esperando token -->
+                <div id="approved-sheet-panel" class="status-panel hidden">
+                    <div class="status-icon approved">✅</div>
+                    <h3>¡Ficha Aprobada!</h3>
+                    <p id="approved-char-name" class="char-name-display"></p>
+                    <p class="status-message">Esperando que el GM te asigne un token...</p>
+                </div>
+
+                <!-- En juego -->
+                <div id="ingame-sheet-panel" class="status-panel hidden">
+                    <div class="status-icon ingame">🎮</div>
+                    <h3>¡En Juego!</h3>
+                    <p id="ingame-char-name" class="char-name-display"></p>
+                    <p class="status-message">Token asignado: <span id="assigned-token">#</span></p>
+                    <button id="btn-go-control" class="btn btn-primary btn-large">⚔️ Ir al Control</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Pantalla: Formulario de Ficha -->
+        <section id="sheet-form-screen" class="screen">
+            <header class="mobile-header">
+                <button id="btn-back-from-form" class="btn-icon">←</button>
+                <h2 id="form-title">Crear Personaje</h2>
+                <button id="btn-save-draft" class="btn btn-sm">Guardar</button>
+            </header>
+
+            <form id="character-sheet-form" class="sheet-form">
+                <!-- Los campos se generan dinámicamente según el sistema de juego -->
+                <div id="form-fields-container"></div>
+                
+                <div class="form-actions">
+                    <button type="button" id="btn-form-save" class="btn btn-secondary">💾 Guardar Borrador</button>
+                    <button type="submit" id="btn-form-submit" class="btn btn-success">📤 Enviar al GM</button>
+                </div>
+            </form>
+        </section>
+
+        <!-- Pantalla: Escanear Ficha -->
+        <section id="scan-screen" class="screen">
+            <header class="mobile-header">
+                <button id="btn-back-from-scan" class="btn-icon">←</button>
+                <h2>Escanear Ficha</h2>
+            </header>
+
+            <div class="scan-container">
+                <div class="camera-preview">
+                    <video id="camera-video" autoplay playsinline></video>
+                    <canvas id="camera-canvas" class="hidden"></canvas>
+                    <div class="scan-overlay">
+                        <div class="scan-frame"></div>
+                    </div>
+                </div>
+
+                <div class="scan-instructions">
+                    <p>📸 Coloca la ficha de personaje dentro del marco</p>
+                    <p class="hint">Asegúrate de que haya buena iluminación</p>
+                </div>
+
+                <div class="scan-actions">
+                    <button id="btn-capture" class="btn btn-primary btn-large">📷 Capturar</button>
+                </div>
+
+                <!-- Resultado del escaneo -->
+                <div id="scan-result" class="scan-result hidden">
+                    <img id="captured-image" src="" alt="Imagen capturada">
+                    <div class="scan-result-actions">
+                        <button id="btn-retry-scan" class="btn btn-secondary">🔄 Reintentar</button>
+                        <button id="btn-process-scan" class="btn btn-primary">✨ Procesar</button>
+                    </div>
+                </div>
+
+                <!-- Procesando -->
+                <div id="scan-processing" class="processing hidden">
+                    <div class="spinner"></div>
+                    <p>Analizando ficha con IA...</p>
+                </div>
+            </div>
+        </section>
         
-        <!-- Pantalla de Selección de Personaje -->
+        <!-- Pantalla de Selección de Personaje (legacy - para personajes ya creados) -->
         <section id="select-screen" class="screen">
             <header>
                 <h2>Selecciona tu Personaje</h2>
@@ -133,6 +283,7 @@
     
     <script src="/mobile/js/app.js"></script>
     <script src="/mobile/js/controls.js"></script>
+    <script src="/mobile/js/sheets.js"></script>
     
     <!-- Service Worker para PWA -->
     <script>

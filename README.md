@@ -116,9 +116,9 @@ cd /opt/mesarpg/deploy && ./deploy.sh tu-dominio.com
 ```
 
 **URLs para usuarios (sin instalación):**
-- 📺 **Pantalla**: `https://tu-dominio.com/display`
-- 📱 **Móvil (jugadores)**: `https://tu-dominio.com/mobile`
-- 🎮 **Admin (GM)**: `https://tu-dominio.com/admin`
+- 📺 **Pantalla**: `https://209.97.131.243/display`
+- 📱 **Móvil (jugadores)**: `https://209.97.131.243/mobile`
+- 🎮 **Admin (GM)**: `https://209.97.131.243/admin`
 
 Ver [docs/DEPLOY.md](docs/DEPLOY.md) para instrucciones detalladas.
 

@@ -59,8 +59,10 @@ class MobileApp {
         // Guardar nombre
         localStorage.setItem('mesarpg_name', this.playerName);
         
-        // Generar ID único
-        this.playerId = 'player_' + Math.random().toString(36).substr(2, 9);
+        // Generar ID único (o recuperar el guardado)
+        this.playerId = localStorage.getItem('mesarpg_player_id') || 
+                        'player_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('mesarpg_player_id', this.playerId);
         
         // Conectar al servidor
         this.connect();
@@ -75,8 +77,18 @@ class MobileApp {
         this.ws.onopen = () => {
             console.log('✅ Conectado');
             document.getElementById('connection-error').classList.add('hidden');
-            this.showScreen('select-screen');
+            
+            // Actualizar nombre en UI
             document.getElementById('player-display-name').textContent = this.playerName;
+            document.getElementById('player-welcome').textContent = `Bienvenido, ${this.playerName}`;
+            
+            // Inicializar SheetManager si existe
+            if (typeof SheetManager !== 'undefined' && !this.sheetManager) {
+                this.sheetManager = new SheetManager(this);
+            }
+            
+            // Solicitar estado actual
+            this.requestState();
             this.startPing();
         };
         
@@ -194,11 +206,95 @@ class MobileApp {
                     this.loadAbilities();
                 }
                 break;
+            
+            // Nuevos eventos para fichas
+            case 'game_system_changed':
+                this.handleGameSystemChange(payload);
+                break;
+                
+            case 'sheet_approved':
+            case 'sheet_rejected':
+            case 'token_assigned':
+                this.loadMySheet();
+                break;
                 
             case 'error':
                 this.showToast(payload.message || 'Error', 'error');
                 break;
         }
+    }
+    
+    // === Nuevo flujo con sistema de juego ===
+    
+    requestState() {
+        // Obtener estado del servidor via HTTP
+        fetch('/api/state')
+            .then(r => r.json())
+            .then(state => {
+                this.updateGameState(state);
+                this.determineInitialScreen(state);
+            })
+            .catch(e => console.error('Error obteniendo estado:', e));
+    }
+    
+    determineInitialScreen(state) {
+        // Si no hay sistema de juego seleccionado, esperar
+        if (!state.game_system || state.game_system === 'generic') {
+            this.showScreen('waiting-system-screen');
+            return;
+        }
+        
+        // Hay sistema de juego, configurar SheetManager
+        this.setupGameSystem(state);
+        
+        // Buscar si el jugador tiene una ficha
+        this.loadMySheet();
+    }
+    
+    setupGameSystem(state) {
+        const systemId = state.game_system_id || state.game_system;
+        const systems = state.available_systems || [];
+        const systemData = systems.find(s => s.id === systemId);
+        
+        if (systemData && this.sheetManager) {
+            this.sheetManager.setGameSystem(systemData);
+        }
+    }
+    
+    async loadMySheet() {
+        try {
+            const response = await fetch(`/api/sheets?player_id=${this.playerId}`);
+            const sheets = await response.json();
+            
+            // Buscar la ficha de este jugador
+            const mySheet = sheets.find(s => s.player_id === this.playerId);
+            
+            if (this.sheetManager) {
+                this.sheetManager.updateSheetStatus(mySheet);
+            }
+            
+            // Determinar qué pantalla mostrar
+            if (!mySheet) {
+                this.showScreen('sheet-status-screen');
+            } else if (mySheet.status === 'in_game') {
+                // Ya en juego, ir a control
+                if (this.sheetManager) {
+                    this.sheetManager.mySheet = mySheet;
+                    this.sheetManager.sheetId = mySheet.id;
+                }
+                this.showScreen('sheet-status-screen');
+            } else {
+                this.showScreen('sheet-status-screen');
+            }
+        } catch (error) {
+            console.error('Error cargando ficha:', error);
+            this.showScreen('sheet-status-screen');
+        }
+    }
+    
+    handleGameSystemChange(payload) {
+        this.showToast(`Sistema: ${payload.system?.name || payload.system_id}`);
+        this.requestState();
     }
     
     updateGameState(state) {
@@ -297,6 +393,11 @@ class MobileApp {
         const manaPercent = (char.mana / char.max_mana) * 100;
         document.getElementById('control-mana-bar').style.width = `${manaPercent}%`;
         document.getElementById('control-mana-text').textContent = `${char.mana}/${char.max_mana}`;
+    }
+    
+    // Alias para compatibilidad con sheets.js
+    updateControlScreen() {
+        this.updateControlPanel();
     }
     
     updateTurnStatus() {
@@ -477,7 +578,8 @@ class MobileApp {
     
     showScreen(screenId) {
         document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-        document.getElementById(screenId).classList.add('active');
+        document.getElementById(screenId)?.classList.add('active');
+        this.currentScreen = screenId;
     }
     
     showToast(message, type = 'info') {

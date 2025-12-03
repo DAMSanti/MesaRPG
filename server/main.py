@@ -11,7 +11,7 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Body
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -349,9 +349,13 @@ async def select_game_system(data: dict):
 # === API de Fichas de Personaje ===
 
 @app.get("/api/sheets")
-async def get_all_sheets(status: Optional[str] = None):
-    """Obtiene fichas de personaje, opcionalmente filtradas por estado"""
-    sheets = game_state.state.character_sheets.values()
+async def get_all_sheets(status: Optional[str] = None, player_id: Optional[str] = None):
+    """Obtiene fichas de personaje, opcionalmente filtradas por estado o jugador"""
+    sheets = list(game_state.state.character_sheets.values())
+    
+    # Filtrar por jugador si se especifica
+    if player_id:
+        sheets = [s for s in sheets if s.player_id == player_id]
     
     # Filtrar por estado si se especifica
     if status:
@@ -373,22 +377,33 @@ async def get_sheet(sheet_id: str):
     return game_state._serialize_sheet(sheet)
 
 @app.post("/api/sheets")
-async def create_sheet(player_id: str, player_name: str, data: dict):
+async def create_sheet(body: dict = Body(...)):
     """Crea una nueva ficha de personaje"""
+    player_id = body.get('player_id')
+    player_name = body.get('player_name', 'Jugador')
+    data = body.get('data', {})
+    
+    if not player_id:
+        raise HTTPException(status_code=400, detail="Se requiere player_id")
+    
     sheet = await game_state.create_character_sheet(player_id, player_name, data)
     return {"status": "success", "sheet": game_state._serialize_sheet(sheet)}
 
 @app.put("/api/sheets/{sheet_id}")
-async def update_sheet(sheet_id: str, player_id: str, data: dict):
+async def update_sheet(sheet_id: str, body: dict = Body(...)):
     """Actualiza una ficha existente"""
+    player_id = body.get('player_id')
+    data = body.get('data', {})
+    
     sheet = await game_state.update_character_sheet(sheet_id, data, player_id)
     if not sheet:
         raise HTTPException(status_code=400, detail="No se pudo actualizar la ficha")
     return {"status": "success", "sheet": game_state._serialize_sheet(sheet)}
 
 @app.post("/api/sheets/{sheet_id}/submit")
-async def submit_sheet(sheet_id: str, player_id: str):
+async def submit_sheet(sheet_id: str, body: dict = Body(...)):
     """Envía una ficha para aprobación"""
+    player_id = body.get('player_id')
     success = await game_state.submit_character_sheet(sheet_id, player_id)
     if not success:
         raise HTTPException(status_code=400, detail="No se pudo enviar la ficha")
@@ -403,16 +418,20 @@ async def approve_sheet(sheet_id: str):
     return {"status": "success"}
 
 @app.post("/api/sheets/{sheet_id}/reject")
-async def reject_sheet(sheet_id: str, reason: str = ""):
+async def reject_sheet(sheet_id: str, body: dict = Body(default={})):
     """Rechaza una ficha (solo GM)"""
+    reason = body.get('reason', '')
     success = await game_state.reject_character_sheet(sheet_id, reason)
     if not success:
         raise HTTPException(status_code=400, detail="No se pudo rechazar la ficha")
     return {"status": "success"}
 
 @app.post("/api/sheets/{sheet_id}/assign-token")
-async def assign_token(sheet_id: str, marker_id: int):
+async def assign_token(sheet_id: str, body: dict = Body(...)):
     """Asigna un token/marcador a una ficha aprobada (solo GM)"""
+    marker_id = body.get('marker_id')
+    if marker_id is None:
+        raise HTTPException(status_code=400, detail="Se requiere marker_id")
     success = await game_state.assign_token_to_sheet(sheet_id, marker_id)
     if not success:
         raise HTTPException(status_code=400, detail="No se pudo asignar el token")
