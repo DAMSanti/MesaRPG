@@ -16,14 +16,44 @@ class SheetManager {
     }
     
     init() {
-        this.setupEventListeners();
+        // Esperar a que el DOM esté listo
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', () => this.setupEventListeners());
+        } else {
+            this.setupEventListeners();
+        }
     }
     
     setupEventListeners() {
+        console.log('📋 SheetManager: Configurando event listeners...');
+        
         // Botones de opciones de ficha
-        document.getElementById('btn-create-manual')?.addEventListener('click', () => this.showFormScreen());
-        document.getElementById('btn-scan-sheet')?.addEventListener('click', () => this.showScanScreen());
-        document.getElementById('btn-download-pdf')?.addEventListener('click', (e) => this.downloadPDF(e));
+        const btnManual = document.getElementById('btn-create-manual');
+        const btnScan = document.getElementById('btn-scan-sheet');
+        const btnPdf = document.getElementById('btn-download-pdf');
+        
+        if (btnManual) {
+            btnManual.addEventListener('click', (e) => {
+                e.preventDefault();
+                console.log('📝 Click en Rellenar Formulario');
+                this.showFormScreen();
+            });
+        }
+        
+        if (btnScan) {
+            btnScan.addEventListener('click', (e) => {
+                e.preventDefault();
+                console.log('📷 Click en Escanear Ficha');
+                this.showScanScreen();
+            });
+        }
+        
+        if (btnPdf) {
+            btnPdf.addEventListener('click', (e) => {
+                console.log('📄 Click en Descargar PDF');
+                this.downloadPDF(e);
+            });
+        }
         
         // Botones de estado de ficha
         document.getElementById('btn-edit-sheet')?.addEventListener('click', () => this.showFormScreen());
@@ -35,16 +65,22 @@ class SheetManager {
         document.getElementById('btn-back-from-form')?.addEventListener('click', () => this.backToStatus());
         document.getElementById('btn-save-draft')?.addEventListener('click', () => this.saveDraft());
         document.getElementById('btn-form-save')?.addEventListener('click', () => this.saveDraft());
-        document.getElementById('character-sheet-form')?.addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.submitSheet();
-        });
+        
+        const form = document.getElementById('character-sheet-form');
+        if (form) {
+            form.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.submitSheet();
+            });
+        }
         
         // Escaneo
         document.getElementById('btn-back-from-scan')?.addEventListener('click', () => this.closeScanScreen());
         document.getElementById('btn-capture')?.addEventListener('click', () => this.captureImage());
         document.getElementById('btn-retry-scan')?.addEventListener('click', () => this.retryScan());
         document.getElementById('btn-process-scan')?.addEventListener('click', () => this.processScannedImage());
+        
+        console.log('✅ SheetManager: Event listeners configurados');
     }
     
     // === Estado del Sistema de Juego ===
@@ -65,17 +101,21 @@ class SheetManager {
     
     updatePDFLink() {
         const link = document.getElementById('btn-download-pdf');
-        if (!link || !this.currentSystem) return;
+        if (!link) return;
         
-        // URLs de PDFs oficiales (puedes cambiarlas por tus propias)
+        // URLs de PDFs oficiales externos (fichas reales)
         const pdfUrls = {
-            'dnd5e': '/assets/pdfs/dnd5e-character-sheet.pdf',
-            'battletech': '/assets/pdfs/battletech-record-sheet.pdf'
+            'dnd5e': 'https://media.wizards.com/2022/dnd/downloads/DnD_5E_CharacterSheet_FormFillable.pdf',
+            'battletech': 'https://bg.battletech.com/download/CAT35690_BattleMech%20Record%20Sheets.pdf',
+            'generic': null
         };
         
-        const pdfUrl = pdfUrls[this.currentSystem.id];
+        const systemId = this.currentSystem?.id || 'generic';
+        const pdfUrl = pdfUrls[systemId];
+        
         if (pdfUrl) {
             link.href = pdfUrl;
+            link.target = '_blank';
             link.classList.remove('hidden');
         } else {
             link.classList.add('hidden');
@@ -132,8 +172,19 @@ class SheetManager {
     // === Pantalla de Formulario ===
     
     showFormScreen() {
+        console.log('📝 showFormScreen() llamado');
+        console.log('   Template:', this.systemTemplate);
+        
         this.buildFormFields();
-        this.app.showScreen('sheet-form-screen');
+        
+        if (this.app && this.app.showScreen) {
+            this.app.showScreen('sheet-form-screen');
+        } else {
+            console.error('❌ app.showScreen no disponible');
+            // Fallback manual
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById('sheet-form-screen')?.classList.add('active');
+        }
         
         // Si hay datos previos, rellenarlos
         if (this.mySheet?.data) {
@@ -432,7 +483,15 @@ class SheetManager {
     // === Escaneo de Fichas ===
     
     async showScanScreen() {
-        this.app.showScreen('scan-screen');
+        console.log('📷 showScanScreen() llamado');
+        
+        if (this.app && this.app.showScreen) {
+            this.app.showScreen('scan-screen');
+        } else {
+            document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+            document.getElementById('scan-screen')?.classList.add('active');
+        }
+        
         await this.startCamera();
     }
     

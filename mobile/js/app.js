@@ -238,8 +238,13 @@ class MobileApp {
     }
     
     determineInitialScreen(state) {
+        console.log('🎯 determineInitialScreen:', state);
+        console.log('   game_system:', state.game_system);
+        console.log('   available_systems:', state.available_systems);
+        
         // Si no hay sistema de juego seleccionado, esperar
         if (!state.game_system || state.game_system === 'generic') {
+            console.log('   → Mostrando waiting-system-screen');
             this.showScreen('waiting-system-screen');
             return;
         }
@@ -256,8 +261,19 @@ class MobileApp {
         const systems = state.available_systems || [];
         const systemData = systems.find(s => s.id === systemId);
         
+        console.log('🎮 setupGameSystem:', systemId);
+        console.log('   systemData encontrado:', systemData);
+        
         if (systemData && this.sheetManager) {
             this.sheetManager.setGameSystem(systemData);
+        } else if (this.sheetManager) {
+            // Si no hay datos del sistema, crear uno básico
+            this.sheetManager.setGameSystem({
+                id: systemId,
+                name: systemId,
+                icon: '🎮',
+                character_template: []
+            });
         }
     }
     
