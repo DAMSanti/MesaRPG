@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#1a1a2e"/>
+            <stop offset="100%" style="stop-color:#16213e"/>
+        </linearGradient>
+        <linearGradient id="dice" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" style="stop-color:#ffd700"/>
+            <stop offset="100%" style="stop-color:#ff8c00"/>
+        </linearGradient>
+    </defs>
+    
+    <!-- Background circle -->
+    <circle cx="256" cy="256" r="250" fill="url(#bg)" stroke="#ffd700" stroke-width="8"/>
+    
+    <!-- D20 dice shape (simplified icosahedron view) -->
+    <polygon 
+        points="256,60 420,180 380,400 132,400 92,180" 
+        fill="url(#dice)" 
+        stroke="#1a1a2e" 
+        stroke-width="4"
+        opacity="0.9"/>
+    
+    <!-- Inner lines of dice -->
+    <line x1="256" y1="60" x2="256" y2="320" stroke="#1a1a2e" stroke-width="3"/>
+    <line x1="256" y1="320" x2="92" y2="180" stroke="#1a1a2e" stroke-width="3"/>
+    <line x1="256" y1="320" x2="420" y2="180" stroke="#1a1a2e" stroke-width="3"/>
+    <line x1="256" y1="320" x2="132" y2="400" stroke="#1a1a2e" stroke-width="3"/>
+    <line x1="256" y1="320" x2="380" y2="400" stroke="#1a1a2e" stroke-width="3"/>
+    
+    <!-- Number 20 in center -->
+    <text x="256" y="240" font-family="Arial Black, Arial, sans-serif" font-size="72" font-weight="bold" 
+          fill="#1a1a2e" text-anchor="middle" dominant-baseline="middle">20</text>
+    
+    <!-- MesaRPG text at bottom -->
+    <text x="256" y="460" font-family="Arial, sans-serif" font-size="48" font-weight="bold" 
+          fill="#ffd700" text-anchor="middle">MesaRPG</text>
+</svg>

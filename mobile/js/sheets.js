@@ -214,6 +214,13 @@ class SheetManager {
         // Ocultar genérico
         document.getElementById('form-fields-container')?.classList.add('hidden');
         
+        // IMPORTANTE: Quitar required de todos los campos ocultos para evitar errores de validación
+        const dndRequiredFields = form.querySelectorAll('#field-name, #field-class, #field-race');
+        dndRequiredFields.forEach(field => field.removeAttribute('required'));
+        
+        const btRequiredFields = form.querySelectorAll('#bt-name, #bt-mech_model');
+        btRequiredFields.forEach(field => field.removeAttribute('required'));
+        
         // Reset form classes
         form.classList.remove('dnd-sheet', 'sheet-form');
     }
@@ -231,6 +238,18 @@ class SheetManager {
         // Mostrar los elementos específicos de D&D
         const dndElements = form.querySelectorAll('.sheet-header, .sheet-top-row, .sheet-row, .sheet-main, .saving-throws, .skills-section, .equipment-section, .spells-section, .features-section, .personality-section');
         dndElements.forEach(el => el.style.display = '');
+        
+        // IMPORTANTE: Restaurar required en campos D&D visibles
+        const dndRequiredFields = form.querySelectorAll('#field-name, #field-class, #field-race');
+        dndRequiredFields.forEach(field => {
+            field.setAttribute('required', '');
+        });
+        
+        // Deshabilitar required en campos BattleTech ocultos
+        const btRequiredFields = form.querySelectorAll('#bt-name, #bt-mech_model');
+        btRequiredFields.forEach(field => {
+            field.removeAttribute('required');
+        });
         
         // Poblar los selects con opciones
         this.populateDnDSelects();
@@ -294,9 +313,22 @@ class SheetManager {
         dndElements.forEach(el => el.style.display = 'none');
         document.getElementById('form-fields-container')?.classList.add('hidden');
         
+        // IMPORTANTE: Deshabilitar required en campos D&D ocultos para evitar errores de validación
+        const dndRequiredFields = form.querySelectorAll('#field-name, #field-class, #field-race');
+        dndRequiredFields.forEach(field => {
+            field.removeAttribute('required');
+            field.setAttribute('data-was-required', 'true');
+        });
+        
         // Mostrar BattleTech
         btSheet?.classList.remove('hidden');
         form.classList.remove('dnd-sheet', 'sheet-form');
+        
+        // Activar required en campos BattleTech visibles
+        const btRequiredFields = form.querySelectorAll('#bt-name, #bt-mech_model');
+        btRequiredFields.forEach(field => {
+            field.setAttribute('required', '');
+        });
         
         // Configurar listeners
         this.setupBattleTechListeners();
