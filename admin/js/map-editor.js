@@ -13,8 +13,13 @@ class MapEditor {
         this.selectedTile = null;
         this.mapWidth = 20;
         this.mapHeight = 15;
-        this.tileSize = 32;
+        this.tileSize = 40;
         this.gridType = 'square'; // 'square' o 'hex'
+        
+        // Sistema de juego actual
+        this.gameSystem = null;
+        this.distanceUnit = 'casillas';
+        this.distancePerCell = 1;
         
         // Herramientas
         this.currentTool = 'paint'; // 'paint', 'erase', 'fill', 'select'
@@ -36,9 +41,30 @@ class MapEditor {
     }
     
     async init() {
+        await this.loadGameSystemConfig();
         await this.loadTileLibrary();
         this.setupUI();
         this.createNewMap(this.mapWidth, this.mapHeight);
+    }
+    
+    async loadGameSystemConfig() {
+        try {
+            const response = await fetch('/api/state');
+            const state = await response.json();
+            const systemId = state.game_system_id || state.game_system || 'dnd5e';
+            
+            const sysResponse = await fetch(`/api/systems/${systemId}`);
+            if (sysResponse.ok) {
+                this.gameSystem = await sysResponse.json();
+                this.gridType = this.gameSystem.gridType || this.gameSystem.grid?.type || 'square';
+                this.tileSize = this.gameSystem.gridSize || this.gameSystem.grid?.cellSize || 40;
+                this.distanceUnit = this.gameSystem.distanceUnit || 'casillas';
+                this.distancePerCell = this.gameSystem.distancePerSquare || 1;
+                console.log(`🎮 Sistema: ${this.gameSystem.name}, Grid: ${this.gridType}, Tamaño: ${this.tileSize}px`);
+            }
+        } catch (error) {
+            console.warn('No se pudo cargar config del sistema, usando valores por defecto');
+        }
     }
     
     async loadTileLibrary() {
@@ -210,13 +236,54 @@ class MapEditor {
     
     getGridCoords(e) {
         const rect = this.canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const mouseX = e.clientX - rect.left;
+        const mouseY = e.clientY - rect.top;
         
-        const gridX = Math.floor(x / this.tileSize);
-        const gridY = Math.floor(y / this.tileSize);
-        
+        if (this.gridType === 'hex') {
+            return this.getHexCoords(mouseX, mouseY);
+        } else {
+            return this.getSquareCoords(mouseX, mouseY);
+        }
+    }
+    
+    getSquareCoords(mouseX, mouseY) {
+        const gridX = Math.floor(mouseX / this.tileSize);
+        const gridY = Math.floor(mouseY / this.tileSize);
         return { x: gridX, y: gridY };
+    }
+    
+    getHexCoords(mouseX, mouseY) {
+        const hexWidth = this.tileSize;
+        const hexHeight = hexWidth * 0.866;
+        const rowHeight = hexHeight * 0.75;
+        
+        // Estimación inicial
+        const roughY = Math.floor(mouseY / rowHeight);
+        const offset = (roughY % 2) * (hexWidth / 2);
+        const roughX = Math.floor((mouseX - offset) / hexWidth);
+        
+        // Verificar hex más cercano entre candidatos
+        let bestDist = Infinity;
+        let bestX = roughX;
+        let bestY = roughY;
+        
+        for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+                const testY = roughY + dy;
+                const testX = roughX + dx;
+                const testOffset = (testY % 2) * (hexWidth / 2);
+                const cx = testX * hexWidth + testOffset + hexWidth / 2;
+                const cy = testY * rowHeight + hexHeight / 2;
+                const dist = Math.sqrt((mouseX - cx) ** 2 + (mouseY - cy) ** 2);
+                if (dist < bestDist) {
+                    bestDist = dist;
+                    bestX = testX;
+                    bestY = testY;
+                }
+            }
+        }
+        
+        return { x: bestX, y: bestY };
     }
     
     onMouseDown(e) {
@@ -486,6 +553,14 @@ class MapEditor {
     }
     
     drawTile(x, y, tile) {
+        if (this.gridType === 'hex') {
+            this.drawHexTile(x, y, tile);
+        } else {
+            this.drawSquareTile(x, y, tile);
+        }
+    }
+    
+    drawSquareTile(x, y, tile) {
         const px = x * this.tileSize;
         const py = y * this.tileSize;
         
@@ -503,14 +578,62 @@ class MapEditor {
         
         // Indicadores especiales
         if (tile.blocksVision) {
-            // Borde más grueso para tiles que bloquean visión
             this.ctx.strokeStyle = 'rgba(0,0,0,0.5)';
             this.ctx.lineWidth = 2;
             this.ctx.strokeRect(px + 1, py + 1, this.tileSize - 2, this.tileSize - 2);
         }
     }
     
+    drawHexTile(x, y, tile) {
+        const hexWidth = this.tileSize;
+        const hexHeight = hexWidth * 0.866; // sqrt(3)/2
+        const offset = (y % 2) * (hexWidth / 2);
+        
+        const cx = x * hexWidth + offset + hexWidth / 2;
+        const cy = y * hexHeight * 0.75 + hexHeight / 2;
+        
+        // Dibujar hexágono
+        this.ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 6;
+            const hx = cx + (hexWidth / 2 - 1) * Math.cos(angle);
+            const hy = cy + (hexWidth / 2 - 1) * Math.sin(angle);
+            if (i === 0) {
+                this.ctx.moveTo(hx, hy);
+            } else {
+                this.ctx.lineTo(hx, hy);
+            }
+        }
+        this.ctx.closePath();
+        
+        this.ctx.fillStyle = tile.color || '#333';
+        this.ctx.fill();
+        
+        if (tile.blocksVision) {
+            this.ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+            this.ctx.lineWidth = 2;
+            this.ctx.stroke();
+        }
+        
+        // Icono
+        if (tile.icon && this.tileSize >= 24) {
+            this.ctx.font = `${this.tileSize * 0.4}px Arial`;
+            this.ctx.textAlign = 'center';
+            this.ctx.textBaseline = 'middle';
+            this.ctx.fillStyle = '#fff';
+            this.ctx.fillText(tile.icon, cx, cy);
+        }
+    }
+    
     drawGrid() {
+        if (this.gridType === 'hex') {
+            this.drawHexGrid();
+        } else {
+            this.drawSquareGrid();
+        }
+    }
+    
+    drawSquareGrid() {
         this.ctx.strokeStyle = 'rgba(255,255,255,0.2)';
         this.ctx.lineWidth = 1;
         
@@ -528,6 +651,36 @@ class MapEditor {
             this.ctx.moveTo(0, y * this.tileSize);
             this.ctx.lineTo(this.canvas.width, y * this.tileSize);
             this.ctx.stroke();
+        }
+    }
+    
+    drawHexGrid() {
+        const hexWidth = this.tileSize;
+        const hexHeight = hexWidth * 0.866;
+        
+        this.ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        this.ctx.lineWidth = 1;
+        
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                const offset = (y % 2) * (hexWidth / 2);
+                const cx = x * hexWidth + offset + hexWidth / 2;
+                const cy = y * hexHeight * 0.75 + hexHeight / 2;
+                
+                this.ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = (Math.PI / 3) * i - Math.PI / 6;
+                    const hx = cx + (hexWidth / 2) * Math.cos(angle);
+                    const hy = cy + (hexWidth / 2) * Math.sin(angle);
+                    if (i === 0) {
+                        this.ctx.moveTo(hx, hy);
+                    } else {
+                        this.ctx.lineTo(hx, hy);
+                    }
+                }
+                this.ctx.closePath();
+                this.ctx.stroke();
+            }
         }
     }
     

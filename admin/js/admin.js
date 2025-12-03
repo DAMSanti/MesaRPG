@@ -90,26 +90,43 @@ function handleMessage(data) {
     
     switch (data.type) {
         case 'state_update':
-            updateGameState(data.state);
+            updateGameState(data.payload || data.state || data);
+            break;
+        case 'stats':
+            if (data.payload) updateConnectionCounts(data.payload);
             break;
         case 'connection_counts':
-            updateConnectionCounts(data.counts);
+            updateConnectionCounts(data.counts || data.payload);
             break;
         case 'sheet_submitted':
             loadPendingSheets();
-            logAction('Ficha', `Nueva ficha recibida: ${data.sheet.character_name}`);
+            logAction('Ficha', `Nueva ficha recibida: ${data.sheet?.character_name || data.payload?.character_name || 'Desconocido'}`);
             break;
         case 'sheet_approved':
             loadPendingSheets();
             loadApprovedSheets();
-            logAction('Ficha', `Ficha aprobada: ${data.sheet.character_name}`);
+            logAction('Ficha', `Ficha aprobada: ${data.sheet?.character_name || data.payload?.character_name || 'Desconocido'}`);
             break;
         case 'character_added':
             loadCharacters();
-            logAction('Personaje', `${data.character.name} añadido a la partida`);
+            logAction('Personaje', `${data.character?.name || data.payload?.name || 'Personaje'} añadido a la partida`);
             break;
         case 'character_moved':
             logAction('Movimiento', `${data.character_id} se movió a (${data.x}, ${data.y})`);
+            break;
+        case 'player_joined':
+            logAction('Jugador', `Nuevo jugador conectado`);
+            break;
+        case 'map_changed':
+            logAction('Mapa', `Mapa actualizado`);
+            break;
+        case 'game_system_changed':
+            const sysId = data.payload?.system_id;
+            if (sysId) {
+                currentSystemId = sysId;
+                document.getElementById('system-select').value = sysId;
+                logAction('Sistema', `Sistema cambiado a ${sysId}`);
+            }
             break;
         default:
             console.log('Unknown message type:', data.type);
@@ -339,15 +356,20 @@ async function rejectSheet(sheetId) {
 async function loadAvailableMarkers() {
     try {
         const response = await fetch('/api/markers/available');
-        availableMarkers = await response.json();
+        const data = await response.json();
+        availableMarkers = data.markers || data || [];
         
         const select = document.getElementById('marker-select');
+        if (!select) return;
         select.innerHTML = '<option value="">Selecciona un marcador</option>';
         
-        availableMarkers.forEach(marker => {
+        // Handle both array of objects and array of numbers
+        const markers = Array.isArray(availableMarkers) ? availableMarkers : [];
+        markers.forEach(marker => {
             const option = document.createElement('option');
-            option.value = marker.id;
-            option.textContent = `Marcador #${marker.id}`;
+            const id = typeof marker === 'object' ? marker.id : marker;
+            option.value = id;
+            option.textContent = `Marcador #${id}`;
             select.appendChild(option);
         });
     } catch (error) {
@@ -458,7 +480,9 @@ async function removeToken(sheetId) {
 async function loadCharacters() {
     try {
         const response = await fetch('/api/characters');
-        characters = await response.json();
+        const data = await response.json();
+        // API returns object {id: character}, convert to array
+        characters = Array.isArray(data) ? data : Object.values(data || {});
         renderCharacters();
     } catch (error) {
         console.error('Error loading characters:', error);
@@ -467,8 +491,9 @@ async function loadCharacters() {
 
 function renderCharacters() {
     const container = document.getElementById('active-characters');
+    if (!container) return;
     
-    if (characters.length === 0) {
+    if (!characters || characters.length === 0) {
         container.innerHTML = '<p class="empty-state">No hay personajes en juego</p>';
         return;
     }
@@ -557,13 +582,17 @@ async function clearCharacters() {
 
 // ==================== State Updates ====================
 function updateGameState(state) {
-    if (state.game_system_id && state.game_system_id !== currentSystemId) {
-        currentSystemId = state.game_system_id;
-        document.getElementById('system-select').value = currentSystemId;
+    if (!state) return;
+    
+    const sysId = state.game_system_id || state.game_system;
+    if (sysId && sysId !== currentSystemId) {
+        currentSystemId = sysId;
+        const select = document.getElementById('system-select');
+        if (select) select.value = currentSystemId;
     }
     
     // Update combat state
-    if (state.combat_active) {
+    if (state.is_combat || state.combat_active) {
         document.getElementById('combat-state').textContent = 'En combate';
         document.getElementById('current-turn').textContent = state.current_turn || 1;
         document.getElementById('active-character').textContent = state.active_character || '-';

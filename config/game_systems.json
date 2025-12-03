@@ -5,10 +5,20 @@
             "name": "Dungeons & Dragons 5e",
             "shortName": "D&D 5e",
             "icon": "🐉",
+            "grid": {
+                "type": "square",
+                "cellSize": 40,
+                "realWorldScale": {
+                    "cellDistance": 5,
+                    "unit": "pies",
+                    "metersPerCell": 1.524
+                }
+            },
             "gridType": "square",
-            "gridSize": 50,
+            "gridSize": 40,
             "distanceUnit": "pies",
             "distancePerSquare": 5,
+            "metersPerSquare": 1.524,
             "characterSheet": {
                 "sections": [
                     {
@@ -126,10 +136,23 @@
             "name": "BattleTech",
             "shortName": "BattleTech",
             "icon": "🤖",
+            "grid": {
+                "type": "hex",
+                "cellSize": 50,
+                "hexOrientation": "flat-top",
+                "realWorldScale": {
+                    "cellDistance": 30,
+                    "unit": "metros",
+                    "metersPerCell": 30,
+                    "miniatureScale": "1:285",
+                    "miniatureBaseSize": 25.4
+                }
+            },
             "gridType": "hex",
-            "gridSize": 60,
+            "gridSize": 50,
             "distanceUnit": "hexágonos",
             "distancePerSquare": 1,
+            "metersPerHex": 30,
             "characterSheet": {
                 "sections": [
                     {
