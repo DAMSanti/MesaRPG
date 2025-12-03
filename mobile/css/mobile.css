@@ -919,13 +919,16 @@ header h2 {
     flex: 1;
     display: flex;
     flex-direction: column;
-    padding: 20px 0;
+    padding: 10px;
+    height: 100%;
+    overflow: hidden;
 }
 
 .camera-preview {
     position: relative;
     width: 100%;
-    aspect-ratio: 3/4;
+    flex: 1;
+    max-height: 60vh;
     background: #000;
     border-radius: var(--border-radius);
     overflow: hidden;
@@ -934,7 +937,7 @@ header h2 {
 .camera-preview video {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
 }
 
 .scan-overlay {
@@ -946,6 +949,7 @@ header h2 {
     display: flex;
     align-items: center;
     justify-content: center;
+    pointer-events: none;
 }
 
 .scan-frame {
@@ -957,7 +961,8 @@ header h2 {
 
 .scan-instructions {
     text-align: center;
-    padding: 20px;
+    padding: 10px;
+    flex-shrink: 0;
 }
 
 .scan-instructions .hint {
@@ -969,7 +974,8 @@ header h2 {
 .scan-actions {
     display: flex;
     justify-content: center;
-    padding: 20px;
+    padding: 10px;
+    flex-shrink: 0;
 }
 
 .scan-result {
@@ -983,19 +989,20 @@ header h2 {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    padding: 20px;
+    padding: 15px;
 }
 
 .scan-result img {
     max-width: 100%;
-    max-height: 60%;
+    max-height: 50vh;
+    object-fit: contain;
     border-radius: var(--border-radius);
 }
 
 .scan-result-actions {
     display: flex;
     gap: 15px;
-    margin-top: 20px;
+    margin-top: 15px;
 }
 
 .processing {

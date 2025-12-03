@@ -731,6 +731,26 @@ class SheetManager {
                 return;
             }
             
+            // Verificar si mediaDevices está disponible (requiere HTTPS o localhost)
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                console.error('📷 mediaDevices no disponible. Requiere HTTPS.');
+                this.app.showToast('⚠️ La cámara requiere conexión HTTPS. Usa localhost o configura SSL.', 'error');
+                
+                // Mostrar mensaje en el área de la cámara
+                const preview = document.querySelector('.camera-preview');
+                if (preview) {
+                    preview.innerHTML = `
+                        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; padding: 20px; text-align: center; color: #fff;">
+                            <span style="font-size: 48px;">🔒</span>
+                            <h3 style="margin: 10px 0;">Conexión Segura Requerida</h3>
+                            <p style="font-size: 14px; opacity: 0.8;">La cámara solo funciona con HTTPS o en localhost.</p>
+                            <p style="font-size: 12px; opacity: 0.6; margin-top: 10px;">Contacta al administrador para configurar SSL.</p>
+                        </div>
+                    `;
+                }
+                return;
+            }
+            
             console.log('📷 Solicitando acceso a la cámara...');
             
             this.cameraStream = await navigator.mediaDevices.getUserMedia({
