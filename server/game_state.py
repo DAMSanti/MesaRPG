@@ -567,6 +567,92 @@ class GameStateManager:
             return [self._serialize_datetime(item) for item in obj]
         return obj
     
+    # === Gestión de Mapas ===
+    
+    async def get_all_maps(self) -> List[dict]:
+        """Obtiene todos los mapas guardados"""
+        maps_dir = self.config_path / "maps"
+        maps_dir.mkdir(exist_ok=True)
+        
+        maps = []
+        for map_file in maps_dir.glob("*.json"):
+            try:
+                with open(map_file, 'r', encoding='utf-8') as f:
+                    map_data = json.load(f)
+                    maps.append({
+                        "id": map_file.stem,
+                        "name": map_data.get("name", map_file.stem),
+                        "width": map_data.get("width", 20),
+                        "height": map_data.get("height", 15),
+                        "type": map_data.get("type", "custom"),
+                        "created_at": map_data.get("created_at"),
+                        "updated_at": map_data.get("updated_at")
+                    })
+            except Exception as e:
+                print(f"⚠️ Error leyendo mapa {map_file}: {e}")
+        
+        return maps
+    
+    async def get_map(self, map_id: str) -> Optional[dict]:
+        """Obtiene un mapa específico"""
+        map_file = self.config_path / "maps" / f"{map_id}.json"
+        if not map_file.exists():
+            return None
+        
+        try:
+            with open(map_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ Error leyendo mapa {map_id}: {e}")
+            return None
+    
+    async def save_map(self, map_data: dict) -> dict:
+        """Guarda un mapa (nuevo o existente)"""
+        maps_dir = self.config_path / "maps"
+        maps_dir.mkdir(exist_ok=True)
+        
+        # Generar ID si no tiene
+        map_id = map_data.get("id") or str(uuid.uuid4())[:8]
+        map_data["id"] = map_id
+        
+        # Timestamps
+        now = datetime.now().isoformat()
+        if not map_data.get("created_at"):
+            map_data["created_at"] = now
+        map_data["updated_at"] = now
+        
+        # Guardar
+        map_file = maps_dir / f"{map_id}.json"
+        with open(map_file, 'w', encoding='utf-8') as f:
+            json.dump(map_data, f, indent=2, ensure_ascii=False)
+        
+        # Notificar cambio
+        await self._notify_change("map_saved", {"map_id": map_id, "name": map_data.get("name", "")})
+        
+        return {"id": map_id, "status": "saved"}
+    
+    async def delete_map(self, map_id: str) -> bool:
+        """Elimina un mapa"""
+        map_file = self.config_path / "maps" / f"{map_id}.json"
+        if map_file.exists():
+            map_file.unlink()
+            await self._notify_change("map_deleted", {"map_id": map_id})
+            return True
+        return False
+    
+    async def set_current_map(self, map_id: str) -> bool:
+        """Establece el mapa actual para el display"""
+        map_data = await self.get_map(map_id)
+        if not map_data:
+            return False
+        
+        self.state.current_map = map_data
+        
+        # Notificar a todos los displays
+        await self._notify_change("map_changed", {"map": map_data})
+        
+        return True
+    
     def get_full_state(self) -> dict:
         """Obtiene el estado completo para enviar a clientes"""
         try:

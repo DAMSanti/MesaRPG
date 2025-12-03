@@ -28,7 +28,17 @@ function initTabs() {
             // Activate clicked tab
             tab.classList.add('active');
             const tabId = `tab-${tab.dataset.tab}`;
-            document.getElementById(tabId).classList.add('active');
+            const tabContent = document.getElementById(tabId);
+            if (tabContent) {
+                tabContent.classList.add('active');
+            }
+            
+            // Inicializar editor de mapas cuando se selecciona esa pestaña
+            if (tab.dataset.tab === 'maps') {
+                if (typeof initMapEditor === 'function') {
+                    initMapEditor();
+                }
+            }
         });
     });
 }

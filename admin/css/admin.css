@@ -615,6 +615,449 @@ body {
     background: var(--text-muted);
 }
 
+/* ==================== MAP EDITOR STYLES ==================== */
+
+.map-editor-container {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 200px);
+    min-height: 600px;
+    gap: 10px;
+}
+
+/* Toolbar */
+.map-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    padding: 12px 16px;
+    background: var(--bg-card);
+    border-radius: 12px;
+    flex-wrap: wrap;
+}
+
+.toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 15px;
+    border-right: 1px solid var(--border);
+}
+
+.toolbar-group:last-child {
+    border-right: none;
+}
+
+.toolbar-group label {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.tool-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+    transition: all 0.2s;
+}
+
+.tool-btn:hover {
+    background: var(--bg-card-hover);
+}
+
+.tool-btn.active {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+/* Main Editor Area */
+.map-editor-main {
+    display: grid;
+    grid-template-columns: 250px 1fr 280px;
+    gap: 15px;
+    flex: 1;
+    min-height: 0;
+}
+
+/* Tile Panel (Left) */
+.tile-panel {
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.tile-panel h3 {
+    font-size: 16px;
+    margin-bottom: 12px;
+}
+
+.layer-selector {
+    display: flex;
+    gap: 5px;
+    margin-bottom: 12px;
+}
+
+.layer-btn {
+    flex: 1;
+    padding: 8px 4px;
+    font-size: 11px;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.layer-btn:hover {
+    color: var(--text);
+    border-color: var(--primary);
+}
+
+.layer-btn.active {
+    background: var(--primary);
+    border-color: var(--primary);
+    color: white;
+}
+
+.tile-palette {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    overflow-y: auto;
+    flex: 1;
+    padding: 5px;
+    background: var(--bg-dark);
+    border-radius: 8px;
+}
+
+.tile-item {
+    aspect-ratio: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    background: var(--bg-card);
+    border: 2px solid transparent;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tile-item:hover {
+    transform: scale(1.1);
+    border-color: var(--primary);
+}
+
+.tile-item.selected {
+    border-color: var(--success);
+    box-shadow: 0 0 10px var(--success);
+}
+
+.tile-info {
+    margin-top: 12px;
+    padding: 10px;
+    background: var(--bg-dark);
+    border-radius: 8px;
+    font-size: 12px;
+}
+
+.tile-info p {
+    margin-bottom: 5px;
+}
+
+.tile-info .prop {
+    display: flex;
+    justify-content: space-between;
+    color: var(--text-muted);
+}
+
+.tile-info .prop span:last-child {
+    color: var(--text);
+    font-weight: 500;
+}
+
+/* Map Canvas Container (Center) */
+.map-canvas-container {
+    background: var(--bg-card);
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    position: relative;
+}
+
+#map-canvas {
+    background: #1a1a2e;
+    border-radius: 4px;
+    cursor: crosshair;
+}
+
+.map-canvas-container::before {
+    content: '🗺️ Crea un nuevo mapa o carga uno existente';
+    position: absolute;
+    color: var(--text-muted);
+    font-size: 18px;
+    pointer-events: none;
+}
+
+.map-canvas-container.has-map::before {
+    display: none;
+}
+
+/* Properties Panel (Right) */
+.properties-panel {
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    overflow-y: auto;
+}
+
+.properties-panel h3 {
+    font-size: 14px;
+    color: var(--primary);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 8px;
+}
+
+.property-group {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.property-group label {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.property-group input,
+.property-group select {
+    padding: 8px 12px;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 14px;
+}
+
+.property-group input:focus,
+.property-group select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.full-width {
+    width: 100%;
+}
+
+/* Saved Maps List */
+.saved-maps-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.saved-map-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    background: var(--bg-dark);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.saved-map-item:hover {
+    background: var(--bg-card-hover);
+}
+
+.saved-map-item .map-name {
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.saved-map-item .map-meta {
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+.saved-map-item .map-actions {
+    display: flex;
+    gap: 5px;
+}
+
+.saved-map-item .map-actions button {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: all 0.2s;
+}
+
+.saved-map-item .map-actions button:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+.saved-map-item .map-actions button.delete:hover {
+    background: var(--danger);
+    border-color: var(--danger);
+}
+
+/* New Map Dialog */
+.map-dialog {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.map-dialog-content {
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 25px;
+    min-width: 350px;
+}
+
+.map-dialog-content h2 {
+    margin-bottom: 20px;
+}
+
+.map-dialog-content .form-group {
+    margin-bottom: 15px;
+}
+
+.map-dialog-content .form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.map-dialog-content .form-group input,
+.map-dialog-content .form-group select {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--bg-dark);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    font-size: 14px;
+}
+
+.map-dialog-content .btn-row {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+    margin-top: 20px;
+}
+
+/* Grid overlay */
+.grid-toggle {
+    position: absolute;
+    bottom: 15px;
+    right: 15px;
+    padding: 8px 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 12px;
+}
+
+.grid-toggle.active {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+/* Zoom controls */
+.zoom-controls {
+    position: absolute;
+    bottom: 15px;
+    left: 15px;
+    display: flex;
+    gap: 5px;
+}
+
+.zoom-btn {
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 16px;
+    color: var(--text);
+}
+
+.zoom-btn:hover {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+/* Responsive */
+@media (max-width: 1200px) {
+    .map-editor-main {
+        grid-template-columns: 200px 1fr 250px;
+    }
+}
+
+@media (max-width: 992px) {
+    .map-editor-main {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr auto;
+    }
+    
+    .tile-panel {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+    
+    .tile-palette {
+        max-height: 150px;
+    }
+    
+    .properties-panel {
+        flex-direction: row;
+        flex-wrap: wrap;
+    }
+}
+
+/* ==================== END MAP EDITOR STYLES ==================== */
+
 /* Responsive */
 @media (max-width: 768px) {
     .grid {

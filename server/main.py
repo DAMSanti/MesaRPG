@@ -447,6 +447,67 @@ async def get_available_markers():
     return {"markers": game_state.state.available_markers}
 
 
+# === API de Tiles y Mapas ===
+
+@app.get("/api/tiles")
+async def get_tiles():
+    """Obtiene la biblioteca de tiles disponibles"""
+    tiles_file = CONFIG_DIR / "tiles.json"
+    if tiles_file.exists():
+        with open(tiles_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {"categories": {}}
+
+@app.get("/api/maps")
+async def get_all_maps():
+    """Obtiene todos los mapas guardados"""
+    maps = await game_state.get_all_maps()
+    return {"maps": maps}
+
+@app.get("/api/maps/{map_id}")
+async def get_map(map_id: str):
+    """Obtiene un mapa específico"""
+    map_data = await game_state.get_map(map_id)
+    if not map_data:
+        raise HTTPException(status_code=404, detail="Mapa no encontrado")
+    return map_data
+
+@app.post("/api/maps")
+async def save_map(body: dict = Body(...)):
+    """Guarda un mapa (nuevo o actualizado)"""
+    result = await game_state.save_map(body)
+    return result
+
+@app.delete("/api/maps/{map_id}")
+async def delete_map(map_id: str):
+    """Elimina un mapa"""
+    success = await game_state.delete_map(map_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Mapa no encontrado")
+    return {"status": "deleted", "map_id": map_id}
+
+@app.post("/api/maps/{map_id}/project")
+async def project_map(map_id: str):
+    """Proyecta un mapa al display"""
+    success = await game_state.set_current_map(map_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Mapa no encontrado")
+    return {"status": "projected", "map_id": map_id}
+
+@app.post("/api/display/project-map")
+async def project_map_data(body: dict = Body(...)):
+    """Proyecta datos de mapa directamente al display (sin guardar)"""
+    map_data = body.get("mapData")
+    if not map_data:
+        raise HTTPException(status_code=400, detail="Se requiere mapData")
+    
+    # Actualizar estado y notificar a displays
+    game_state.state.current_map = map_data
+    await game_state._notify_change("map_changed", {"map": map_data})
+    
+    return {"status": "projected"}
+
+
 # === Debug API ===
 
 @app.post("/api/debug/add-test-character")

@@ -25,6 +25,7 @@
         <!-- Tabs de navegación -->
         <nav class="tabs">
             <button class="tab active" data-tab="game">🎲 Partida</button>
+            <button class="tab" data-tab="maps">🗺️ Mapas</button>
             <button class="tab" data-tab="sheets">📋 Fichas</button>
             <button class="tab" data-tab="tokens">🎯 Tokens</button>
             <button class="tab" data-tab="combat">⚔️ Combate</button>
@@ -65,6 +66,104 @@
                 <div class="card full-width">
                     <h2>📜 Log de Acciones</h2>
                     <div id="action-log" class="log"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Tab: Editor de Mapas -->
+        <section id="tab-maps" class="tab-content">
+            <div class="map-editor-container">
+                <!-- Barra de herramientas -->
+                <div class="map-toolbar">
+                    <div class="toolbar-group">
+                        <button class="btn btn-sm" onclick="showNewMapDialog()">📄 Nuevo</button>
+                        <button class="btn btn-sm" onclick="mapEditor?.saveMap()">💾 Guardar</button>
+                        <button class="btn btn-sm" onclick="showLoadMapDialog()">📂 Cargar</button>
+                        <button class="btn btn-sm" onclick="mapEditor?.exportMap()">📤 Exportar</button>
+                        <label class="btn btn-sm">
+                            📥 Importar
+                            <input type="file" accept=".json" style="display:none" onchange="mapEditor?.importMap(this.files[0])">
+                        </label>
+                    </div>
+                    <div class="toolbar-group">
+                        <button class="tool-btn active" data-tool="paint" onclick="mapEditor?.setTool('paint')" title="Pintar (P)">🖌️</button>
+                        <button class="tool-btn" data-tool="erase" onclick="mapEditor?.setTool('erase')" title="Borrar (E)">🧹</button>
+                        <button class="tool-btn" data-tool="fill" onclick="mapEditor?.setTool('fill')" title="Rellenar (F)">🪣</button>
+                        <button class="tool-btn" data-tool="eyedropper" onclick="mapEditor?.setTool('eyedropper')" title="Cuentagotas (I)">💉</button>
+                    </div>
+                    <div class="toolbar-group">
+                        <label>Pincel:</label>
+                        <input type="range" min="1" max="5" value="1" onchange="mapEditor?.setBrushSize(this.value)">
+                        <span id="brush-size-value">1</span>
+                    </div>
+                    <div class="toolbar-group">
+                        <button class="btn btn-sm" onclick="mapEditor?.undo()" title="Deshacer (Ctrl+Z)">↩️</button>
+                        <button class="btn btn-sm" onclick="mapEditor?.redo()" title="Rehacer (Ctrl+Y)">↪️</button>
+                    </div>
+                    <div class="toolbar-group">
+                        <button class="btn btn-sm btn-success" onclick="mapEditor?.projectToDisplay()">📺 Proyectar</button>
+                    </div>
+                </div>
+
+                <div class="map-editor-main">
+                    <!-- Panel de tiles (izquierda) -->
+                    <div class="tile-panel">
+                        <h3>🎨 Tiles</h3>
+                        <div class="layer-selector">
+                            <button class="layer-btn active" data-layer="terrain" onclick="mapEditor?.setLayer('terrain')">Terreno</button>
+                            <button class="layer-btn" data-layer="objects" onclick="mapEditor?.setLayer('objects')">Objetos</button>
+                            <button class="layer-btn" data-layer="effects" onclick="mapEditor?.setLayer('effects')">Efectos</button>
+                        </div>
+                        <div id="tile-palette" class="tile-palette">
+                            <!-- Tiles se cargan dinámicamente -->
+                        </div>
+                        <div id="tile-info" class="tile-info">
+                            <p>Selecciona un tile</p>
+                        </div>
+                    </div>
+
+                    <!-- Canvas del mapa (centro) -->
+                    <div class="map-canvas-container">
+                        <canvas id="map-canvas"></canvas>
+                    </div>
+
+                    <!-- Panel de propiedades (derecha) -->
+                    <div class="properties-panel">
+                        <h3>⚙️ Propiedades del Mapa</h3>
+                        <div class="property-group">
+                            <label>Nombre:</label>
+                            <input type="text" id="map-name" placeholder="Nombre del mapa">
+                        </div>
+                        <div class="property-group">
+                            <label>Tamaño:</label>
+                            <span id="map-size">20 x 15</span>
+                        </div>
+                        
+                        <h3>🎲 Generación Procedural</h3>
+                        <div class="property-group">
+                            <label>Ancho:</label>
+                            <input type="number" id="gen-width" value="20" min="10" max="50">
+                        </div>
+                        <div class="property-group">
+                            <label>Alto:</label>
+                            <input type="number" id="gen-height" value="15" min="10" max="50">
+                        </div>
+                        <div class="property-group">
+                            <label>Tipo:</label>
+                            <select id="gen-type">
+                                <option value="dungeon">🏰 Mazmorra</option>
+                                <option value="cave">🦇 Cueva</option>
+                                <option value="forest">🌲 Bosque</option>
+                                <option value="town">🏘️ Pueblo</option>
+                            </select>
+                        </div>
+                        <button class="btn btn-primary full-width" onclick="generateMap()">🎲 Generar Mapa</button>
+
+                        <h3>🗂️ Mapas Guardados</h3>
+                        <div id="saved-maps-list" class="saved-maps-list">
+                            <p class="empty-state">Cargando...</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
@@ -182,5 +281,6 @@
     </div>
 
     <script src="/admin/js/admin.js"></script>
+    <script src="/admin/js/map-editor.js"></script>
 </body>
 </html>
