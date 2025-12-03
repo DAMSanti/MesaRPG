@@ -19,6 +19,10 @@
                 <select id="system-select" onchange="setGameSystem(this.value)">
                     <option value="">Cargando...</option>
                 </select>
+                <span id="current-system-display" class="current-system-display" style="display: none;"></span>
+                <button id="btn-change-system" class="btn btn-warning btn-sm" style="display: none;" onclick="confirmChangeSystem()">
+                    🔄 Cambiar Juego
+                </button>
             </div>
         </header>
 

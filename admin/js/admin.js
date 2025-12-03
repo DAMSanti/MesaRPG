@@ -157,6 +157,13 @@ async function loadGameSystems() {
         if (state.game_system_id) {
             currentSystemId = state.game_system_id;
             select.value = currentSystemId;
+            
+            // Bloquear el selector si ya hay un sistema seleccionado
+            const system = gameSystems.find(s => s.id === currentSystemId);
+            if (system) {
+                lockGameSystemSelector(system);
+            }
+            
             loadPendingSheets();
             loadApprovedSheets();
             loadCharacters();
@@ -180,6 +187,10 @@ async function setGameSystem(systemId) {
             currentSystemId = systemId;
             const system = gameSystems.find(s => s.id === systemId);
             logAction('Sistema', `Sistema de juego cambiado a: ${system?.name || systemId}`);
+            
+            // Bloquear el selector y mostrar el botón de cambio
+            lockGameSystemSelector(system);
+            
             loadPendingSheets();
             loadApprovedSheets();
             loadAvailableMarkers();
@@ -188,6 +199,44 @@ async function setGameSystem(systemId) {
         }
     } catch (error) {
         console.error('Error setting game system:', error);
+    }
+}
+
+// Bloquear el selector de sistema de juego
+function lockGameSystemSelector(system) {
+    const select = document.getElementById('system-select');
+    const displaySpan = document.getElementById('current-system-display');
+    const changeBtn = document.getElementById('btn-change-system');
+    
+    // Ocultar selector y mostrar display + botón
+    select.style.display = 'none';
+    displaySpan.style.display = 'inline-block';
+    displaySpan.textContent = system ? `${system.icon || '🎮'} ${system.name}` : currentSystemId;
+    changeBtn.style.display = 'inline-block';
+}
+
+// Desbloquear el selector de sistema de juego
+function unlockGameSystemSelector() {
+    const select = document.getElementById('system-select');
+    const displaySpan = document.getElementById('current-system-display');
+    const changeBtn = document.getElementById('btn-change-system');
+    
+    // Mostrar selector y ocultar display + botón
+    select.style.display = 'inline-block';
+    select.value = '';
+    displaySpan.style.display = 'none';
+    changeBtn.style.display = 'none';
+    
+    currentSystemId = null;
+}
+
+// Confirmar cambio de sistema de juego
+function confirmChangeSystem() {
+    const confirmed = confirm('⚠️ ¿Estás seguro de que quieres cambiar el sistema de juego?\n\nEsto puede afectar a los personajes y configuración actual.');
+    
+    if (confirmed) {
+        unlockGameSystemSelector();
+        logAction('Sistema', 'Selector de sistema desbloqueado');
     }
 }
 

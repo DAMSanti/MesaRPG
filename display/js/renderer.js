@@ -17,6 +17,7 @@ class GameRenderer {
         
         this.gridSize = 50; // Tamaño de celda en píxeles
         this.showGrid = true;
+        this.gridType = 'hexagonal'; // 'hexagonal' o 'square'
         
         // Estado de arrastre
         this.dragging = null; // { tokenId, offsetX, offsetY }
@@ -403,6 +404,37 @@ class GameRenderer {
     }
     
     drawGrid(ctx, w, h) {
+        if (this.gridType === 'square') {
+            this.drawSquareGrid(ctx, w, h);
+        } else {
+            this.drawHexGrid(ctx, w, h);
+        }
+    }
+    
+    drawSquareGrid(ctx, w, h) {
+        const cellSize = this.gridSize;
+        
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 1;
+        
+        // Líneas verticales
+        for (let x = 0; x <= w; x += cellSize) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, h);
+            ctx.stroke();
+        }
+        
+        // Líneas horizontales
+        for (let y = 0; y <= h; y += cellSize) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+        }
+    }
+    
+    drawHexGrid(ctx, w, h) {
         // Hexágonos pointy-top (punta arriba) - tamaño para tokens de 100px
         const size = 50; // Radio del hexágono
         
@@ -444,6 +476,32 @@ class GameRenderer {
         }
         ctx.closePath();
         ctx.stroke();
+    }
+    
+    // Cambiar el tipo de grid según el sistema de juego
+    setGridType(gridType) {
+        // Normalizar: 'hex' y 'hexagonal' ambos son hexagonales
+        if (gridType === 'hex' || gridType === 'hexagonal') {
+            this.gridType = 'hexagonal';
+        } else if (gridType === 'square') {
+            this.gridType = 'square';
+        } else {
+            this.gridType = 'hexagonal'; // Por defecto
+        }
+        console.log(`🎲 Grid cambiada a: ${this.gridType}`);
+        this.redraw();
+    }
+    
+    // Configurar sistema de juego (llamado desde app.js)
+    setGameSystem(systemConfig) {
+        if (systemConfig && systemConfig.grid) {
+            this.setGridType(systemConfig.grid.type || systemConfig.gridType);
+            if (systemConfig.grid.cellSize) {
+                this.gridSize = systemConfig.grid.cellSize;
+            }
+        } else if (systemConfig && systemConfig.gridType) {
+            this.setGridType(systemConfig.gridType);
+        }
     }
     
     // === Tokens de personajes ===

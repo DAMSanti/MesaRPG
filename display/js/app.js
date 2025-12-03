@@ -136,6 +136,18 @@ class MesaRPGApp {
             // (El estado actualizado vendrá en otro mensaje)
         });
         
+        // Cambio de sistema de juego
+        ws.on('game_system_changed', (payload) => {
+            if (payload.system) {
+                this.state.game_system = payload.system;
+                this.applyGameSystemConfig(payload.system);
+                window.gameRenderer.addLogEntry(
+                    `Sistema de juego: ${payload.system.name || payload.system_id}`,
+                    'system'
+                );
+            }
+        });
+        
         ws.on('effect', (payload) => {
             this.playEffect(payload);
         });
@@ -195,6 +207,25 @@ class MesaRPGApp {
         // Cargar mapa si cambió
         if (state.current_map && state.current_map !== this.state.current_map) {
             window.gameRenderer.loadMap(state.current_map);
+        }
+        
+        // Aplicar configuración del sistema de juego si está presente
+        if (state.game_system_info && Object.keys(state.game_system_info).length > 0) {
+            this.applyGameSystemConfig(state.game_system_info);
+        } else if (state.game_system) {
+            this.applyGameSystemConfig(state.game_system);
+        }
+    }
+    
+    // Aplicar configuración del sistema de juego al renderer
+    applyGameSystemConfig(system) {
+        if (!system) return;
+        
+        console.log('🎮 Aplicando configuración de sistema:', system.name || system.id);
+        
+        // Configurar la grid según el sistema
+        if (window.gameRenderer) {
+            window.gameRenderer.setGameSystem(system);
         }
     }
     

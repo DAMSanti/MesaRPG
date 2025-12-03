@@ -86,6 +86,29 @@ body {
     cursor: pointer;
 }
 
+.system-selector select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.current-system-display {
+    padding: 10px 16px;
+    background: var(--primary);
+    color: white;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.btn-warning {
+    background: var(--warning);
+    color: #000;
+}
+
+.btn-warning:hover {
+    background: #d97706;
+}
+
 /* Tabs */
 .tabs {
     display: flex;
