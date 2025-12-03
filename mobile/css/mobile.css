@@ -924,9 +924,9 @@ header h2 {
 
 .camera-preview {
     position: relative;
-    width: 56.25vw; /* 9/16 del ancho de pantalla para un video 16:9 rotado */
-    height: 100vw;  /* El alto es el ancho completo porque está rotado */
-    max-height: 80vh;
+    width: 100%;
+    aspect-ratio: 9/16;
+    max-height: 75vh;
     background: #000;
     border-radius: var(--border-radius);
     overflow: hidden;
@@ -934,16 +934,13 @@ header h2 {
 }
 
 .camera-preview video {
+    width: 177.78%;
+    height: 56.25%;
     position: absolute;
-    /* Centrar el video */
     top: 50%;
     left: 50%;
-    /* El video es 16:9, al rotar sus dimensiones se intercambian */
-    /* width del video = height del contenedor (porque está rotado) */
-    width: 100vw;
-    max-width: calc(80vh * 16 / 9);
-    height: auto;
-    transform: translate(-50%, -50%) rotate(90deg);
+    transform: translate(-50%, -50%) rotate(-90deg);
+    transform-origin: center center;
 }
 
 .scan-overlay {
