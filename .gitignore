@@ -69,3 +69,6 @@ assets/markers/*.png
 *.local.json
 secrets.json
 .env.local
+
+# Modelos YOLO (muy grandes, se descargan automáticamente)
+*.pt
