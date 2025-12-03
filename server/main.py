@@ -255,6 +255,28 @@ async def mobile_assets(filename: str):
         return FileResponse(file_path)
     raise HTTPException(status_code=404, detail="Asset not found")
 
+# === Assets (tokens, markers, etc.) ===
+
+@app.get("/assets/markers/tokens.json")
+async def tokens_index():
+    """Índice de todos los tokens disponibles"""
+    file_path = BASE_DIR / "assets" / "markers" / "tokens.json"
+    if file_path.exists():
+        return FileResponse(file_path, media_type="application/json")
+    raise HTTPException(status_code=404, detail="Token index not found")
+
+@app.get("/assets/markers/{category}/{filename}")
+async def get_token_image(category: str, filename: str):
+    """Obtiene una imagen de token (dnd, battletech, generic)"""
+    if category not in ["dnd", "battletech", "generic"]:
+        raise HTTPException(status_code=400, detail="Invalid token category")
+    
+    file_path = BASE_DIR / "assets" / "markers" / category / filename
+    if file_path.exists():
+        media_type = "image/svg+xml" if filename.endswith(".svg") else "image/png"
+        return FileResponse(file_path, media_type=media_type)
+    raise HTTPException(status_code=404, detail="Token not found")
+
 
 # === API REST ===
 
@@ -438,12 +460,13 @@ async def reject_sheet(sheet_id: str, body: dict = Body(default={})):
 async def assign_token(sheet_id: str, body: dict = Body(...)):
     """Asigna un token/marcador a una ficha aprobada (solo GM)"""
     marker_id = body.get('marker_id')
+    token_visual = body.get('token_visual')  # ID del token visual (opcional)
     if marker_id is None:
         raise HTTPException(status_code=400, detail="Se requiere marker_id")
-    success = await game_state.assign_token_to_sheet(sheet_id, marker_id)
+    success = await game_state.assign_token_to_sheet(sheet_id, marker_id, token_visual)
     if not success:
         raise HTTPException(status_code=400, detail="No se pudo asignar el token")
-    return {"status": "success", "marker_id": marker_id}
+    return {"status": "success", "marker_id": marker_id, "token_visual": token_visual}
 
 @app.get("/api/markers/available")
 async def get_available_markers():

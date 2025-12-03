@@ -53,6 +53,7 @@ class CharacterSheet(BaseModel):
     status: CharacterStatus = CharacterStatus.DRAFT
     data: Dict[str, Any] = {}  # Datos de la ficha según el sistema
     marker_id: Optional[int] = None  # Token asignado (solo cuando está aprobado)
+    token_visual: Optional[str] = None  # ID del token visual elegido
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
     approved_at: Optional[datetime] = None

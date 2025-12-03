@@ -10,10 +10,18 @@ let characters = [];
 let availableMarkers = [];
 let selectedSheetId = null;
 
+// Token selection state
+let tokenLibrary = null;
+let selectedTokenSheetId = null;
+let selectedTokenId = null;
+let currentTokenCategory = 'system';
+
 // DOM Ready
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
+    initTokenCategoryTabs();
     loadGameSystems();
+    loadTokenLibrary();
     connectWebSocket();
 });
 
@@ -413,80 +421,183 @@ async function rejectSheet(sheetId) {
     }
 }
 
-// ==================== Token Assignment ====================
-async function loadAvailableMarkers() {
+// ==================== Token Assignment (Visual) ====================
+
+// Load token library from JSON
+async function loadTokenLibrary() {
     try {
-        const response = await fetch('/api/markers/available');
-        const data = await response.json();
-        availableMarkers = data.markers || data || [];
-        
-        const select = document.getElementById('marker-select');
-        if (!select) return;
-        select.innerHTML = '<option value="">Selecciona un marcador</option>';
-        
-        // Handle both array of objects and array of numbers
-        const markers = Array.isArray(availableMarkers) ? availableMarkers : [];
-        markers.forEach(marker => {
-            const option = document.createElement('option');
-            const id = typeof marker === 'object' ? marker.id : marker;
-            option.value = id;
-            option.textContent = `Marcador #${id}`;
-            select.appendChild(option);
-        });
+        const response = await fetch('/assets/markers/tokens.json');
+        tokenLibrary = await response.json();
+        console.log('Token library loaded:', tokenLibrary);
     } catch (error) {
-        console.error('Error loading markers:', error);
-        // Fallback: create markers 1-50
-        const select = document.getElementById('marker-select');
-        select.innerHTML = '<option value="">Selecciona un marcador</option>';
-        for (let i = 1; i <= 50; i++) {
-            const option = document.createElement('option');
-            option.value = i;
-            option.textContent = `Marcador #${i}`;
-            select.appendChild(option);
-        }
+        console.error('Error loading token library:', error);
+        // Fallback con tokens genéricos
+        tokenLibrary = {
+            dnd: [],
+            battletech: [],
+            generic: [
+                { id: 'player1', name: 'Player 1', number: 1, file: 'generic/player1.svg' },
+                { id: 'player2', name: 'Player 2', number: 2, file: 'generic/player2.svg' },
+                { id: 'player3', name: 'Player 3', number: 3, file: 'generic/player3.svg' },
+                { id: 'player4', name: 'Player 4', number: 4, file: 'generic/player4.svg' }
+            ]
+        };
     }
 }
 
-function updateSheetForTokenSelect() {
-    const select = document.getElementById('sheet-for-token');
-    select.innerHTML = '<option value="">Selecciona una ficha aprobada</option>';
-    
-    // Only show approved sheets without assigned tokens
-    const unassigned = approvedSheets.filter(s => !s.marker_id);
-    
-    unassigned.forEach(sheet => {
-        const option = document.createElement('option');
-        option.value = sheet.id;
-        option.textContent = `${sheet.character_name} (${sheet.player_name})`;
-        select.appendChild(option);
+// Initialize token category tabs
+function initTokenCategoryTabs() {
+    document.querySelectorAll('.token-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.token-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            currentTokenCategory = tab.dataset.category;
+            renderTokenGallery();
+        });
     });
+    
+    // Add listener for marker input
+    const markerInput = document.getElementById('marker-id-input');
+    if (markerInput) {
+        markerInput.addEventListener('input', updateAssignButtonState);
+    }
 }
 
-async function assignToken() {
-    const sheetId = document.getElementById('sheet-for-token').value;
-    const markerId = document.getElementById('marker-select').value;
+// Render sheets available for token assignment
+function renderSheetsForToken() {
+    const container = document.getElementById('sheets-for-token');
+    if (!container) return;
     
-    if (!sheetId || !markerId) {
-        alert('Selecciona una ficha y un marcador');
+    const unassigned = approvedSheets.filter(s => !s.marker_id);
+    
+    if (unassigned.length === 0) {
+        container.innerHTML = '<p class="empty-state">Todas las fichas tienen token asignado</p>';
+        return;
+    }
+    
+    container.innerHTML = unassigned.map(sheet => `
+        <div class="sheet-option ${selectedTokenSheetId === sheet.id ? 'selected' : ''}" 
+             onclick="selectSheetForToken('${sheet.id}')">
+            <div class="sheet-avatar">${escapeHtml(sheet.character_name.charAt(0).toUpperCase())}</div>
+            <div class="sheet-info">
+                <div class="sheet-name">${escapeHtml(sheet.character_name)}</div>
+                <div class="sheet-player">${escapeHtml(sheet.player_name)}</div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// Select a sheet for token assignment
+function selectSheetForToken(sheetId) {
+    selectedTokenSheetId = sheetId;
+    renderSheetsForToken();
+    updateAssignButtonState();
+}
+
+// Render token gallery based on current system and category
+function renderTokenGallery() {
+    const container = document.getElementById('token-gallery');
+    if (!container || !tokenLibrary) return;
+    
+    let tokens = [];
+    
+    if (currentTokenCategory === 'system') {
+        // Get tokens based on current game system
+        const systemId = currentSystemId || 'dnd';
+        if (systemId.includes('battletech')) {
+            tokens = tokenLibrary.battletech || [];
+        } else {
+            tokens = tokenLibrary.dnd || [];
+        }
+    } else if (currentTokenCategory === 'generic') {
+        tokens = tokenLibrary.generic || [];
+    }
+    
+    if (tokens.length === 0) {
+        container.innerHTML = '<p class="empty-state">No hay tokens disponibles</p>';
+        return;
+    }
+    
+    container.innerHTML = tokens.map(token => {
+        const isSelected = selectedTokenId === token.id;
+        const weightBadge = token.tonnage ? getWeightBadge(token.tonnage) : '';
+        
+        return `
+            <div class="token-option ${isSelected ? 'selected' : ''}" 
+                 onclick="selectToken('${token.id}')"
+                 title="${token.name}${token.tonnage ? ` (${token.tonnage}T)` : ''}">
+                ${weightBadge}
+                <img class="token-image" src="/assets/markers/${token.file}" alt="${token.name}">
+                <span class="token-label">${token.name}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+// Get weight class badge HTML for BattleTech mechs
+function getWeightBadge(tonnage) {
+    if (tonnage <= 35) {
+        return '<span class="weight-badge light">L</span>';
+    } else if (tonnage <= 55) {
+        return '<span class="weight-badge medium">M</span>';
+    } else if (tonnage <= 75) {
+        return '<span class="weight-badge heavy">H</span>';
+    } else {
+        return '<span class="weight-badge assault">A</span>';
+    }
+}
+
+// Select a token
+function selectToken(tokenId) {
+    selectedTokenId = tokenId;
+    renderTokenGallery();
+    updateAssignButtonState();
+}
+
+// Update assign button state
+function updateAssignButtonState() {
+    const btn = document.getElementById('assign-token-btn');
+    const markerInput = document.getElementById('marker-id-input');
+    
+    if (!btn) return;
+    
+    const markerId = markerInput ? markerInput.value : '';
+    const isValid = selectedTokenSheetId && selectedTokenId && markerId;
+    
+    btn.disabled = !isValid;
+}
+
+// Assign token visually
+async function assignTokenVisual() {
+    const markerId = document.getElementById('marker-id-input').value;
+    
+    if (!selectedTokenSheetId || !selectedTokenId || !markerId) {
+        alert('Completa todos los campos: ficha, token visual y marcador ArUco');
         return;
     }
     
     try {
-        const response = await fetch(`/api/sheets/${sheetId}/assign-token`, {
+        const response = await fetch(`/api/sheets/${selectedTokenSheetId}/assign-token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ marker_id: parseInt(markerId) })
+            body: JSON.stringify({ 
+                marker_id: parseInt(markerId),
+                token_visual: selectedTokenId
+            })
         });
         
         if (response.ok) {
             loadApprovedSheets();
             loadCharacters();
-            loadAvailableMarkers();
-            logAction('Token', `Token #${markerId} asignado`);
+            logAction('Token', `Token ${selectedTokenId} asignado con marcador #${markerId}`);
             
-            // Reset selects
-            document.getElementById('sheet-for-token').value = '';
-            document.getElementById('marker-select').value = '';
+            // Reset selections
+            selectedTokenSheetId = null;
+            selectedTokenId = null;
+            document.getElementById('marker-id-input').value = '';
+            renderSheetsForToken();
+            renderTokenGallery();
+            updateAssignButtonState();
         } else {
             const error = await response.json();
             alert(error.detail || 'Error al asignar token');
@@ -496,8 +607,20 @@ async function assignToken() {
     }
 }
 
+// Legacy function for compatibility
+async function loadAvailableMarkers() {
+    // No longer uses select, but keep for any other code that calls it
+}
+
+function updateSheetForTokenSelect() {
+    // Replaced by renderSheetsForToken
+    renderSheetsForToken();
+}
+
 function renderAssignedTokens() {
     const container = document.getElementById('assigned-tokens');
+    if (!container) return;
+    
     const assigned = approvedSheets.filter(s => s.marker_id);
     
     if (assigned.length === 0) {
@@ -505,18 +628,45 @@ function renderAssignedTokens() {
         return;
     }
     
-    container.innerHTML = assigned.map(sheet => `
-        <div class="token-item">
-            <div class="character-info">
-                <div class="token-marker">${sheet.marker_id}</div>
-                <div>
-                    <div class="character-name">${escapeHtml(sheet.character_name)}</div>
-                    <div class="character-player">${escapeHtml(sheet.player_name)}</div>
+    container.innerHTML = assigned.map(sheet => {
+        // Determine token image path
+        let tokenImagePath = '/assets/markers/generic/player1.svg'; // default
+        
+        if (sheet.token_visual && tokenLibrary) {
+            // Find the token in library
+            const allTokens = [
+                ...(tokenLibrary.dnd || []),
+                ...(tokenLibrary.battletech || []),
+                ...(tokenLibrary.generic || [])
+            ];
+            const token = allTokens.find(t => t.id === sheet.token_visual);
+            if (token) {
+                tokenImagePath = `/assets/markers/${token.file}`;
+            }
+        }
+        
+        return `
+            <div class="assigned-token-card">
+                <div class="token-header">
+                    <img class="token-visual" src="${tokenImagePath}" alt="Token">
+                    <div class="token-details">
+                        <div class="character-name">${escapeHtml(sheet.character_name)}</div>
+                        <div class="player-name">${escapeHtml(sheet.player_name)}</div>
+                    </div>
+                    <span class="marker-badge">#${sheet.marker_id}</span>
+                </div>
+                <div class="token-footer">
+                    <button class="btn btn-danger btn-sm" onclick="removeToken('${sheet.id}')">
+                        ❌ Quitar
+                    </button>
                 </div>
             </div>
-            <button class="btn btn-danger btn-sm" onclick="removeToken('${sheet.id}')">Quitar</button>
-        </div>
-    `).join('');
+        `;
+    }).join('');
+    
+    // Also update the sheets for token list
+    renderSheetsForToken();
+}
 }
 
 async function removeToken(sheetId) {

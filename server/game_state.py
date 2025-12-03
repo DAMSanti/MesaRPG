@@ -210,7 +210,7 @@ class GameStateManager:
         })
         return True
     
-    async def assign_token_to_sheet(self, sheet_id: str, marker_id: int) -> bool:
+    async def assign_token_to_sheet(self, sheet_id: str, marker_id: int, token_visual: Optional[str] = None) -> bool:
         """Asigna un token/marcador a una ficha aprobada"""
         sheet = self.state.character_sheets.get(sheet_id)
         if not sheet or sheet.status != CharacterStatus.APPROVED:
@@ -220,14 +220,16 @@ class GameStateManager:
         if marker_id not in self.state.available_markers:
             return False
         
-        # Asignar marcador
+        # Asignar marcador y token visual
         sheet.marker_id = marker_id
+        sheet.token_visual = token_visual
         sheet.status = CharacterStatus.IN_GAME
         self.state.available_markers.remove(marker_id)
         
         await self._notify_change("token_assigned", {
             "sheet": self._serialize_sheet(sheet),
-            "marker_id": marker_id
+            "marker_id": marker_id,
+            "token_visual": token_visual
         })
         return True
     

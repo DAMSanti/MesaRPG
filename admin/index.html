@@ -211,30 +211,48 @@
         <!-- Tab: Asignación de Tokens -->
         <section id="tab-tokens" class="tab-content">
             <div class="grid">
-                <div class="card">
+                <div class="card full-width">
                     <h2>🎯 Asignar Tokens a Personajes</h2>
-                    <p class="help-text">Selecciona una ficha aprobada y asígnale un token/marcador ArUco.</p>
+                    <p class="help-text">Selecciona un jugador y elige un token visual para representarlo en el tablero.</p>
                     
-                    <div id="token-assignment">
-                        <div class="token-form">
-                            <label>Ficha:</label>
-                            <select id="sheet-for-token">
-                                <option value="">Selecciona una ficha aprobada</option>
-                            </select>
+                    <div id="token-assignment" class="token-assignment-grid">
+                        <!-- Paso 1: Seleccionar ficha -->
+                        <div class="assignment-step">
+                            <h3>1. Selecciona una ficha</h3>
+                            <div id="sheets-for-token" class="sheets-grid">
+                                <p class="empty-state">No hay fichas pendientes de token</p>
+                            </div>
                         </div>
-                        <div class="token-form">
-                            <label>Marcador ArUco:</label>
-                            <select id="marker-select">
-                                <option value="">Selecciona un marcador</option>
-                            </select>
+                        
+                        <!-- Paso 2: Seleccionar token visual -->
+                        <div class="assignment-step">
+                            <h3>2. Elige un token</h3>
+                            <div class="token-category-tabs">
+                                <button class="token-tab active" data-category="system">Sistema Actual</button>
+                                <button class="token-tab" data-category="generic">Genéricos</button>
+                            </div>
+                            <div id="token-gallery" class="token-gallery">
+                                <p class="empty-state">Selecciona una categoría</p>
+                            </div>
                         </div>
-                        <button class="btn btn-primary" onclick="assignToken()">Asignar Token</button>
+                        
+                        <!-- Paso 3: Marcador ArUco -->
+                        <div class="assignment-step">
+                            <h3>3. Marcador ArUco (ID físico)</h3>
+                            <div class="marker-input-group">
+                                <input type="number" id="marker-id-input" min="1" max="250" placeholder="Ej: 42">
+                                <span class="marker-help">ID del marcador físico impreso</span>
+                            </div>
+                            <button class="btn btn-primary btn-large" id="assign-token-btn" onclick="assignTokenVisual()" disabled>
+                                ✨ Asignar Token
+                            </button>
+                        </div>
                     </div>
                 </div>
 
-                <div class="card">
+                <div class="card full-width">
                     <h2>📋 Tokens Asignados</h2>
-                    <div id="assigned-tokens" class="token-list">
+                    <div id="assigned-tokens" class="assigned-tokens-grid">
                         <p class="empty-state">No hay tokens asignados</p>
                     </div>
                 </div>
