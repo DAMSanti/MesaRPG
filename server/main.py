@@ -236,6 +236,10 @@ async def mobile_app_js():
 async def mobile_controls_js():
     return FileResponse(MOBILE_DIR / "js" / "controls.js", media_type="application/javascript")
 
+@app.get("/mobile/js/sheets.js")
+async def mobile_sheets_js():
+    return FileResponse(MOBILE_DIR / "js" / "sheets.js", media_type="application/javascript")
+
 @app.get("/mobile/manifest.json")
 async def mobile_manifest():
     return FileResponse(MOBILE_DIR / "manifest.json", media_type="application/json")
