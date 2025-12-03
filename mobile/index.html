@@ -396,6 +396,255 @@
                     </div>
                 </details>
 
+                <!-- ============================================
+                     BATTLETECH MECH RECORD SHEET
+                     ============================================ -->
+                <div id="battletech-sheet" class="bt-sheet hidden">
+                    <!-- Header -->
+                    <div class="bt-header">
+                        <div class="bt-logo">🤖</div>
+                        <h1 class="bt-title">MECH RECORD SHEET</h1>
+                    </div>
+
+                    <!-- Pilot & Mech Info -->
+                    <div class="bt-info-row">
+                        <div class="bt-field-group">
+                            <div class="bt-field wide">
+                                <input type="text" id="bt-name" name="name" required placeholder=" ">
+                                <label>PILOT NAME</label>
+                            </div>
+                            <div class="bt-field">
+                                <input type="text" id="bt-callsign" name="callsign" placeholder=" ">
+                                <label>CALLSIGN</label>
+                            </div>
+                        </div>
+                        <div class="bt-field-group">
+                            <div class="bt-field wide">
+                                <input type="text" id="bt-mech_model" name="mech_model" required placeholder=" ">
+                                <label>MECH MODEL</label>
+                            </div>
+                            <div class="bt-field">
+                                <input type="text" id="bt-mech_variant" name="mech_variant" placeholder=" ">
+                                <label>VARIANT</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Tonnage & Tech Base -->
+                    <div class="bt-stats-row">
+                        <div class="bt-stat-box">
+                            <span class="stat-label">TONNAGE</span>
+                            <input type="number" id="bt-tonnage" name="tonnage" min="20" max="100" value="50">
+                        </div>
+                        <div class="bt-stat-box">
+                            <span class="stat-label">TECH BASE</span>
+                            <select id="bt-tech_base" name="tech_base">
+                                <option value="Inner Sphere">Inner Sphere</option>
+                                <option value="Clan">Clan</option>
+                                <option value="Mixed">Mixed</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Pilot Skills -->
+                    <div class="bt-pilot-section">
+                        <h3 class="bt-section-title">PILOT SKILLS</h3>
+                        <div class="bt-pilot-stats">
+                            <div class="bt-pilot-stat">
+                                <span class="pilot-stat-label">GUNNERY</span>
+                                <div class="pilot-stat-circles">
+                                    <input type="number" id="bt-gunnery" name="gunnery" min="0" max="8" value="4">
+                                </div>
+                            </div>
+                            <div class="bt-pilot-stat">
+                                <span class="pilot-stat-label">PILOTING</span>
+                                <div class="pilot-stat-circles">
+                                    <input type="number" id="bt-piloting" name="piloting" min="0" max="8" value="5">
+                                </div>
+                            </div>
+                            <div class="bt-pilot-stat edge">
+                                <span class="pilot-stat-label">EDGE</span>
+                                <input type="number" id="bt-edge" name="edge" min="0" value="0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Movement -->
+                    <div class="bt-movement-section">
+                        <h3 class="bt-section-title">MOVEMENT POINTS</h3>
+                        <div class="bt-movement-stats">
+                            <div class="bt-move-box walk">
+                                <span class="move-icon">🚶</span>
+                                <span class="move-label">WALK</span>
+                                <input type="number" id="bt-walk_mp" name="walk_mp" min="0" value="4">
+                            </div>
+                            <div class="bt-move-box run">
+                                <span class="move-icon">🏃</span>
+                                <span class="move-label">RUN</span>
+                                <input type="number" id="bt-run_mp" name="run_mp" min="0" value="6">
+                            </div>
+                            <div class="bt-move-box jump">
+                                <span class="move-icon">⬆️</span>
+                                <span class="move-label">JUMP</span>
+                                <input type="number" id="bt-jump_mp" name="jump_mp" min="0" value="0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Mech Diagram with Armor -->
+                    <div class="bt-armor-section">
+                        <h3 class="bt-section-title">ARMOR DIAGRAM</h3>
+                        <div class="bt-mech-diagram">
+                            <!-- Head -->
+                            <div class="mech-part head">
+                                <span class="part-name">HD</span>
+                                <input type="number" id="bt-armor_head" name="armor_head" min="0" value="9" class="armor-input">
+                                <input type="number" id="bt-internal_head" name="internal_head" min="0" value="3" class="internal-input">
+                            </div>
+                            
+                            <!-- Arms Row -->
+                            <div class="mech-arms-row">
+                                <div class="mech-part arm left">
+                                    <span class="part-name">LA</span>
+                                    <input type="number" id="bt-armor_la" name="armor_la" min="0" value="16" class="armor-input">
+                                    <input type="number" id="bt-internal_la" name="internal_la" min="0" value="10" class="internal-input">
+                                </div>
+                                
+                                <!-- Torso Group -->
+                                <div class="mech-torso-group">
+                                    <div class="torso-row">
+                                        <div class="mech-part torso side left">
+                                            <span class="part-name">LT</span>
+                                            <input type="number" id="bt-armor_lt" name="armor_lt" min="0" value="20" class="armor-input">
+                                            <input type="number" id="bt-internal_lt" name="internal_lt" min="0" value="14" class="internal-input">
+                                            <div class="rear-armor">
+                                                <span>R:</span>
+                                                <input type="number" id="bt-armor_lt_rear" name="armor_lt_rear" min="0" value="6">
+                                            </div>
+                                        </div>
+                                        <div class="mech-part torso center">
+                                            <span class="part-name">CT</span>
+                                            <input type="number" id="bt-armor_ct" name="armor_ct" min="0" value="30" class="armor-input">
+                                            <input type="number" id="bt-internal_ct" name="internal_ct" min="0" value="21" class="internal-input">
+                                            <div class="rear-armor">
+                                                <span>R:</span>
+                                                <input type="number" id="bt-armor_ct_rear" name="armor_ct_rear" min="0" value="10">
+                                            </div>
+                                        </div>
+                                        <div class="mech-part torso side right">
+                                            <span class="part-name">RT</span>
+                                            <input type="number" id="bt-armor_rt" name="armor_rt" min="0" value="20" class="armor-input">
+                                            <input type="number" id="bt-internal_rt" name="internal_rt" min="0" value="14" class="internal-input">
+                                            <div class="rear-armor">
+                                                <span>R:</span>
+                                                <input type="number" id="bt-armor_rt_rear" name="armor_rt_rear" min="0" value="6">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mech-part arm right">
+                                    <span class="part-name">RA</span>
+                                    <input type="number" id="bt-armor_ra" name="armor_ra" min="0" value="16" class="armor-input">
+                                    <input type="number" id="bt-internal_ra" name="internal_ra" min="0" value="10" class="internal-input">
+                                </div>
+                            </div>
+                            
+                            <!-- Legs Row -->
+                            <div class="mech-legs-row">
+                                <div class="mech-part leg left">
+                                    <span class="part-name">LL</span>
+                                    <input type="number" id="bt-armor_ll" name="armor_ll" min="0" value="20" class="armor-input">
+                                    <input type="number" id="bt-internal_ll" name="internal_ll" min="0" value="14" class="internal-input">
+                                </div>
+                                <div class="mech-part leg right">
+                                    <span class="part-name">RL</span>
+                                    <input type="number" id="bt-armor_rl" name="armor_rl" min="0" value="20" class="armor-input">
+                                    <input type="number" id="bt-internal_rl" name="internal_rl" min="0" value="14" class="internal-input">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="bt-armor-legend">
+                            <span class="legend-item"><span class="armor-color"></span> Armor</span>
+                            <span class="legend-item"><span class="internal-color"></span> Internal</span>
+                        </div>
+                    </div>
+
+                    <!-- Heat Management -->
+                    <div class="bt-heat-section">
+                        <h3 class="bt-section-title">HEAT MANAGEMENT</h3>
+                        <div class="bt-heat-controls">
+                            <div class="heat-stat">
+                                <label>HEAT SINKS</label>
+                                <input type="number" id="bt-heat_sinks" name="heat_sinks" min="0" value="10">
+                            </div>
+                            <div class="heat-stat">
+                                <label>TYPE</label>
+                                <select id="bt-heat_sink_type" name="heat_sink_type">
+                                    <option value="Single">Single</option>
+                                    <option value="Double">Double</option>
+                                </select>
+                            </div>
+                            <div class="heat-stat current">
+                                <label>CURRENT</label>
+                                <input type="number" id="bt-current_heat" name="current_heat" min="0" value="0">
+                            </div>
+                        </div>
+                        <div class="bt-heat-scale">
+                            <div class="heat-bar">
+                                <span class="heat-zone safe">0-4</span>
+                                <span class="heat-zone warning">5-9</span>
+                                <span class="heat-zone danger">10-14</span>
+                                <span class="heat-zone critical">15+</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Weapons -->
+                    <details class="bt-section weapons-section" open>
+                        <summary class="bt-section-title">⚔️ WEAPONS</summary>
+                        <div class="bt-weapons-content">
+                            <div id="bt-weapons-list" class="weapons-list">
+                                <div class="weapon-row header">
+                                    <span>WEAPON</span>
+                                    <span>LOC</span>
+                                    <span>DMG</span>
+                                    <span>HEAT</span>
+                                    <span>RNG</span>
+                                </div>
+                                <!-- Weapon entries will be added dynamically -->
+                            </div>
+                            <button type="button" id="btn-add-weapon" class="btn btn-sm btn-add">+ Add Weapon</button>
+                            <textarea id="bt-weapons_text" name="weapons_text" rows="3" placeholder="Lista de armas (alternativo)..." class="weapons-textarea"></textarea>
+                        </div>
+                    </details>
+
+                    <!-- Ammo -->
+                    <details class="bt-section ammo-section">
+                        <summary class="bt-section-title">📦 AMMUNITION</summary>
+                        <div class="bt-ammo-content">
+                            <textarea id="bt-ammo_text" name="ammo_text" rows="3" placeholder="AC/20 (CT): 5 rounds&#10;LRM-15 (LT): 16 rounds"></textarea>
+                        </div>
+                    </details>
+
+                    <!-- Critical Hits -->
+                    <details class="bt-section crits-section">
+                        <summary class="bt-section-title">💥 CRITICAL HITS</summary>
+                        <div class="bt-crits-content">
+                            <textarea id="bt-critical_hits" name="critical_hits" rows="3" placeholder="Registra daños críticos aquí..."></textarea>
+                        </div>
+                    </details>
+
+                    <!-- Notes -->
+                    <details class="bt-section notes-section">
+                        <summary class="bt-section-title">📝 NOTES</summary>
+                        <div class="bt-notes-content">
+                            <textarea id="bt-notes" name="notes" rows="4" placeholder="Notas adicionales, equipo especial, historia del piloto..."></textarea>
+                        </div>
+                    </details>
+                </div>
+
                 <!-- Container para campos dinámicos de otros sistemas -->
                 <div id="form-fields-container" class="hidden"></div>
                 

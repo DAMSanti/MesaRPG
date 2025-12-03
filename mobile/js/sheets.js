@@ -175,9 +175,14 @@ class SheetManager {
         console.log('📝 showFormScreen() llamado');
         console.log('   currentSystem:', this.currentSystem?.id);
         
-        // Determinar si usar el formulario D&D estilizado o el genérico
+        // Ocultar todos los formularios específicos primero
+        this.hideAllSpecificForms();
+        
+        // Determinar qué formulario mostrar según el sistema
         if (this.currentSystem?.id === 'dnd5e') {
             this.setupDnDForm();
+        } else if (this.currentSystem?.id === 'battletech') {
+            this.setupBattleTechForm();
         } else {
             this.buildFormFields();
         }
@@ -196,6 +201,23 @@ class SheetManager {
         }
     }
     
+    hideAllSpecificForms() {
+        const form = document.getElementById('character-sheet-form');
+        
+        // Ocultar elementos D&D
+        const dndElements = form.querySelectorAll('.sheet-header, .sheet-top-row, .sheet-row, .sheet-main, .saving-throws, .skills-section, .equipment-section, .spells-section, .features-section, .personality-section');
+        dndElements.forEach(el => el.style.display = 'none');
+        
+        // Ocultar BattleTech
+        document.getElementById('battletech-sheet')?.classList.add('hidden');
+        
+        // Ocultar genérico
+        document.getElementById('form-fields-container')?.classList.add('hidden');
+        
+        // Reset form classes
+        form.classList.remove('dnd-sheet', 'sheet-form');
+    }
+    
     setupDnDForm() {
         // Mostrar el formulario D&D y ocultar el genérico
         const form = document.getElementById('character-sheet-form');
@@ -204,6 +226,7 @@ class SheetManager {
         form.classList.add('dnd-sheet');
         form.classList.remove('sheet-form');
         genericContainer?.classList.add('hidden');
+        document.getElementById('battletech-sheet')?.classList.add('hidden');
         
         // Mostrar los elementos específicos de D&D
         const dndElements = form.querySelectorAll('.sheet-header, .sheet-top-row, .sheet-row, .sheet-main, .saving-throws, .skills-section, .equipment-section, .spells-section, .features-section, .personality-section');
@@ -257,6 +280,96 @@ class SheetManager {
                 opt.textContent = align;
                 alignSelect.appendChild(opt);
             });
+        }
+    }
+    
+    // === BATTLETECH FORM ===
+    
+    setupBattleTechForm() {
+        const form = document.getElementById('character-sheet-form');
+        const btSheet = document.getElementById('battletech-sheet');
+        
+        // Ocultar D&D y genérico
+        const dndElements = form.querySelectorAll('.sheet-header, .sheet-top-row, .sheet-row, .sheet-main, .saving-throws, .skills-section, .equipment-section, .spells-section, .features-section, .personality-section');
+        dndElements.forEach(el => el.style.display = 'none');
+        document.getElementById('form-fields-container')?.classList.add('hidden');
+        
+        // Mostrar BattleTech
+        btSheet?.classList.remove('hidden');
+        form.classList.remove('dnd-sheet', 'sheet-form');
+        
+        // Configurar listeners
+        this.setupBattleTechListeners();
+    }
+    
+    setupBattleTechListeners() {
+        // Auto-calcular Run MP basado en Walk MP
+        const walkInput = document.getElementById('bt-walk_mp');
+        const runInput = document.getElementById('bt-run_mp');
+        
+        if (walkInput && runInput) {
+            walkInput.addEventListener('input', () => {
+                const walkMP = parseInt(walkInput.value) || 0;
+                runInput.value = Math.ceil(walkMP * 1.5);
+            });
+        }
+        
+        // Botón agregar arma
+        const addWeaponBtn = document.getElementById('btn-add-weapon');
+        if (addWeaponBtn) {
+            addWeaponBtn.addEventListener('click', () => this.addBattleTechWeapon());
+        }
+        
+        // Actualizar visualización de calor
+        const heatInput = document.getElementById('bt-current_heat');
+        if (heatInput) {
+            heatInput.addEventListener('input', () => this.updateHeatDisplay());
+        }
+    }
+    
+    addBattleTechWeapon() {
+        const weaponsList = document.getElementById('bt-weapons-list');
+        if (!weaponsList) return;
+        
+        const weaponId = Date.now();
+        const weaponRow = document.createElement('div');
+        weaponRow.className = 'weapon-row';
+        weaponRow.innerHTML = `
+            <input type="text" name="weapon_name_${weaponId}" placeholder="Weapon">
+            <select name="weapon_loc_${weaponId}">
+                <option value="LA">LA</option>
+                <option value="RA">RA</option>
+                <option value="LT">LT</option>
+                <option value="RT">RT</option>
+                <option value="CT">CT</option>
+                <option value="HD">HD</option>
+            </select>
+            <input type="text" name="weapon_dmg_${weaponId}" placeholder="Dmg">
+            <input type="number" name="weapon_heat_${weaponId}" placeholder="H" min="0">
+            <input type="text" name="weapon_rng_${weaponId}" placeholder="S/M/L">
+        `;
+        weaponsList.appendChild(weaponRow);
+    }
+    
+    updateHeatDisplay() {
+        const heatInput = document.getElementById('bt-current_heat');
+        if (!heatInput) return;
+        
+        const heat = parseInt(heatInput.value) || 0;
+        
+        // Cambiar color según nivel de calor
+        if (heat >= 15) {
+            heatInput.style.borderColor = '#ff0000';
+            heatInput.style.color = '#ff0000';
+        } else if (heat >= 10) {
+            heatInput.style.borderColor = '#ff8800';
+            heatInput.style.color = '#ff8800';
+        } else if (heat >= 5) {
+            heatInput.style.borderColor = '#ffff00';
+            heatInput.style.color = '#ffff00';
+        } else {
+            heatInput.style.borderColor = '#00ff00';
+            heatInput.style.color = '#00ff00';
         }
     }
     
