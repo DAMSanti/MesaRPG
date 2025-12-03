@@ -925,27 +925,24 @@ header h2 {
 .camera-preview {
     position: relative;
     width: 100%;
-    aspect-ratio: 3/4;
+    height: 70vh;
     background: #000;
     border-radius: var(--border-radius);
     overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .camera-preview video {
-    width: 100%;
+    /* Al rotar 90°, el ancho del video pasa a ser alto y viceversa */
+    /* Usamos height: 100% del contenedor como width del video rotado */
     height: 100%;
+    width: auto;
+    max-width: none;
     object-fit: contain;
-    /* Rotar 90° a la derecha y ajustar tamaño */
     transform: rotate(90deg);
     transform-origin: center center;
-}
-
-/* Cuando el video está rotado, intercambiar dimensiones para que llene el contenedor */
-.camera-preview video.rotated {
-    width: 133%;
-    height: 133%;
-    margin-left: -16.5%;
-    margin-top: -16.5%;
 }
 
 .scan-overlay {
