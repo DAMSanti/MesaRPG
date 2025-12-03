@@ -925,25 +925,25 @@ header h2 {
 .camera-preview {
     position: relative;
     width: 100%;
-    /* El video 16:9 rotado 90° se convierte en 9:16 */
+    /* Altura máxima para que quepa en pantalla */
+    max-height: 70vh;
     aspect-ratio: 9/16;
     background: #000;
     border-radius: var(--border-radius);
     overflow: hidden;
+    margin: 0 auto;
 }
 
 .camera-preview video {
-    /* El video es 16:9 (1280x720), al rotar 90° se convierte en 9:16 (720x1280) */
-    /* Para que llene el contenedor 9:16, el video rotado debe escalar */
     position: absolute;
     top: 50%;
     left: 50%;
-    /* El video original es más ancho que alto (16:9) */
-    /* Al rotar, su "nuevo ancho" es su height original */
-    /* Hacemos que el height del video = width del contenedor */
-    height: 100vw;
-    width: auto;
+    /* El video rotado debe tener su altura (que se convierte en ancho) igual al ancho del contenedor */
+    height: 100%;
+    width: 177.78%; /* 16/9 = 1.7778 para mantener proporción */
+    max-height: 100vw;
     transform: translate(-50%, -50%) rotate(90deg);
+    object-fit: contain;
 }
 
 .scan-overlay {
