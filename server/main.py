@@ -363,7 +363,11 @@ async def get_all_sheets(status: Optional[str] = None, player_id: Optional[str] 
     
     # Filtrar por estado si se especifica
     if status:
-        sheets = [s for s in sheets if s.status.value == status]
+        if status == "approved":
+            # Incluir tanto 'approved' como 'in_game' para fichas aprobadas
+            sheets = [s for s in sheets if s.status.value in ["approved", "in_game"]]
+        else:
+            sheets = [s for s in sheets if s.status.value == status]
     
     return [game_state._serialize_sheet(s) for s in sheets]
 

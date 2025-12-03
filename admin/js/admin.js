@@ -109,7 +109,14 @@ function handleMessage(data) {
         case 'sheet_approved':
             loadPendingSheets();
             loadApprovedSheets();
-            logAction('Ficha', `Ficha aprobada: ${data.sheet?.character_name || data.payload?.character_name || 'Desconocido'}`);
+            logAction('Ficha', `Ficha aprobada: ${data.sheet?.character_name || data.payload?.sheet?.character_name || data.payload?.character_name || 'Desconocido'}`);
+            break;
+        case 'token_assigned':
+            loadApprovedSheets();
+            loadAvailableMarkers();
+            loadCharacters();
+            const tokenSheet = data.sheet || data.payload?.sheet;
+            logAction('Token', `Token #${data.marker_id || data.payload?.marker_id} asignado a ${tokenSheet?.character_name || 'Personaje'}`);
             break;
         case 'character_added':
             loadCharacters();
@@ -260,6 +267,7 @@ async function loadApprovedSheets() {
         const response = await fetch('/api/sheets?status=approved');
         approvedSheets = await response.json();
         renderApprovedSheets();
+        renderAssignedTokens();
         updateSheetForTokenSelect();
     } catch (error) {
         console.error('Error loading approved sheets:', error);
