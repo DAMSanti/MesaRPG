@@ -925,25 +925,25 @@ header h2 {
 .camera-preview {
     position: relative;
     width: 100%;
-    /* Altura máxima para que quepa en pantalla */
     max-height: 70vh;
-    aspect-ratio: 9/16;
     background: #000;
     border-radius: var(--border-radius);
     overflow: hidden;
     margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .camera-preview video {
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    /* El video rotado debe tener su altura (que se convierte en ancho) igual al ancho del contenedor */
-    height: 100%;
-    width: 177.78%; /* 16/9 = 1.7778 para mantener proporción */
-    max-height: 100vw;
-    transform: translate(-50%, -50%) rotate(90deg);
-    object-fit: contain;
+    /* Video 16:9 rotado 90° = 9:16 visible */
+    /* Para no cropear: width del video rotado = width del contenedor */
+    /* width rotado = height original del video */
+    /* Así que height del elemento = 100% del ancho del contenedor */
+    transform: rotate(90deg);
+    height: 100vw;
+    width: auto;
+    max-width: none;
 }
 
 .scan-overlay {
