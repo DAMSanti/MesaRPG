@@ -544,7 +544,8 @@ class MapEditor {
     
     setBrushSize(size) {
         this.brushSize = Math.max(1, Math.min(5, size));
-        document.getElementById('brush-size-value')?.textContent = this.brushSize;
+        const el = document.getElementById('brush-size-value');
+        if (el) el.textContent = this.brushSize;
     }
     
     setLayer(layer) {
