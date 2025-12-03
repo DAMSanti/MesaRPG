@@ -5,12 +5,15 @@
 
 const CACHE_NAME = 'mesarpg-v1';
 const ASSETS_TO_CACHE = [
-    '/mobile',
+    '/mobile/',
     '/mobile/index.html',
     '/mobile/css/mobile.css',
     '/mobile/js/app.js',
     '/mobile/js/controls.js',
-    '/mobile/manifest.json'
+    '/mobile/js/sheets.js',
+    '/mobile/manifest.json',
+    '/mobile/assets/icon-192.png',
+    '/mobile/assets/icon-512.png'
 ];
 
 // Instalación - cachear recursos
@@ -20,7 +23,14 @@ self.addEventListener('install', (event) => {
         caches.open(CACHE_NAME)
             .then(cache => {
                 console.log('SW: Cacheando recursos');
-                return cache.addAll(ASSETS_TO_CACHE);
+                // Cachear de forma individual para evitar que un fallo bloquee todo
+                return Promise.allSettled(
+                    ASSETS_TO_CACHE.map(url => 
+                        cache.add(url).catch(err => {
+                            console.warn('SW: No se pudo cachear:', url, err);
+                        })
+                    )
+                );
             })
             .then(() => self.skipWaiting())
     );

@@ -99,8 +99,12 @@ function handleMessage(data) {
             updateConnectionCounts(data.counts || data.payload);
             break;
         case 'sheet_submitted':
+        case 'sheet_pending':
+        case 'sheet_created':
             loadPendingSheets();
-            logAction('Ficha', `Nueva ficha recibida: ${data.sheet?.character_name || data.payload?.character_name || 'Desconocido'}`);
+            const sheetData = data.sheet || data.payload?.sheet || data.payload;
+            const sheetName = sheetData?.character_name || sheetData?.data?.name || sheetData?.player_name || 'Desconocido';
+            logAction('Ficha', `Nueva ficha recibida: ${sheetName}`);
             break;
         case 'sheet_approved':
             loadPendingSheets();
