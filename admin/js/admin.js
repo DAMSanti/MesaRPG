@@ -667,7 +667,6 @@ function renderAssignedTokens() {
     // Also update the sheets for token list
     renderSheetsForToken();
 }
-}
 
 async function removeToken(sheetId) {
     if (!confirm('¿Quitar token de este personaje?')) return;
