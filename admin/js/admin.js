@@ -665,14 +665,15 @@ function updateGameState(state) {
 }
 
 function updateConnectionCounts(counts) {
-    document.getElementById('display-count').textContent = counts.display || 0;
-    document.getElementById('mobile-count').textContent = counts.mobile || 0;
+    document.getElementById('display-count').textContent = counts.displays || counts.display || 0;
+    document.getElementById('mobile-count').textContent = counts.mobiles || counts.mobile || 0;
     document.getElementById('camera-status').textContent = counts.camera ? '✓' : '❌';
     
     // Update player list
     const playerList = document.getElementById('player-list');
-    if (counts.players && counts.players.length > 0) {
-        playerList.innerHTML = counts.players.map(p => `<div>${escapeHtml(p)}</div>`).join('');
+    const players = counts.mobile_players || counts.players || [];
+    if (players && players.length > 0) {
+        playerList.innerHTML = players.map(p => `<div>${escapeHtml(p)}</div>`).join('');
     } else {
         playerList.textContent = 'Ninguno';
     }
