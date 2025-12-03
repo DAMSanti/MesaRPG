@@ -11,6 +11,13 @@ from fastapi import WebSocket, WebSocketDisconnect
 from .models import WSMessage, WSMessageType, PlayerRole
 
 
+def json_serial(obj):
+    """Serializador JSON para objetos que no son serializables por defecto"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return str(obj)
+
+
 class ConnectionManager:
     """
     Gestor de conexiones WebSocket.
@@ -87,7 +94,7 @@ class ConnectionManager:
         if not self.display_connections:
             return
         
-        data = json.dumps(message, default=str)
+        data = json.dumps(message, default=json_serial)
         disconnected = []
         
         for ws in self.display_connections:
@@ -104,7 +111,7 @@ class ConnectionManager:
         if not self.mobile_connections:
             return
         
-        data = json.dumps(message, default=str)
+        data = json.dumps(message, default=json_serial)
         disconnected = []
         
         for player_id, ws in self.mobile_connections.items():
@@ -123,7 +130,7 @@ class ConnectionManager:
         ws = self.mobile_connections.get(player_id)
         if ws:
             try:
-                await ws.send_text(json.dumps(message, default=str))
+                await ws.send_text(json.dumps(message, default=json_serial))
             except Exception:
                 self.disconnect_mobile(ws)
     
@@ -132,7 +139,7 @@ class ConnectionManager:
         if not self.admin_connections:
             return
         
-        data = json.dumps(message, default=str)
+        data = json.dumps(message, default=json_serial)
         disconnected = []
         
         for ws in self.admin_connections:
@@ -178,7 +185,7 @@ class ConnectionManager:
             "timestamp": datetime.now().isoformat()
         }
         try:
-            await websocket.send_text(json.dumps(message, default=str))
+            await websocket.send_text(json.dumps(message, default=json_serial))
         except:
             pass
     

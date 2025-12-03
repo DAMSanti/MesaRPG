@@ -14,6 +14,8 @@ class WebSocketManager {
         this.reconnectDelay = 2000;
         this.listeners = new Map();
         this.isConnected = false;
+        this.pingInterval = null;
+        this.pingIntervalMs = 25000; // Enviar ping cada 25 segundos
     }
     
     connect() {
@@ -27,6 +29,7 @@ class WebSocketManager {
             this.reconnectAttempts = 0;
             this.updateConnectionStatus(true);
             this.emit('connected');
+            this.startPing();
         };
         
         this.socket.onclose = (event) => {
@@ -34,6 +37,7 @@ class WebSocketManager {
             this.isConnected = false;
             this.updateConnectionStatus(false);
             this.emit('disconnected');
+            this.stopPing();
             this.attemptReconnect();
         };
         
@@ -55,6 +59,11 @@ class WebSocketManager {
     handleMessage(data) {
         const type = data.type;
         const payload = data.payload || {};
+        
+        // Ignorar mensajes pong (respuesta a nuestro ping)
+        if (type === 'pong') {
+            return;
+        }
         
         console.log('📨 Mensaje recibido:', type, payload);
         
@@ -134,8 +143,25 @@ class WebSocketManager {
     }
     
     disconnect() {
+        this.stopPing();
         if (this.socket) {
             this.socket.close();
+        }
+    }
+    
+    startPing() {
+        this.stopPing();
+        this.pingInterval = setInterval(() => {
+            if (this.isConnected && this.socket && this.socket.readyState === WebSocket.OPEN) {
+                this.socket.send(JSON.stringify({ type: 'ping' }));
+            }
+        }, this.pingIntervalMs);
+    }
+    
+    stopPing() {
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
         }
     }
 }

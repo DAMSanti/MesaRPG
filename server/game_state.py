@@ -386,21 +386,34 @@ class GameStateManager:
     
     def get_full_state(self) -> dict:
         """Obtiene el estado completo para enviar a clientes"""
-        state = {
-            "session_id": self.state.session_id,
-            "current_turn": self.state.current_turn,
-            "is_combat": self.state.is_combat,
-            "active_character_id": self.state.active_character_id,
-            "characters": {
-                cid: self._serialize_datetime(char.model_dump()) for cid, char in self.state.characters.items()
-            },
-            "players": {
-                pid: self._serialize_datetime(player.model_dump()) for pid, player in self.state.players.items()
-            },
-            "initiative_order": self.state.initiative_order,
-            "current_map": self.state.current_map,
-            "recent_actions": [
-                self._serialize_datetime(action.model_dump()) for action in self.state.action_history[-10:]
-            ]
-        }
-        return state
+        try:
+            return {
+                "session_id": str(self.state.session_id) if self.state.session_id else "",
+                "current_turn": self.state.current_turn or 0,
+                "is_combat": bool(self.state.is_combat),
+                "active_character_id": self.state.active_character_id,
+                "characters": {
+                    str(cid): self._serialize_datetime(char.model_dump()) for cid, char in self.state.characters.items()
+                } if self.state.characters else {},
+                "players": {
+                    str(pid): self._serialize_datetime(player.model_dump()) for pid, player in self.state.players.items()
+                } if self.state.players else {},
+                "initiative_order": list(self.state.initiative_order) if self.state.initiative_order else [],
+                "current_map": self.state.current_map,
+                "recent_actions": [
+                    self._serialize_datetime(action.model_dump()) for action in (self.state.action_history[-10:] if self.state.action_history else [])
+                ]
+            }
+        except Exception as e:
+            print(f"⚠️ Error en get_full_state: {e}")
+            return {
+                "session_id": "",
+                "current_turn": 0,
+                "is_combat": False,
+                "active_character_id": None,
+                "characters": {},
+                "players": {},
+                "initiative_order": [],
+                "current_map": None,
+                "recent_actions": []
+            }

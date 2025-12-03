@@ -6,6 +6,7 @@ FastAPI server que coordina todo el sistema
 import asyncio
 import json
 import uuid
+from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -22,6 +23,20 @@ from .models import (
 )
 from .game_state import GameStateManager
 from .websocket_manager import ConnectionManager
+
+
+# === Utilidades ===
+def json_serial(obj):
+    """Serializador JSON para objetos que no son serializables por defecto"""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    raise TypeError(f"Type {type(obj)} not serializable")
+
+
+async def send_json_safe(websocket: WebSocket, data: dict):
+    """Envía JSON de forma segura, manejando tipos como datetime"""
+    text = json.dumps(data, default=json_serial)
+    await websocket.send_text(text)
 
 
 # === Configuración ===
@@ -228,6 +243,10 @@ async def admin_page():
                     <div id="character-list" class="character-list">
                         <p>No hay personajes detectados</p>
                     </div>
+                    <div style="margin-top: 10px;">
+                        <button class="success" onclick="addTestCharacter()">+ Añadir Personaje Test</button>
+                        <button onclick="clearCharacters()">🗑️ Limpiar</button>
+                    </div>
                 </div>
                 
                 <div class="card">
@@ -235,6 +254,7 @@ async def admin_page():
                     <div class="status">
                         <div>Pantallas: <span id="display-count">0</span></div>
                         <div>Móviles: <span id="mobile-count">0</span></div>
+                        <div>Jugadores: <span id="player-list">-</span></div>
                         <div>Cámara: <span id="camera-status">❌</span></div>
                     </div>
                     <button onclick="refreshState()">Actualizar Estado</button>
@@ -250,6 +270,25 @@ async def admin_page():
         <script>
             let ws;
             let gameState = {};
+            let pingInterval = null;
+            let testCharacterCount = 0;
+            const pingIntervalMs = 25000;
+            
+            function startPing() {
+                stopPing();
+                pingInterval = setInterval(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'ping' }));
+                    }
+                }, pingIntervalMs);
+            }
+            
+            function stopPing() {
+                if (pingInterval) {
+                    clearInterval(pingInterval);
+                    pingInterval = null;
+                }
+            }
             
             function connect() {
                 const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -260,12 +299,14 @@ async def admin_page():
                     document.getElementById('connection-status').textContent = 'Conectado';
                     log('Conectado al servidor', 'system');
                     refreshState();
+                    startPing();
                 };
                 
                 ws.onclose = () => {
                     document.getElementById('connection-status').className = 'disconnected';
                     document.getElementById('connection-status').textContent = 'Desconectado';
                     log('Desconectado del servidor', 'error');
+                    stopPing();
                     setTimeout(connect, 3000);
                 };
                 
@@ -276,6 +317,11 @@ async def admin_page():
             }
             
             function handleMessage(data) {
+                // Ignorar mensajes pong
+                if (data.type === 'pong') {
+                    return;
+                }
+                
                 if (data.type === 'state_update' || data.type === 'STATE_UPDATE') {
                     gameState = data.payload;
                     updateUI();
@@ -330,6 +376,12 @@ async def admin_page():
                 document.getElementById('display-count').textContent = stats.displays || 0;
                 document.getElementById('mobile-count').textContent = stats.mobiles || 0;
                 document.getElementById('camera-status').textContent = stats.camera ? '✅' : '❌';
+                
+                // Mostrar lista de jugadores móviles
+                const players = stats.mobile_players || [];
+                document.getElementById('player-list').textContent = players.length > 0 
+                    ? players.join(', ') 
+                    : 'Ninguno';
             }
             
             function log(message, type = 'system') {
@@ -350,6 +402,33 @@ async def admin_page():
             function startCombat() { sendCommand('start_combat'); log('Iniciando combate...', 'action'); }
             function endCombat() { sendCommand('end_combat'); log('Finalizando combate...', 'action'); }
             function nextTurn() { sendCommand('next_turn'); log('Siguiente turno...', 'action'); }
+            
+            function addTestCharacter() {
+                testCharacterCount++;
+                fetch('/api/debug/add-test-character?marker_id=' + testCharacterCount, {method: 'POST'})
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.status === 'success') {
+                            log('Personaje añadido: ' + data.character.name, 'action');
+                            refreshState();
+                        } else {
+                            log('Error: ' + data.message, 'error');
+                        }
+                    })
+                    .catch(e => log('Error añadiendo personaje: ' + e, 'error'));
+            }
+            
+            function clearCharacters() {
+                fetch('/api/debug/clear-characters', {method: 'DELETE'})
+                    .then(r => r.json())
+                    .then(data => {
+                        log('Personajes eliminados', 'system');
+                        testCharacterCount = 0;
+                        refreshState();
+                    })
+                    .catch(e => log('Error: ' + e, 'error'));
+            }
+            
             function refreshState() { 
                 fetch('/api/state').then(r => r.json()).then(data => {
                     gameState = data;
@@ -359,7 +438,7 @@ async def admin_page():
             }
             
             connect();
-            setInterval(refreshState, 5000);
+            setInterval(refreshState, 3000);  // Actualizar cada 3 segundos
         </script>
     </body>
     </html>
@@ -480,6 +559,37 @@ async def next_turn():
     return {"status": "turn_advanced", "turn": game_state.state.current_turn}
 
 
+@app.post("/api/debug/add-test-character")
+async def add_test_character(marker_id: int = 1, name: str = "Test Character"):
+    """Añade un personaje de prueba (para desarrollo sin cámara)"""
+    from .models import DetectedMarker, Position
+    
+    # Crear un marcador ficticio
+    marker = DetectedMarker(
+        marker_id=marker_id,
+        position=Position(x=400, y=300, rotation=0),
+        corners=[[0,0], [100,0], [100,100], [0,100]]
+    )
+    
+    # Añadir personaje desde el marcador
+    character = await game_state.add_character_from_marker(marker)
+    
+    if character:
+        return {"status": "success", "character": character.model_dump()}
+    else:
+        return {"status": "error", "message": "No hay template para ese marker_id"}
+
+
+@app.delete("/api/debug/clear-characters")
+async def clear_characters():
+    """Elimina todos los personajes (para desarrollo)"""
+    for char_id in list(game_state.state.characters.keys()):
+        await game_state.remove_character_by_marker(
+            game_state.state.characters[char_id].marker_id
+        )
+    return {"status": "success", "message": "Todos los personajes eliminados"}
+
+
 # === WebSocket Endpoints ===
 
 @app.websocket("/ws/display")
@@ -488,19 +598,117 @@ async def websocket_display(websocket: WebSocket):
     await ws_manager.connect_display(websocket)
     try:
         # Enviar estado inicial
-        await websocket.send_json({
-            "type": "state_update",
-            "payload": game_state.get_full_state()
-        })
+        try:
+            initial_state = game_state.get_full_state()
+            await send_json_safe(websocket, {
+                "type": "state_update",
+                "payload": initial_state
+            })
+        except Exception as e:
+            print(f"⚠️ Error enviando estado inicial a display: {e}")
+            await send_json_safe(websocket, {"type": "error", "payload": {"message": str(e)}})
         
         while True:
             data = await websocket.receive_text()
-            # Las pantallas normalmente solo reciben, pero pueden enviar eventos táctiles
-            message = json.loads(data)
-            # Procesar eventos táctiles si es necesario
+            try:
+                message = json.loads(data)
+                
+                # Responder a ping con pong para mantener conexión viva
+                if message.get("type") == "ping":
+                    await send_json_safe(websocket, {"type": "pong"})
+                    continue
+                
+                # Procesar eventos táctiles del display
+                await handle_display_message(message, websocket)
+                
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Error parseando mensaje de display: {e}")
             
     except WebSocketDisconnect:
         ws_manager.disconnect_display(websocket)
+    except Exception as e:
+        print(f"❌ Error en WebSocket display: {e}")
+        ws_manager.disconnect_display(websocket)
+
+
+async def handle_display_message(message: dict, websocket: WebSocket):
+    """Procesa mensajes enviados desde el display táctil"""
+    msg_type = message.get("type", "")
+    payload = message.get("payload", {})
+    
+    if msg_type == "character_move":
+        # Mover un personaje existente
+        char_id = payload.get("character_id")
+        position = payload.get("position", {})
+        
+        if char_id and char_id in game_state.state.characters:
+            char = game_state.state.characters[char_id]
+            char.position = Position(
+                x=position.get("x", 0),
+                y=position.get("y", 0),
+                rotation=position.get("rotation", 0)
+            )
+            
+            # Notificar a todos los clientes
+            await ws_manager.broadcast_all({
+                "type": "character_update",
+                "payload": {
+                    "character_id": char_id,
+                    "position": char.position.model_dump()
+                }
+            })
+            print(f"📍 Personaje {char.name} movido a ({position.get('x')}, {position.get('y')})")
+    
+    elif msg_type == "character_create":
+        # Crear un nuevo personaje desde el display táctil
+        char_id = payload.get("id", f"touch_{uuid.uuid4().hex[:6]}")
+        name = payload.get("name", "Aventurero")
+        char_class = payload.get("character_class", "Guerrero")
+        position = payload.get("position", {"x": 100, "y": 100})
+        
+        # Crear personaje
+        from .models import Character
+        character = Character(
+            id=char_id,
+            marker_id=None,
+            name=name,
+            character_class=char_class,
+            hp=100,
+            max_hp=100,
+            mana=50,
+            max_mana=50,
+            armor=0,
+            speed=6,
+            abilities=["attack", "defend"],
+            position=Position(
+                x=position.get("x", 0),
+                y=position.get("y", 0),
+                rotation=position.get("rotation", 0)
+            )
+        )
+        
+        game_state.state.characters[char_id] = character
+        
+        # Notificar a todos los clientes
+        await ws_manager.broadcast_all({
+            "type": "character_added",
+            "payload": {"character": character.model_dump()}
+        })
+        print(f"✨ Personaje creado desde display: {name} en ({position.get('x')}, {position.get('y')})")
+    
+    elif msg_type == "character_remove":
+        # Eliminar un personaje
+        char_id = payload.get("character_id")
+        if char_id and char_id in game_state.state.characters:
+            char = game_state.state.characters.pop(char_id)
+            await ws_manager.broadcast_all({
+                "type": "character_removed",
+                "payload": {
+                    "character_id": char_id,
+                    "name": char.name
+                }
+            })
+            print(f"🗑️ Personaje eliminado: {char.name}")
 
 @app.websocket("/ws/mobile")
 async def websocket_mobile(websocket: WebSocket, player_id: str = Query(None), name: str = Query("Jugador")):
@@ -513,27 +721,44 @@ async def websocket_mobile(websocket: WebSocket, player_id: str = Query(None), n
     
     try:
         # Enviar estado inicial
-        await websocket.send_json({
-            "type": "connected",
-            "payload": {
-                "player_id": player_id,
-                "state": game_state.get_full_state()
-            }
-        })
+        try:
+            initial_state = game_state.get_full_state()
+            await send_json_safe(websocket, {
+                "type": "connected",
+                "payload": {
+                    "player_id": player_id,
+                    "state": initial_state
+                }
+            })
+        except Exception as e:
+            print(f"⚠️ Error enviando estado inicial a mobile {player_id}: {e}")
+            await send_json_safe(websocket, {"type": "error", "payload": {"message": str(e)}})
         
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
-            await handle_mobile_message(player_id, message)
+            try:
+                message = json.loads(data)
+                await handle_mobile_message(player_id, message, websocket)
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Error parseando mensaje de mobile {player_id}: {e}")
             
     except WebSocketDisconnect:
         ws_manager.disconnect_mobile(websocket)
         await game_state.remove_player(player_id)
+    except Exception as e:
+        print(f"❌ Error en WebSocket mobile {player_id}: {e}")
+        ws_manager.disconnect_mobile(websocket)
+        await game_state.remove_player(player_id)
 
-async def handle_mobile_message(player_id: str, message: dict):
+async def handle_mobile_message(player_id: str, message: dict, websocket: WebSocket):
     """Procesa mensajes del móvil"""
     msg_type = message.get("type")
     payload = message.get("payload", {})
+    
+    # Responder a ping con pong para mantener conexión viva
+    if msg_type == "ping":
+        await send_json_safe(websocket, {"type": "pong"})
+        return
     
     if msg_type == "ability":
         result = await game_state.execute_ability(
@@ -563,6 +788,11 @@ async def websocket_camera(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
+            
+            # Responder a ping con pong para mantener conexión viva
+            if message.get("type") == "ping":
+                await websocket.send_json({"type": "pong"})
+                continue
             
             if message.get("type") == "markers_update":
                 markers = message.get("payload", {}).get("markers", [])
@@ -604,26 +834,42 @@ async def websocket_admin(websocket: WebSocket):
     
     try:
         # Enviar estado inicial
-        await websocket.send_json({
-            "type": "state_update",
-            "payload": game_state.get_full_state()
-        })
-        await websocket.send_json({
-            "type": "stats",
-            "payload": ws_manager.get_stats()
-        })
+        try:
+            initial_state = game_state.get_full_state()
+            await send_json_safe(websocket, {
+                "type": "state_update",
+                "payload": initial_state
+            })
+            await send_json_safe(websocket, {
+                "type": "stats",
+                "payload": ws_manager.get_stats()
+            })
+        except Exception as e:
+            print(f"⚠️ Error enviando estado inicial a admin: {e}")
+            await send_json_safe(websocket, {"type": "error", "payload": {"message": str(e)}})
         
         while True:
             data = await websocket.receive_text()
-            message = json.loads(data)
-            await handle_admin_message(websocket, message)
+            try:
+                message = json.loads(data)
+                await handle_admin_message(websocket, message)
+            except json.JSONDecodeError as e:
+                print(f"⚠️ Error parseando mensaje de admin: {e}")
             
     except WebSocketDisconnect:
+        ws_manager.disconnect_admin(websocket)
+    except Exception as e:
+        print(f"❌ Error en WebSocket admin: {e}")
         ws_manager.disconnect_admin(websocket)
 
 async def handle_admin_message(websocket: WebSocket, message: dict):
     """Procesa mensajes del admin"""
     msg_type = message.get("type")
+    
+    # Responder a ping con pong para mantener conexión viva
+    if msg_type == "ping":
+        await send_json_safe(websocket, {"type": "pong"})
+        return
     
     if msg_type == "start_combat":
         await game_state.start_combat()
@@ -632,7 +878,7 @@ async def handle_admin_message(websocket: WebSocket, message: dict):
     elif msg_type == "next_turn":
         await game_state.next_turn()
     elif msg_type == "refresh":
-        await websocket.send_json({
+        await send_json_safe(websocket, {
             "type": "state_update",
             "payload": game_state.get_full_state()
         })
