@@ -596,12 +596,11 @@ class GameRenderer {
     }
     
     // Configurar sistema de juego (llamado desde app.js)
+    // Solo cambia el TIPO de grid, NO el tamaño (el tamaño viene de la calibración de pantalla)
     setGameSystem(systemConfig) {
         if (systemConfig && systemConfig.grid) {
             this.setGridType(systemConfig.grid.type || systemConfig.gridType);
-            if (systemConfig.grid.cellSize) {
-                this.gridSize = systemConfig.grid.cellSize;
-            }
+            // NO sobrescribir gridSize - se mantiene el calculado por la calibración de pantalla
         } else if (systemConfig && systemConfig.gridType) {
             this.setGridType(systemConfig.gridType);
         }
