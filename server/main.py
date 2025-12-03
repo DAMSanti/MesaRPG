@@ -455,12 +455,29 @@ async def get_available_markers():
 
 @app.get("/api/tiles")
 async def get_tiles():
-    """Obtiene la biblioteca de tiles disponibles"""
+    """Obtiene la biblioteca de tiles disponibles (genéricos)"""
     tiles_file = CONFIG_DIR / "tiles.json"
     if tiles_file.exists():
         with open(tiles_file, 'r', encoding='utf-8') as f:
             return json.load(f)
-    return {"categories": {}}
+    return {"categories": {}, "tiles": {}}
+
+@app.get("/api/tiles/{system_id}")
+async def get_tiles_for_system(system_id: str):
+    """Obtiene la biblioteca de tiles para un sistema de juego específico"""
+    # Primero intentar cargar tiles específicos del sistema
+    system_tiles_file = CONFIG_DIR / f"tiles_{system_id}.json"
+    if system_tiles_file.exists():
+        with open(system_tiles_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    
+    # Fallback a tiles genéricos
+    tiles_file = CONFIG_DIR / "tiles.json"
+    if tiles_file.exists():
+        with open(tiles_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    
+    return {"categories": {}, "tiles": {}}
 
 @app.get("/api/maps")
 async def get_all_maps():

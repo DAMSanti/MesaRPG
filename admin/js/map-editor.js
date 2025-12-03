@@ -51,9 +51,9 @@ class MapEditor {
         try {
             const response = await fetch('/api/state');
             const state = await response.json();
-            const systemId = state.game_system_id || state.game_system || 'dnd5e';
+            this.systemId = state.game_system_id || state.game_system || 'dnd5e';
             
-            const sysResponse = await fetch(`/api/systems/${systemId}`);
+            const sysResponse = await fetch(`/api/systems/${this.systemId}`);
             if (sysResponse.ok) {
                 this.gameSystem = await sysResponse.json();
                 this.gridType = this.gameSystem.gridType || this.gameSystem.grid?.type || 'square';
@@ -64,16 +64,34 @@ class MapEditor {
             }
         } catch (error) {
             console.warn('No se pudo cargar config del sistema, usando valores por defecto');
+            this.systemId = 'dnd5e';
         }
     }
     
     async loadTileLibrary() {
         try {
-            const response = await fetch('/api/tiles');
+            // Intentar cargar tiles específicos del sistema primero
+            let response = await fetch(`/api/tiles/${this.systemId}`);
+            if (!response.ok) {
+                // Fallback a tiles genéricos
+                response = await fetch('/api/tiles');
+            }
             const data = await response.json();
             this.tiles = data.tiles || {};
             this.categories = data.categories || {};
-            console.log(`📦 Cargados ${Object.keys(this.tiles).length} tiles`);
+            this.layerSystem = data.layerSystem || false;
+            this.layersConfig = data.layers || {};
+            
+            // Si el sistema usa capas, configurarlas
+            if (this.layerSystem) {
+                this.layers = Object.keys(this.layersConfig);
+                this.currentLayer = this.layers[0] || 'terrain';
+            }
+            
+            console.log(`📦 Cargados ${Object.keys(this.tiles).length} tiles para ${this.systemId}`);
+            if (this.layerSystem) {
+                console.log(`📚 Sistema de capas activo: ${this.layers.join(', ')}`);
+            }
         } catch (error) {
             console.error('Error cargando tiles:', error);
             // Tiles por defecto si falla la carga
@@ -95,7 +113,21 @@ class MapEditor {
         const palette = document.getElementById('tile-palette');
         if (!palette) return;
         
-        let html = '<div class="palette-categories">';
+        let html = '';
+        
+        // Si hay sistema de capas, mostrar selector
+        if (this.layerSystem && Object.keys(this.layersConfig).length > 0) {
+            html += '<div class="layer-selector">';
+            html += '<label>Capa activa:</label>';
+            html += '<select id="layer-select" onchange="mapEditor.setCurrentLayer(this.value)">';
+            Object.entries(this.layersConfig).forEach(([layerId, layerData]) => {
+                html += `<option value="${layerId}" ${this.currentLayer === layerId ? 'selected' : ''}>${layerData.name}</option>`;
+            });
+            html += '</select>';
+            html += '</div>';
+        }
+        
+        html += '<div class="palette-categories">';
         
         // Agrupar tiles por categoría
         const tilesByCategory = {};
@@ -110,23 +142,51 @@ class MapEditor {
             const tilesInCat = tilesByCategory[catId] || [];
             if (tilesInCat.length === 0) return;
             
+            // Si hay capas, filtrar por capa actual
+            const filteredTiles = this.layerSystem 
+                ? tilesInCat.filter(t => !t.layer || t.layer === this.currentLayer || catData.layer === this.currentLayer)
+                : tilesInCat;
+            
+            if (filteredTiles.length === 0) return;
+            
+            // Generar tooltip con info detallada para BattleTech
+            const getTileTooltip = (tile) => {
+                let tooltip = tile.name;
+                if (tile.movementCost !== undefined) tooltip += `\nMov: ${tile.movementCost === 999 ? '∞' : tile.movementCost}`;
+                if (tile.toHitModifier) tooltip += `\n+${tile.toHitModifier} impacto`;
+                if (tile.providesCover) tooltip += `\nCobertura: ${tile.providesCover}`;
+                if (tile.elevation) tooltip += `\nElevación: +${tile.elevation}`;
+                if (tile.blocksLOS || tile.blocksVision) tooltip += `\nBloquea visión`;
+                if (tile.heatDissipation) tooltip += `\nDisipa calor: ${tile.heatDissipation}`;
+                if (tile.explosive) tooltip += `\n⚠️ EXPLOSIVO`;
+                return tooltip;
+            };
+            
+            // Obtener color para preview
+            const getTileColor = (tile) => {
+                if (tile.colors?.base) return tile.colors.base;
+                return tile.color || '#666';
+            };
+            
             html += `
                 <div class="palette-category" data-category="${catId}">
                     <div class="category-header" onclick="mapEditor.toggleCategory('${catId}')">
                         <span class="category-icon">${catData.icon}</span>
                         <span class="category-name">${catData.name}</span>
+                        <span class="category-count">(${filteredTiles.length})</span>
                         <span class="category-toggle">▼</span>
                     </div>
                     <div class="category-tiles" id="cat-${catId}">
-                        ${tilesInCat.map(tile => `
-                            <div class="tile-item ${this.selectedTile?.id === tile.id ? 'selected' : ''}" 
+                        ${filteredTiles.map(tile => `
+                            <div class="tile-item ${this.selectedTile?.id === tile.id ? 'selected' : ''} ${tile.stackable ? 'stackable' : ''}" 
                                  data-tile-id="${tile.id}"
-                                 title="${tile.name}\nMovimiento: ${tile.movementCost}\nBloquea visión: ${tile.blocksVision ? 'Sí' : 'No'}"
+                                 title="${getTileTooltip(tile)}"
                                  onclick="mapEditor.selectTile('${tile.id}')">
-                                <div class="tile-preview" style="background-color: ${tile.color}">
+                                <div class="tile-preview" style="background-color: ${getTileColor(tile)}">
                                     ${tile.icon || ''}
                                 </div>
                                 <span class="tile-name">${tile.name}</span>
+                                ${tile.stackable ? '<span class="stackable-indicator">+</span>' : ''}
                             </div>
                         `).join('')}
                     </div>
@@ -136,6 +196,12 @@ class MapEditor {
         
         html += '</div>';
         palette.innerHTML = html;
+    }
+    
+    setCurrentLayer(layerId) {
+        this.currentLayer = layerId;
+        console.log(`📚 Capa activa: ${layerId}`);
+        this.renderTilePalette();
     }
     
     toggleCategory(catId) {
@@ -387,9 +453,26 @@ class MapEditor {
     
     // === Operaciones de Mapa ===
     
-    createNewMap(width, height, fillTile = 'grass') {
+    createNewMap(width, height, fillTile = null) {
         this.mapWidth = width;
         this.mapHeight = height;
+        
+        // Seleccionar tile de relleno según el sistema
+        if (!fillTile) {
+            fillTile = this.systemId === 'battletech' ? 'clear' : 'grass';
+        }
+        
+        // Configurar capas según el sistema
+        const mapLayers = {};
+        if (this.layerSystem && this.layers.length > 0) {
+            this.layers.forEach(layerName => {
+                mapLayers[layerName] = this.createEmptyLayer(width, height, layerName === 'terrain' ? fillTile : null);
+            });
+        } else {
+            mapLayers.terrain = this.createEmptyLayer(width, height, fillTile);
+            mapLayers.objects = this.createEmptyLayer(width, height, null);
+            mapLayers.effects = this.createEmptyLayer(width, height, null);
+        }
         
         this.currentMap = {
             id: 'map_' + Date.now(),
@@ -397,12 +480,9 @@ class MapEditor {
             width: width,
             height: height,
             gridType: this.gridType,
+            systemId: this.systemId,
             created: new Date().toISOString(),
-            layers: {
-                terrain: this.createEmptyLayer(width, height, fillTile),
-                objects: this.createEmptyLayer(width, height, null),
-                effects: this.createEmptyLayer(width, height, null)
-            },
+            layers: mapLayers,
             metadata: {
                 author: 'GM',
                 description: ''
@@ -591,13 +671,14 @@ class MapEditor {
         
         const cx = x * hexWidth + offset + hexWidth / 2;
         const cy = y * hexHeight * 0.75 + hexHeight / 2;
+        const radius = hexWidth / 2 - 1;
         
-        // Dibujar hexágono
+        // Dibujar hexágono base
         this.ctx.beginPath();
         for (let i = 0; i < 6; i++) {
             const angle = (Math.PI / 3) * i - Math.PI / 6;
-            const hx = cx + (hexWidth / 2 - 1) * Math.cos(angle);
-            const hy = cy + (hexWidth / 2 - 1) * Math.sin(angle);
+            const hx = cx + radius * Math.cos(angle);
+            const hy = cy + radius * Math.sin(angle);
             if (i === 0) {
                 this.ctx.moveTo(hx, hy);
             } else {
@@ -606,23 +687,341 @@ class MapEditor {
         }
         this.ctx.closePath();
         
-        this.ctx.fillStyle = tile.color || '#333';
+        // Color base o gradiente para más detalle
+        const baseColor = tile.colors?.base || tile.color || '#333';
+        if (tile.colors && this.tileSize >= 30) {
+            // Crear gradiente para efecto de profundidad
+            const gradient = this.ctx.createRadialGradient(
+                cx - radius * 0.3, cy - radius * 0.3, 0,
+                cx, cy, radius
+            );
+            gradient.addColorStop(0, tile.colors.variation1 || this.lightenColor(baseColor, 15));
+            gradient.addColorStop(0.7, baseColor);
+            gradient.addColorStop(1, tile.colors.variation2 || this.darkenColor(baseColor, 15));
+            this.ctx.fillStyle = gradient;
+        } else {
+            this.ctx.fillStyle = baseColor;
+        }
         this.ctx.fill();
         
-        if (tile.blocksVision) {
+        // Añadir textura/patrón según tipo de tile
+        if (this.tileSize >= 30 && tile.pattern) {
+            this.drawTilePattern(cx, cy, radius, tile);
+        }
+        
+        // Indicador de elevación
+        if (tile.elevation && tile.elevation > 0) {
+            this.drawElevationIndicator(cx, cy, radius, tile.elevation);
+        }
+        
+        // Indicador de bloqueo de visión
+        if (tile.blocksVision || tile.blocksLOS) {
             this.ctx.strokeStyle = 'rgba(0,0,0,0.5)';
             this.ctx.lineWidth = 2;
             this.ctx.stroke();
         }
         
-        // Icono
-        if (tile.icon && this.tileSize >= 24) {
-            this.ctx.font = `${this.tileSize * 0.4}px Arial`;
+        // Indicador de cobertura
+        if (tile.providesCover && tile.providesCover !== false) {
+            this.drawCoverIndicator(cx, cy, radius, tile.providesCover);
+        }
+        
+        // Icono para tiles pequeños o sin patrón
+        if (tile.icon && (this.tileSize < 30 || !tile.pattern)) {
+            this.ctx.font = `${this.tileSize * 0.35}px Arial`;
             this.ctx.textAlign = 'center';
             this.ctx.textBaseline = 'middle';
             this.ctx.fillStyle = '#fff';
+            this.ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            this.ctx.shadowBlur = 2;
             this.ctx.fillText(tile.icon, cx, cy);
+            this.ctx.shadowBlur = 0;
         }
+    }
+    
+    drawTilePattern(cx, cy, radius, tile) {
+        this.ctx.save();
+        
+        // Clipear al hexágono
+        this.ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 6;
+            const hx = cx + radius * Math.cos(angle);
+            const hy = cy + radius * Math.sin(angle);
+            if (i === 0) this.ctx.moveTo(hx, hy);
+            else this.ctx.lineTo(hx, hy);
+        }
+        this.ctx.closePath();
+        this.ctx.clip();
+        
+        switch (tile.pattern) {
+            case 'scattered_trees':
+            case 'dense_trees':
+                this.drawTreePattern(cx, cy, radius, tile);
+                break;
+            case 'building_top':
+            case 'bunker_top':
+                this.drawBuildingPattern(cx, cy, radius, tile);
+                break;
+            case 'water':
+            case 'deep_water':
+                this.drawWaterPattern(cx, cy, radius, tile);
+                break;
+            case 'rubble':
+                this.drawRubblePattern(cx, cy, radius, tile);
+                break;
+            case 'contour':
+                this.drawContourPattern(cx, cy, radius, tile);
+                break;
+            case 'factory_top':
+                this.drawFactoryPattern(cx, cy, radius, tile);
+                break;
+            case 'cylinder_top':
+                this.drawCylinderPattern(cx, cy, radius, tile);
+                break;
+        }
+        
+        this.ctx.restore();
+    }
+    
+    drawTreePattern(cx, cy, radius, tile) {
+        const isDense = tile.pattern === 'dense_trees';
+        const numTrees = isDense ? 5 : 3;
+        const treeColor = tile.colors?.trees || '#2e7d32';
+        const shadowColor = tile.colors?.shadows || '#1b5e20';
+        
+        for (let i = 0; i < numTrees; i++) {
+            const angle = (Math.PI * 2 / numTrees) * i + (i % 2) * 0.3;
+            const dist = radius * (isDense ? 0.4 : 0.5);
+            const tx = cx + Math.cos(angle) * dist * (0.5 + Math.random() * 0.5);
+            const ty = cy + Math.sin(angle) * dist * (0.5 + Math.random() * 0.5);
+            const treeRadius = radius * (isDense ? 0.25 : 0.3);
+            
+            // Sombra del árbol
+            this.ctx.fillStyle = shadowColor;
+            this.ctx.beginPath();
+            this.ctx.arc(tx + 2, ty + 2, treeRadius, 0, Math.PI * 2);
+            this.ctx.fill();
+            
+            // Copa del árbol (vista cenital)
+            const treeGradient = this.ctx.createRadialGradient(tx - 2, ty - 2, 0, tx, ty, treeRadius);
+            treeGradient.addColorStop(0, this.lightenColor(treeColor, 20));
+            treeGradient.addColorStop(0.5, treeColor);
+            treeGradient.addColorStop(1, shadowColor);
+            this.ctx.fillStyle = treeGradient;
+            this.ctx.beginPath();
+            this.ctx.arc(tx, ty, treeRadius, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+        
+        // Árbol central para bosque denso
+        if (isDense) {
+            const centerGradient = this.ctx.createRadialGradient(cx - 2, cy - 2, 0, cx, cy, radius * 0.35);
+            centerGradient.addColorStop(0, this.lightenColor(treeColor, 15));
+            centerGradient.addColorStop(1, shadowColor);
+            this.ctx.fillStyle = centerGradient;
+            this.ctx.beginPath();
+            this.ctx.arc(cx, cy, radius * 0.35, 0, Math.PI * 2);
+            this.ctx.fill();
+        }
+    }
+    
+    drawBuildingPattern(cx, cy, radius, tile) {
+        const wallColor = tile.colors?.walls || '#78909c';
+        const roofColor = tile.colors?.roof || '#546e7a';
+        const shadowColor = tile.colors?.shadow || '#455a64';
+        
+        // Techo del edificio (vista cenital)
+        const roofSize = radius * 0.75;
+        this.ctx.fillStyle = roofColor;
+        this.ctx.fillRect(cx - roofSize, cy - roofSize, roofSize * 2, roofSize * 2);
+        
+        // Borde/pared visible
+        this.ctx.strokeStyle = wallColor;
+        this.ctx.lineWidth = 3;
+        this.ctx.strokeRect(cx - roofSize, cy - roofSize, roofSize * 2, roofSize * 2);
+        
+        // Sombra del edificio
+        this.ctx.fillStyle = shadowColor;
+        this.ctx.fillRect(cx + roofSize * 0.8, cy - roofSize, roofSize * 0.3, roofSize * 2.3);
+        this.ctx.fillRect(cx - roofSize, cy + roofSize * 0.8, roofSize * 2.1, roofSize * 0.3);
+        
+        // Detalles del techo: unidades de AC, ventilación
+        if (tile.pattern !== 'bunker_top') {
+            // Unidad de aire
+            this.ctx.fillStyle = '#90a4ae';
+            this.ctx.fillRect(cx - radius * 0.2, cy - radius * 0.2, radius * 0.25, radius * 0.25);
+            
+            // Ventilación
+            this.ctx.fillStyle = '#37474f';
+            this.ctx.beginPath();
+            this.ctx.arc(cx + radius * 0.3, cy + radius * 0.3, radius * 0.1, 0, Math.PI * 2);
+            this.ctx.fill();
+        } else {
+            // Bunker: escotilla
+            this.ctx.fillStyle = '#263238';
+            this.ctx.beginPath();
+            this.ctx.arc(cx, cy, radius * 0.2, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.strokeStyle = '#455a64';
+            this.ctx.lineWidth = 2;
+            this.ctx.stroke();
+        }
+    }
+    
+    drawWaterPattern(cx, cy, radius, tile) {
+        const baseColor = tile.colors?.base || '#4fc3f7';
+        const rippleColor = tile.colors?.ripples || '#81d4fa';
+        
+        // Ondas concéntricas
+        for (let i = 3; i >= 0; i--) {
+            const waveRadius = radius * (0.3 + i * 0.2);
+            this.ctx.strokeStyle = i % 2 === 0 ? rippleColor : baseColor;
+            this.ctx.lineWidth = 2;
+            this.ctx.beginPath();
+            this.ctx.arc(cx, cy, waveRadius, 0, Math.PI * 2);
+            this.ctx.stroke();
+        }
+        
+        // Reflejos de luz
+        this.ctx.fillStyle = 'rgba(255,255,255,0.3)';
+        this.ctx.beginPath();
+        this.ctx.ellipse(cx - radius * 0.3, cy - radius * 0.3, radius * 0.15, radius * 0.08, -Math.PI / 4, 0, Math.PI * 2);
+        this.ctx.fill();
+    }
+    
+    drawRubblePattern(cx, cy, radius, tile) {
+        const debrisColor = tile.colors?.debris || '#9e9e9e';
+        const concreteColor = tile.colors?.concrete || '#757575';
+        
+        // Piezas de escombros aleatorias
+        const pieces = 6;
+        for (let i = 0; i < pieces; i++) {
+            const angle = (Math.PI * 2 / pieces) * i + Math.random() * 0.5;
+            const dist = radius * (0.2 + Math.random() * 0.5);
+            const px = cx + Math.cos(angle) * dist;
+            const py = cy + Math.sin(angle) * dist;
+            const size = radius * (0.1 + Math.random() * 0.15);
+            
+            this.ctx.fillStyle = i % 2 === 0 ? debrisColor : concreteColor;
+            this.ctx.beginPath();
+            // Forma irregular
+            this.ctx.moveTo(px, py - size);
+            this.ctx.lineTo(px + size * 0.8, py - size * 0.3);
+            this.ctx.lineTo(px + size * 0.5, py + size * 0.7);
+            this.ctx.lineTo(px - size * 0.6, py + size * 0.4);
+            this.ctx.lineTo(px - size * 0.8, py - size * 0.5);
+            this.ctx.closePath();
+            this.ctx.fill();
+        }
+    }
+    
+    drawContourPattern(cx, cy, radius, tile) {
+        // Líneas de contorno para elevación
+        const contourColor = tile.colors?.contour || '#81c784';
+        this.ctx.strokeStyle = contourColor;
+        this.ctx.lineWidth = 1;
+        
+        for (let i = 1; i <= 3; i++) {
+            const r = radius * (0.3 + i * 0.2);
+            this.ctx.beginPath();
+            this.ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            this.ctx.stroke();
+        }
+    }
+    
+    drawFactoryPattern(cx, cy, radius, tile) {
+        const structureColor = tile.colors?.structure || '#607d8b';
+        const smokestackColor = tile.colors?.smokestacks || '#37474f';
+        
+        // Estructura principal
+        this.ctx.fillStyle = structureColor;
+        this.ctx.fillRect(cx - radius * 0.6, cy - radius * 0.4, radius * 1.2, radius * 0.8);
+        
+        // Chimeneas
+        this.ctx.fillStyle = smokestackColor;
+        this.ctx.beginPath();
+        this.ctx.arc(cx - radius * 0.3, cy - radius * 0.5, radius * 0.12, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.beginPath();
+        this.ctx.arc(cx + radius * 0.3, cy - radius * 0.5, radius * 0.12, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Humo (círculos claros)
+        this.ctx.fillStyle = 'rgba(150,150,150,0.4)';
+        this.ctx.beginPath();
+        this.ctx.arc(cx - radius * 0.25, cy - radius * 0.7, radius * 0.15, 0, Math.PI * 2);
+        this.ctx.fill();
+    }
+    
+    drawCylinderPattern(cx, cy, radius, tile) {
+        // Tanque cilíndrico (vista cenital)
+        const tankColor = tile.colors?.tank || '#eceff1';
+        const topColor = tile.colors?.top || '#cfd8dc';
+        
+        // Círculo principal
+        const tankGradient = this.ctx.createRadialGradient(cx - radius * 0.2, cy - radius * 0.2, 0, cx, cy, radius * 0.7);
+        tankGradient.addColorStop(0, '#ffffff');
+        tankGradient.addColorStop(0.3, tankColor);
+        tankGradient.addColorStop(1, topColor);
+        this.ctx.fillStyle = tankGradient;
+        this.ctx.beginPath();
+        this.ctx.arc(cx, cy, radius * 0.65, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Borde
+        this.ctx.strokeStyle = '#90a4ae';
+        this.ctx.lineWidth = 2;
+        this.ctx.stroke();
+        
+        // Detalle central
+        this.ctx.fillStyle = '#607d8b';
+        this.ctx.beginPath();
+        this.ctx.arc(cx, cy, radius * 0.1, 0, Math.PI * 2);
+        this.ctx.fill();
+    }
+    
+    drawElevationIndicator(cx, cy, radius, elevation) {
+        // Pequeño indicador de nivel en esquina
+        this.ctx.fillStyle = 'rgba(0,0,0,0.6)';
+        this.ctx.font = `bold ${this.tileSize * 0.2}px Arial`;
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(`+${elevation}`, cx + radius * 0.5, cy - radius * 0.5);
+    }
+    
+    drawCoverIndicator(cx, cy, radius, coverType) {
+        // Pequeño escudo de cobertura
+        const colors = {
+            'light': '#4caf50',
+            'partial': '#ff9800',
+            'heavy': '#f44336',
+            'hardened': '#9c27b0'
+        };
+        const color = colors[coverType] || colors['light'];
+        
+        this.ctx.fillStyle = color;
+        this.ctx.beginPath();
+        this.ctx.arc(cx - radius * 0.5, cy + radius * 0.5, radius * 0.12, 0, Math.PI * 2);
+        this.ctx.fill();
+    }
+    
+    lightenColor(color, percent) {
+        const num = parseInt(color.replace('#', ''), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = Math.min(255, (num >> 16) + amt);
+        const G = Math.min(255, ((num >> 8) & 0x00FF) + amt);
+        const B = Math.min(255, (num & 0x0000FF) + amt);
+        return `#${(1 << 24 | R << 16 | G << 8 | B).toString(16).slice(1)}`;
+    }
+    
+    darkenColor(color, percent) {
+        const num = parseInt(color.replace('#', ''), 16);
+        const amt = Math.round(2.55 * percent);
+        const R = Math.max(0, (num >> 16) - amt);
+        const G = Math.max(0, ((num >> 8) & 0x00FF) - amt);
+        const B = Math.max(0, (num & 0x0000FF) - amt);
+        return `#${(1 << 24 | R << 16 | G << 8 | B).toString(16).slice(1)}`;
     }
     
     drawGrid() {

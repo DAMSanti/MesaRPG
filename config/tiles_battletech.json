@@ -1,0 +1,725 @@
+{
+  "version": "1.0",
+  "system": "battletech",
+  "gridType": "hex",
+  "layerSystem": true,
+  "layers": {
+    "terrain": {
+      "name": "Terreno Base",
+      "order": 0,
+      "description": "Capa base del terreno"
+    },
+    "elevation": {
+      "name": "Elevación",
+      "order": 1,
+      "description": "Niveles de altura y colinas"
+    },
+    "features": {
+      "name": "Características",
+      "order": 2,
+      "description": "Árboles, rocas, edificios"
+    },
+    "effects": {
+      "name": "Efectos",
+      "order": 3,
+      "description": "Fuego, humo, agua corriente"
+    }
+  },
+  "categories": {
+    "terrain_base": {
+      "name": "Terreno Base",
+      "icon": "🗺️",
+      "layer": "terrain"
+    },
+    "elevation": {
+      "name": "Elevación",
+      "icon": "⛰️",
+      "layer": "elevation"
+    },
+    "woods": {
+      "name": "Bosques",
+      "icon": "🌲",
+      "layer": "features"
+    },
+    "water": {
+      "name": "Agua",
+      "icon": "💧",
+      "layer": "terrain"
+    },
+    "roads": {
+      "name": "Carreteras",
+      "icon": "🛣️",
+      "layer": "terrain"
+    },
+    "buildings": {
+      "name": "Edificios",
+      "icon": "🏢",
+      "layer": "features"
+    },
+    "industrial": {
+      "name": "Industrial",
+      "icon": "🏭",
+      "layer": "features"
+    },
+    "fortifications": {
+      "name": "Fortificaciones",
+      "icon": "🏰",
+      "layer": "features"
+    },
+    "special": {
+      "name": "Especiales",
+      "icon": "⚡",
+      "layer": "effects"
+    }
+  },
+  "tiles": {
+    "clear": {
+      "id": "clear",
+      "name": "Terreno Despejado",
+      "category": "terrain_base",
+      "layer": "terrain",
+      "colors": {
+        "base": "#7cb342",
+        "variation1": "#8bc34a",
+        "variation2": "#689f38"
+      },
+      "pattern": "grass",
+      "movementCost": 1,
+      "toHitModifier": 0,
+      "providesCover": false,
+      "elevation": 0,
+      "description": "Terreno abierto sin obstáculos. Pradera o campo despejado."
+    },
+    "rough": {
+      "id": "rough",
+      "name": "Terreno Irregular",
+      "category": "terrain_base",
+      "layer": "terrain",
+      "colors": {
+        "base": "#6d4c41",
+        "variation1": "#795548",
+        "variation2": "#5d4037"
+      },
+      "pattern": "rough",
+      "movementCost": 2,
+      "toHitModifier": 1,
+      "providesCover": false,
+      "elevation": 0,
+      "description": "Terreno rocoso e irregular. Piedras sueltas y terreno accidentado."
+    },
+    "pavement": {
+      "id": "pavement",
+      "name": "Pavimento",
+      "category": "roads",
+      "layer": "terrain",
+      "colors": {
+        "base": "#546e7a",
+        "lines": "#90a4ae",
+        "cracks": "#37474f"
+      },
+      "pattern": "pavement",
+      "movementCost": 1,
+      "toHitModifier": 0,
+      "providesCover": false,
+      "elevation": 0,
+      "description": "Carretera o zona pavimentada. Superficie dura y lisa."
+    },
+    "road_dirt": {
+      "id": "road_dirt",
+      "name": "Camino de Tierra",
+      "category": "roads",
+      "layer": "terrain",
+      "colors": {
+        "base": "#a1887f",
+        "tracks": "#8d6e63",
+        "edges": "#6d4c41"
+      },
+      "pattern": "dirt_road",
+      "movementCost": 1,
+      "toHitModifier": 0,
+      "providesCover": false,
+      "elevation": 0,
+      "description": "Camino de tierra compactada con marcas de vehículos."
+    },
+    "sand": {
+      "id": "sand",
+      "name": "Arena/Desierto",
+      "category": "terrain_base",
+      "layer": "terrain",
+      "colors": {
+        "base": "#fff59d",
+        "dunes": "#ffee58",
+        "shadows": "#fdd835"
+      },
+      "pattern": "sand",
+      "movementCost": 2,
+      "toHitModifier": 0,
+      "providesCover": false,
+      "elevation": 0,
+      "description": "Terreno arenoso o desértico. Arena suelta que dificulta el movimiento."
+    },
+    "mud": {
+      "id": "mud",
+      "name": "Barro",
+      "category": "terrain_base",
+      "layer": "terrain",
+      "colors": {
+        "base": "#5d4037",
+        "puddles": "#4e342e",
+        "dry": "#6d4c41"
+      },
+      "pattern": "mud",
+      "movementCost": 3,
+      "toHitModifier": 0,
+      "providesCover": false,
+      "pilotingModifier": 1,
+      "elevation": 0,
+      "description": "Barro profundo. Muy difícil de atravesar, riesgo de atascarse."
+    },
+    "snow": {
+      "id": "snow",
+      "name": "Nieve",
+      "category": "terrain_base",
+      "layer": "terrain",
+      "colors": {
+        "base": "#eceff1",
+        "shadows": "#b0bec5",
+        "ice": "#e3f2fd"
+      },
+      "pattern": "snow",
+      "movementCost": 2,
+      "toHitModifier": 0,
+      "providesCover": false,
+      "pilotingModifier": 1,
+      "elevation": 0,
+      "description": "Terreno cubierto de nieve. Reduce tracción y visibilidad."
+    },
+    "ice": {
+      "id": "ice",
+      "name": "Hielo",
+      "category": "terrain_base",
+      "layer": "terrain",
+      "colors": {
+        "base": "#b3e5fc",
+        "cracks": "#81d4fa",
+        "shine": "#e1f5fe"
+      },
+      "pattern": "ice",
+      "movementCost": 1,
+      "toHitModifier": 0,
+      "providesCover": false,
+      "pilotingModifier": 2,
+      "elevation": 0,
+      "description": "Superficie helada muy resbaladiza. Alto riesgo de caída."
+    },
+    "water_shallow": {
+      "id": "water_shallow",
+      "name": "Agua Poco Profunda",
+      "category": "water",
+      "layer": "terrain",
+      "colors": {
+        "base": "#4fc3f7",
+        "ripples": "#81d4fa",
+        "bottom": "#29b6f6"
+      },
+      "pattern": "water",
+      "animated": true,
+      "movementCost": 2,
+      "toHitModifier": 0,
+      "providesCover": false,
+      "depth": 1,
+      "heatDissipation": 2,
+      "elevation": -1,
+      "description": "Agua hasta la cintura de un Mech. Ayuda a disipar calor."
+    },
+    "water_deep": {
+      "id": "water_deep",
+      "name": "Agua Profunda",
+      "category": "water",
+      "layer": "terrain",
+      "colors": {
+        "base": "#0288d1",
+        "dark": "#01579b",
+        "surface": "#03a9f4"
+      },
+      "pattern": "deep_water",
+      "animated": true,
+      "movementCost": 4,
+      "toHitModifier": 0,
+      "providesCover": "partial",
+      "depth": 2,
+      "heatDissipation": 4,
+      "elevation": -2,
+      "description": "Agua profunda. Mechs parcialmente sumergidos, excelente disipación de calor."
+    },
+    "swamp": {
+      "id": "swamp",
+      "name": "Pantano",
+      "category": "water",
+      "layer": "terrain",
+      "colors": {
+        "base": "#558b2f",
+        "water": "#33691e",
+        "vegetation": "#689f38"
+      },
+      "pattern": "swamp",
+      "movementCost": 3,
+      "toHitModifier": 1,
+      "providesCover": false,
+      "pilotingModifier": 2,
+      "depth": 1,
+      "elevation": 0,
+      "description": "Terreno pantanoso con vegetación. Muy difícil de atravesar."
+    },
+    "level_1": {
+      "id": "level_1",
+      "name": "Elevación Nivel 1",
+      "category": "elevation",
+      "layer": "elevation",
+      "colors": {
+        "base": "#a5d6a7",
+        "contour": "#81c784",
+        "shadow": "#66bb6a"
+      },
+      "pattern": "contour",
+      "stackable": true,
+      "movementCost": 0,
+      "toHitModifier": 0,
+      "elevation": 1,
+      "elevationChange": true,
+      "description": "Colina o elevación de 1 nivel. Proporciona ventaja de altura."
+    },
+    "level_2": {
+      "id": "level_2",
+      "name": "Elevación Nivel 2",
+      "category": "elevation",
+      "layer": "elevation",
+      "colors": {
+        "base": "#81c784",
+        "contour": "#66bb6a",
+        "shadow": "#4caf50"
+      },
+      "pattern": "contour",
+      "stackable": true,
+      "movementCost": 0,
+      "toHitModifier": 0,
+      "elevation": 2,
+      "elevationChange": true,
+      "description": "Colina o elevación de 2 niveles."
+    },
+    "level_3": {
+      "id": "level_3",
+      "name": "Elevación Nivel 3",
+      "category": "elevation",
+      "layer": "elevation",
+      "colors": {
+        "base": "#66bb6a",
+        "contour": "#4caf50",
+        "shadow": "#43a047"
+      },
+      "pattern": "contour",
+      "stackable": true,
+      "movementCost": 0,
+      "toHitModifier": 0,
+      "elevation": 3,
+      "elevationChange": true,
+      "description": "Colina o elevación de 3 niveles."
+    },
+    "cliff": {
+      "id": "cliff",
+      "name": "Acantilado",
+      "category": "elevation",
+      "layer": "elevation",
+      "colors": {
+        "base": "#78909c",
+        "face": "#546e7a",
+        "top": "#90a4ae"
+      },
+      "pattern": "cliff",
+      "movementCost": 999,
+      "toHitModifier": 0,
+      "blocksMovement": true,
+      "elevation": 3,
+      "description": "Pared vertical infranqueable. Bloquea movimiento y línea de visión."
+    },
+    "woods_light": {
+      "id": "woods_light",
+      "name": "Bosque Ligero",
+      "category": "woods",
+      "layer": "features",
+      "colors": {
+        "trees": "#2e7d32",
+        "shadows": "#1b5e20",
+        "canopy": "#43a047"
+      },
+      "pattern": "scattered_trees",
+      "stackable": true,
+      "movementCost": 1,
+      "toHitModifier": 1,
+      "providesCover": "light",
+      "blocksLOS": false,
+      "description": "Árboles dispersos. Proporciona cobertura ligera (+1 al impacto)."
+    },
+    "woods_heavy": {
+      "id": "woods_heavy",
+      "name": "Bosque Denso",
+      "category": "woods",
+      "layer": "features",
+      "colors": {
+        "trees": "#1b5e20",
+        "shadows": "#0d3310",
+        "canopy": "#2e7d32"
+      },
+      "pattern": "dense_trees",
+      "stackable": true,
+      "movementCost": 2,
+      "toHitModifier": 2,
+      "providesCover": "heavy",
+      "blocksLOS": true,
+      "description": "Bosque denso. Cobertura pesada (+2 al impacto), bloquea línea de visión."
+    },
+    "jungle": {
+      "id": "jungle",
+      "name": "Jungla",
+      "category": "woods",
+      "layer": "features",
+      "colors": {
+        "vegetation": "#1b5e20",
+        "undergrowth": "#33691e",
+        "canopy": "#2e7d32"
+      },
+      "pattern": "jungle",
+      "stackable": true,
+      "movementCost": 3,
+      "toHitModifier": 2,
+      "providesCover": "heavy",
+      "blocksLOS": true,
+      "pilotingModifier": 1,
+      "description": "Vegetación tropical densa. Muy difícil de atravesar."
+    },
+    "building_light": {
+      "id": "building_light",
+      "name": "Edificio Ligero",
+      "category": "buildings",
+      "layer": "features",
+      "colors": {
+        "walls": "#bdbdbd",
+        "roof": "#9e9e9e",
+        "windows": "#42a5f5",
+        "shadow": "#757575"
+      },
+      "pattern": "building_top",
+      "movementCost": 999,
+      "toHitModifier": 3,
+      "providesCover": "hardened",
+      "blocksLOS": true,
+      "blocksMovement": true,
+      "structurePoints": 15,
+      "constructionFactor": 1,
+      "height": 2,
+      "description": "Edificio de construcción ligera (madera, metal fino). Altura 2 niveles."
+    },
+    "building_medium": {
+      "id": "building_medium",
+      "name": "Edificio Medio",
+      "category": "buildings",
+      "layer": "features",
+      "colors": {
+        "walls": "#78909c",
+        "roof": "#546e7a",
+        "windows": "#29b6f6",
+        "shadow": "#455a64"
+      },
+      "pattern": "building_top",
+      "movementCost": 999,
+      "toHitModifier": 4,
+      "providesCover": "hardened",
+      "blocksLOS": true,
+      "blocksMovement": true,
+      "structurePoints": 40,
+      "constructionFactor": 2,
+      "height": 3,
+      "description": "Edificio de construcción media (ladrillo, hormigón). Altura 3 niveles."
+    },
+    "building_heavy": {
+      "id": "building_heavy",
+      "name": "Edificio Pesado",
+      "category": "buildings",
+      "layer": "features",
+      "colors": {
+        "walls": "#455a64",
+        "roof": "#37474f",
+        "windows": "#0288d1",
+        "shadow": "#263238"
+      },
+      "pattern": "building_top",
+      "movementCost": 999,
+      "toHitModifier": 5,
+      "providesCover": "hardened",
+      "blocksLOS": true,
+      "blocksMovement": true,
+      "structurePoints": 90,
+      "constructionFactor": 3,
+      "height": 4,
+      "description": "Edificio reforzado (hormigón armado, bunker). Altura 4 niveles."
+    },
+    "building_hardened": {
+      "id": "building_hardened",
+      "name": "Edificio Blindado",
+      "category": "buildings",
+      "layer": "features",
+      "colors": {
+        "walls": "#37474f",
+        "roof": "#263238",
+        "vents": "#546e7a",
+        "shadow": "#000000"
+      },
+      "pattern": "bunker_top",
+      "movementCost": 999,
+      "toHitModifier": 6,
+      "providesCover": "hardened",
+      "blocksLOS": true,
+      "blocksMovement": true,
+      "structurePoints": 150,
+      "constructionFactor": 4,
+      "height": 2,
+      "description": "Estructura militar blindada. Extremadamente resistente."
+    },
+    "rubble": {
+      "id": "rubble",
+      "name": "Escombros",
+      "category": "buildings",
+      "layer": "features",
+      "colors": {
+        "debris": "#9e9e9e",
+        "concrete": "#757575",
+        "rebar": "#5d4037"
+      },
+      "pattern": "rubble",
+      "stackable": true,
+      "movementCost": 2,
+      "toHitModifier": 1,
+      "providesCover": "light",
+      "pilotingModifier": 1,
+      "description": "Restos de edificio destruido. Dificulta movimiento y proporciona algo de cobertura."
+    },
+    "factory": {
+      "id": "factory",
+      "name": "Fábrica",
+      "category": "industrial",
+      "layer": "features",
+      "colors": {
+        "structure": "#607d8b",
+        "roof": "#455a64",
+        "smokestacks": "#37474f",
+        "pipes": "#78909c"
+      },
+      "pattern": "factory_top",
+      "movementCost": 999,
+      "toHitModifier": 4,
+      "providesCover": "hardened",
+      "blocksLOS": true,
+      "blocksMovement": true,
+      "structurePoints": 60,
+      "height": 3,
+      "description": "Instalación industrial con chimeneas y maquinaria."
+    },
+    "fuel_tank": {
+      "id": "fuel_tank",
+      "name": "Tanque de Combustible",
+      "category": "industrial",
+      "layer": "features",
+      "colors": {
+        "tank": "#eceff1",
+        "shadow": "#b0bec5",
+        "top": "#cfd8dc",
+        "pipes": "#607d8b"
+      },
+      "pattern": "cylinder_top",
+      "movementCost": 999,
+      "toHitModifier": 2,
+      "blocksLOS": true,
+      "blocksMovement": true,
+      "structurePoints": 20,
+      "explosive": true,
+      "explosionDamage": 20,
+      "explosionRadius": 2,
+      "height": 2,
+      "description": "Tanque de almacenamiento de combustible. ¡EXPLOSIVO si es destruido!"
+    },
+    "cooling_tower": {
+      "id": "cooling_tower",
+      "name": "Torre de Enfriamiento",
+      "category": "industrial",
+      "layer": "features",
+      "colors": {
+        "structure": "#b0bec5",
+        "steam": "#eceff1",
+        "base": "#78909c"
+      },
+      "pattern": "cone_top",
+      "movementCost": 999,
+      "toHitModifier": 3,
+      "blocksLOS": true,
+      "blocksMovement": true,
+      "structurePoints": 40,
+      "height": 5,
+      "description": "Torre de refrigeración industrial. Muy alta, visible a distancia."
+    },
+    "wall_low": {
+      "id": "wall_low",
+      "name": "Muro Bajo",
+      "category": "fortifications",
+      "layer": "features",
+      "colors": {
+        "wall": "#78909c",
+        "top": "#90a4ae",
+        "shadow": "#546e7a"
+      },
+      "pattern": "wall",
+      "movementCost": 1,
+      "toHitModifier": 1,
+      "providesCover": "partial",
+      "height": 1,
+      "description": "Muro bajo para infantería. Mechs pueden pasar por encima."
+    },
+    "wall_high": {
+      "id": "wall_high",
+      "name": "Muro Alto",
+      "category": "fortifications",
+      "layer": "features",
+      "colors": {
+        "wall": "#546e7a",
+        "top": "#78909c",
+        "shadow": "#37474f"
+      },
+      "pattern": "wall",
+      "movementCost": 999,
+      "toHitModifier": 3,
+      "providesCover": "heavy",
+      "blocksLOS": true,
+      "blocksMovement": true,
+      "structurePoints": 30,
+      "height": 2,
+      "description": "Muro defensivo alto. Bloquea movimiento de Mechs."
+    },
+    "trench": {
+      "id": "trench",
+      "name": "Trinchera",
+      "category": "fortifications",
+      "layer": "features",
+      "colors": {
+        "walls": "#5d4037",
+        "floor": "#4e342e",
+        "sandbags": "#8d6e63"
+      },
+      "pattern": "trench",
+      "stackable": true,
+      "movementCost": 1,
+      "toHitModifier": 3,
+      "providesCover": "heavy",
+      "elevation": -1,
+      "description": "Trinchera excavada. Excelente cobertura para infantería."
+    },
+    "fire": {
+      "id": "fire",
+      "name": "Fuego",
+      "category": "special",
+      "layer": "effects",
+      "colors": {
+        "flames": "#ff5722",
+        "center": "#ffeb3b",
+        "smoke": "#424242"
+      },
+      "pattern": "fire",
+      "animated": true,
+      "stackable": true,
+      "movementCost": 2,
+      "toHitModifier": 0,
+      "heatGeneration": 5,
+      "damage": 5,
+      "spreadChance": 0.3,
+      "description": "Fuego activo. Genera calor adicional y puede propagarse."
+    },
+    "smoke": {
+      "id": "smoke",
+      "name": "Humo",
+      "category": "special",
+      "layer": "effects",
+      "colors": {
+        "smoke": "#616161",
+        "light": "#9e9e9e",
+        "dense": "#424242"
+      },
+      "pattern": "smoke",
+      "animated": true,
+      "stackable": true,
+      "movementCost": 0,
+      "toHitModifier": 2,
+      "blocksLOS": true,
+      "temporary": true,
+      "duration": 3,
+      "description": "Columna de humo. Bloquea línea de visión temporalmente."
+    },
+    "crater": {
+      "id": "crater",
+      "name": "Cráter",
+      "category": "special",
+      "layer": "terrain",
+      "colors": {
+        "rim": "#5d4037",
+        "interior": "#3e2723",
+        "scorched": "#212121"
+      },
+      "pattern": "crater",
+      "movementCost": 2,
+      "toHitModifier": 1,
+      "providesCover": "light",
+      "elevation": -1,
+      "description": "Cráter de impacto. Proporciona algo de cobertura."
+    },
+    "minefield": {
+      "id": "minefield",
+      "name": "Campo de Minas",
+      "category": "special",
+      "layer": "effects",
+      "colors": {
+        "base": "#7cb342",
+        "warning": "#f44336"
+      },
+      "pattern": "hazard",
+      "stackable": true,
+      "movementCost": 1,
+      "toHitModifier": 0,
+      "mineStrength": 20,
+      "mineDensity": 5,
+      "hidden": true,
+      "description": "Zona minada. Peligro al moverse por ella."
+    }
+  },
+  "renderingConfig": {
+    "hexOrientation": "flat-top",
+    "defaultTileSize": 50,
+    "shadowAngle": 135,
+    "shadowOpacity": 0.3,
+    "detailLevel": "high",
+    "patterns": {
+      "grass": {
+        "type": "noise",
+        "density": 0.3,
+        "variation": 0.15
+      },
+      "water": {
+        "type": "animated",
+        "waveSpeed": 0.5,
+        "reflections": true
+      },
+      "building_top": {
+        "type": "structural",
+        "showVents": true,
+        "showAC": true,
+        "perspective": "top-down"
+      }
+    }
+  }
+}
