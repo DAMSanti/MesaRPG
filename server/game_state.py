@@ -606,15 +606,28 @@ class GameStateManager:
             try:
                 with open(map_file, 'r', encoding='utf-8') as f:
                     map_data = json.load(f)
-                    maps.append({
-                        "id": map_file.stem,
-                        "name": map_data.get("name", map_file.stem),
-                        "width": map_data.get("width", 20),
-                        "height": map_data.get("height", 15),
-                        "type": map_data.get("type", "custom"),
-                        "created_at": map_data.get("created_at"),
-                        "updated_at": map_data.get("updated_at")
-                    })
+                    try:
+                        model = self.MapModel(**map_data)
+                        maps.append({
+                            "id": map_file.stem,
+                            "name": model.name,
+                            "width": model.width,
+                            "height": model.height,
+                            "type": model.type,
+                            "created_at": model.created_at,
+                            "updated_at": model.updated_at
+                        })
+                    except Exception:
+                        # Fallback: include minimal metadata if validation fails
+                        maps.append({
+                            "id": map_file.stem,
+                            "name": map_data.get("name", map_file.stem),
+                            "width": map_data.get("width", 20),
+                            "height": map_data.get("height", 15),
+                            "type": map_data.get("type", "custom"),
+                            "created_at": map_data.get("created_at"),
+                            "updated_at": map_data.get("updated_at")
+                        })
             except Exception as e:
                 print(f"⚠️ Error leyendo mapa {map_file}: {e}")
         
@@ -628,7 +641,12 @@ class GameStateManager:
         
         try:
             with open(map_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                map_data = json.load(f)
+                try:
+                    model = self.MapModel(**map_data)
+                    return model.model_dump()
+                except Exception:
+                    return map_data
         except Exception as e:
             print(f"⚠️ Error leyendo mapa {map_id}: {e}")
             return None
@@ -637,25 +655,34 @@ class GameStateManager:
         """Guarda un mapa (nuevo o existente)"""
         maps_dir = self.config_path / "maps"
         maps_dir.mkdir(exist_ok=True)
-        
+        # Validate and normalize via Pydantic model
+        try:
+            model = self.MapModel(**map_data)
+        except Exception as e:
+            # If validation fails, raise to caller
+            raise
+
         # Generar ID si no tiene
-        map_id = map_data.get("id") or str(uuid.uuid4())[:8]
-        map_data["id"] = map_id
-        
+        map_id = model.id or str(uuid.uuid4())[:8]
+        model.id = map_id
+
         # Timestamps
         now = datetime.now().isoformat()
-        if not map_data.get("created_at"):
-            map_data["created_at"] = now
-        map_data["updated_at"] = now
-        
+        if not model.created_at:
+            model.created_at = now
+        model.updated_at = now
+
+        # Dump normalized dict
+        out = model.model_dump()
+
         # Guardar
         map_file = maps_dir / f"{map_id}.json"
         with open(map_file, 'w', encoding='utf-8') as f:
-            json.dump(map_data, f, indent=2, ensure_ascii=False)
-        
+            json.dump(out, f, indent=2, ensure_ascii=False)
+
         # Notificar cambio
-        await self._notify_change("map_saved", {"map_id": map_id, "name": map_data.get("name", "")})
-        
+        await self._notify_change("map_saved", {"map_id": map_id, "name": model.name})
+
         return {"id": map_id, "status": "saved"}
     
     async def delete_map(self, map_id: str) -> bool:
