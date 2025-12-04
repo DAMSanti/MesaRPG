@@ -622,7 +622,13 @@ class MapEditor {
     
     /**
      * Obtiene las celdas que ocupa un multi-tile según su forma
-     * Devuelve array de {x, y} relativo al centro/origen
+     * Para grid flat-top, los vecinos son:
+     * - 0: arriba-izq (x-1)
+     * - 1: abajo-izq (x-1)  
+     * - 2: arriba (mismo x, y-1)
+     * - 3: abajo (mismo x, y+1)
+     * - 4: arriba-der (x+1)
+     * - 5: abajo-der (x+1)
      */
     getMultiTileCells(tile, x, y) {
         const shape = tile.shape || 'single';
@@ -640,23 +646,32 @@ class MapEditor {
                 neighbors.forEach(n => cells.push(n));
                 break;
                 
-            case 'h2': // 2 hex horizontal
-                cells.push(neighbors[3]); // derecha
+            case 'h2': // 2 hex horizontal (derecha)
+                // En flat-top, vecino horizontal derecho
+                cells.push(neighbors[5]); // abajo-der para columna par, o neighbors[4] para impar
                 break;
                 
-            case 'v2': // 2 hex vertical
-                cells.push(neighbors[4]); // abajo-izq o abajo-der según fila
+            case 'v2': // 2 hex vertical (abajo)
+                cells.push(neighbors[3]); // abajo (mismo x, y+1)
                 break;
                 
             case 'tri_down': // 3 hex triángulo hacia abajo
-                cells.push(neighbors[3]); // derecha
-                cells.push(neighbors[4]); // abajo-izq
+                cells.push(neighbors[3]); // abajo
+                cells.push(neighbors[5]); // abajo-der
                 break;
                 
-            case 'h2v2': // 4 hex (2x2)
-                cells.push(neighbors[3]); // derecha
-                cells.push(neighbors[4]); // abajo-izq
-                cells.push(neighbors[5]); // abajo-der
+            case 'h2v2': // 4 hex (2x2) - 2 columnas, 2 filas
+                // Columna actual: centro y abajo
+                cells.push(neighbors[3]); // abajo
+                // Columna derecha: al lado y abajo
+                cells.push({ x: x + 1, y: y });
+                const n1 = this.getHexNeighbors(x + 1, y);
+                cells.push(n1[3]); // abajo de x+1
+                break;
+                
+            case 'v3': // 3 hex vertical
+                cells.push({ x, y: y + 1 });
+                cells.push({ x, y: y + 2 });
                 break;
                 
             case 'v4': // 4 hex vertical
@@ -665,55 +680,53 @@ class MapEditor {
                 cells.push({ x, y: y + 3 });
                 break;
                 
-            case 'h2v3': // 5 hex (2 ancho x 3 alto)
-                cells.push(neighbors[3]); // derecha
-                cells.push(neighbors[4]); // abajo-izq
-                cells.push(neighbors[5]); // abajo-der
-                // Añadir fila adicional abajo
-                const neighbors2 = this.getHexNeighbors(neighbors[4].x, neighbors[4].y);
-                cells.push(neighbors2[4]); // abajo del abajo-izq
+            case 'h2v3': // 5-6 hex (2 columnas x 3 filas)
+                // Columna izquierda: y, y+1, y+2
+                cells.push({ x, y: y + 1 });
+                cells.push({ x, y: y + 2 });
+                // Columna derecha
+                cells.push({ x: x + 1, y: y });
+                cells.push({ x: x + 1, y: y + 1 });
                 break;
                 
-            case 'h3v2': // 6 hex (3 ancho x 2 alto)
-                cells.push(neighbors[2]); // izquierda
-                cells.push(neighbors[3]); // derecha
-                cells.push(neighbors[4]); // abajo-izq
+            case 'h3v2': // 6 hex (3 columnas x 2 filas)
+                // Fila superior: x-1, x, x+1
+                cells.push({ x: x - 1, y: y });
+                cells.push({ x: x + 1, y: y });
+                // Fila inferior
+                cells.push(neighbors[1]); // abajo-izq
+                cells.push(neighbors[3]); // abajo
                 cells.push(neighbors[5]); // abajo-der
-                // Añadir uno más a la izquierda de la fila inferior
-                const neighbors3 = this.getHexNeighbors(neighbors[4].x, neighbors[4].y);
-                cells.push(neighbors3[2]); // izquierda del abajo-izq
                 break;
                 
             case 'h3': // 3-4 hex línea horizontal
-                cells.push(neighbors[2]); // izquierda
-                cells.push(neighbors[3]); // derecha
+                cells.push({ x: x - 1, y: y }); // izquierda (ajustar y según paridad)
+                cells.push({ x: x + 1, y: y }); // derecha
                 if (hexCount >= 4) {
-                    // Añadir un cuarto a la derecha
-                    const n4 = this.getHexNeighbors(neighbors[3].x, neighbors[3].y);
-                    cells.push(n4[3]);
+                    cells.push({ x: x + 2, y: y });
                 }
                 break;
                 
-            case 'h5': // 5 hex línea horizontal (o más)
-                cells.push(neighbors[2]); // izquierda
-                cells.push(neighbors[3]); // derecha
-                // Más a la izquierda
-                const nL = this.getHexNeighbors(neighbors[2].x, neighbors[2].y);
-                cells.push(nL[2]);
-                // Más a la derecha
-                const nR = this.getHexNeighbors(neighbors[3].x, neighbors[3].y);
-                cells.push(nR[3]);
+            case 'h5': // 5+ hex línea horizontal
+                cells.push({ x: x - 2, y: y });
+                cells.push({ x: x - 1, y: y });
+                cells.push({ x: x + 1, y: y });
+                cells.push({ x: x + 2, y: y });
                 break;
                 
             case 'mega13': // 13 hex - mega central + anillo exterior
                 // Añadir los 6 vecinos primero
                 neighbors.forEach(n => cells.push(n));
-                // Añadir anillo exterior (6 más en las esquinas)
-                neighbors.forEach((n, i) => {
-                    const outerNeighbors = this.getHexNeighbors(n.x, n.y);
-                    // Añadir el vecino que está más alejado del centro
-                    cells.push(outerNeighbors[(i + 3) % 6]);
-                });
+                // Añadir anillo exterior (6 más)
+                cells.push({ x: x - 2, y: y }); // izq lejano
+                cells.push({ x: x + 2, y: y }); // der lejano
+                cells.push({ x, y: y - 2 });    // arriba lejano
+                cells.push({ x, y: y + 2 });    // abajo lejano
+                // Esquinas
+                const n2 = this.getHexNeighbors(neighbors[0].x, neighbors[0].y);
+                cells.push(n2[2]); // arriba-arriba-izq
+                const n3 = this.getHexNeighbors(neighbors[5].x, neighbors[5].y);
+                cells.push(n3[3]); // abajo-abajo-der
                 break;
                 
             default:
@@ -1070,15 +1083,9 @@ class MapEditor {
         const hexHeight = Math.sqrt(3) * size;
         const horizSpacing = hexWidth * 0.75;
         const vertSpacing = hexHeight;
-        const offsetY = (x % 2 === 1) ? hexHeight / 2 : 0;
-        
-        // Centro del hexágono origen
-        const cx = x * horizSpacing + size;
-        const cy = offsetY + y * vertSpacing + hexHeight / 2;
         
         const img = this.tileImages[tile.id];
         if (!img) {
-            // Fallback: dibujar hexágono con color
             this.drawHexTile(x, y, tile, cell);
             return;
         }
@@ -1086,21 +1093,25 @@ class MapEditor {
         // Obtener todas las celdas que ocupa este multi-tile
         const cells = this.getMultiTileCells(tile, x, y);
         
-        // Calcular el bounding box de todas las celdas
+        // Calcular centros de cada celda y el bounding box exacto
+        const cellCenters = [];
         let minPx = Infinity, maxPx = -Infinity;
         let minPy = Infinity, maxPy = -Infinity;
         
-        const cellCenters = cells.map(cell => {
+        cells.forEach(cell => {
             const cellOffsetY = (cell.x % 2 === 1) ? hexHeight / 2 : 0;
             const cellCx = cell.x * horizSpacing + size;
             const cellCy = cellOffsetY + cell.y * vertSpacing + hexHeight / 2;
             
+            cellCenters.push({ cx: cellCx, cy: cellCy });
+            
+            // Para flat-top, los extremos del hexágono son:
+            // - Horizontal: cx ± size (radio)
+            // - Vertical: cy ± hexHeight/2
             minPx = Math.min(minPx, cellCx - size);
             maxPx = Math.max(maxPx, cellCx + size);
             minPy = Math.min(minPy, cellCy - hexHeight / 2);
             maxPy = Math.max(maxPy, cellCy + hexHeight / 2);
-            
-            return { cx: cellCx, cy: cellCy };
         });
         
         this.ctx.save();
@@ -1108,45 +1119,41 @@ class MapEditor {
         // Crear path de clip con todos los hexágonos (flat-top)
         this.ctx.beginPath();
         cellCenters.forEach(center => {
-            this.ctx.moveTo(
-                center.cx + size * Math.cos(0), 
-                center.cy + size * Math.sin(0)
-            );
-            for (let i = 1; i < 6; i++) {
+            this.ctx.moveTo(center.cx + size, center.cy);
+            for (let i = 1; i <= 6; i++) {
                 const angle = (Math.PI / 3) * i;
                 this.ctx.lineTo(
                     center.cx + size * Math.cos(angle), 
                     center.cy + size * Math.sin(angle)
                 );
             }
-            this.ctx.closePath();
         });
         this.ctx.clip();
         
-        // Calcular dimensiones del área a cubrir
+        // Dimensiones del área combinada
         const areaWidth = maxPx - minPx;
         const areaHeight = maxPy - minPy;
-        
-        // Calcular el centro del área
         const areaCx = (minPx + maxPx) / 2;
         const areaCy = (minPy + maxPy) / 2;
         
-        // Calcular el tamaño de la imagen manteniendo aspect ratio
+        // Escalar imagen para cubrir toda el área (cover, no contain)
         const imgAspect = img.width / img.height;
         const areaAspect = areaWidth / areaHeight;
         
         let drawWidth, drawHeight;
+        
+        // Usar "cover" - la imagen cubre todo el área, puede recortarse
         if (imgAspect > areaAspect) {
-            // Imagen más ancha, ajustar por altura
-            drawHeight = areaHeight * 1.1; // 10% extra para cubrir bien
+            // Imagen más ancha que el área - ajustar por altura
+            drawHeight = areaHeight;
             drawWidth = drawHeight * imgAspect;
         } else {
-            // Imagen más alta, ajustar por ancho
-            drawWidth = areaWidth * 1.1;
+            // Imagen más alta que el área - ajustar por ancho
+            drawWidth = areaWidth;
             drawHeight = drawWidth / imgAspect;
         }
         
-        // Dibujar imagen centrada en el área
+        // Dibujar imagen centrada
         this.ctx.drawImage(
             img, 
             areaCx - drawWidth / 2, 
@@ -1157,19 +1164,19 @@ class MapEditor {
         
         this.ctx.restore();
         
-        // Dibujar bordes de los hexágonos para mayor definición (flat-top)
-        this.ctx.strokeStyle = 'rgba(0,0,0,0.2)';
-        this.ctx.lineWidth = 1;
+        // Bordes sutiles
+        this.ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+        this.ctx.lineWidth = 0.5;
         cellCenters.forEach(center => {
             this.ctx.beginPath();
-            for (let i = 0; i < 6; i++) {
+            this.ctx.moveTo(center.cx + size, center.cy);
+            for (let i = 1; i <= 6; i++) {
                 const angle = (Math.PI / 3) * i;
-                const hx = center.cx + size * Math.cos(angle);
-                const hy = center.cy + size * Math.sin(angle);
-                if (i === 0) this.ctx.moveTo(hx, hy);
-                else this.ctx.lineTo(hx, hy);
+                this.ctx.lineTo(
+                    center.cx + size * Math.cos(angle), 
+                    center.cy + size * Math.sin(angle)
+                );
             }
-            this.ctx.closePath();
             this.ctx.stroke();
         });
     }
