@@ -1,0 +1,350 @@
+{
+  "description": "Grupos de tiles BattleTech - tiles que van juntos",
+  "groups": {
+    "12": {
+      "name": "Llanura Mega",
+      "shape": "mega7",
+      "category": "terrain",
+      "tiles": ["12_0", "12_1", "12_2", "12_3", "12_4", "12_5", "12_6"],
+      "offsets": [
+        [0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]
+      ]
+    },
+    "13": {
+      "name": "Bosque 1",
+      "shape": "v2",
+      "category": "woods",
+      "tiles": ["13_0", "13_1"],
+      "offsets": [[0, 0], [0, 1]]
+    },
+    "14": {
+      "name": "Bosque 2", 
+      "shape": "v2",
+      "category": "woods",
+      "tiles": ["14_0", "14_1"],
+      "offsets": [[0, 0], [0, 1]]
+    },
+    "15": {
+      "name": "Bosque Denso 1",
+      "shape": "v3",
+      "category": "woods_heavy",
+      "tiles": ["15_0", "15_1", "15_2"],
+      "offsets": [[0, 0], [0, 1], [0, 2]]
+    },
+    "16": {
+      "name": "Bosque 3",
+      "shape": "left2",
+      "category": "woods",
+      "tiles": ["16_0", "16_1", "16_2"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1]]
+    },
+    "17": {
+      "name": "Bosque Denso 2",
+      "shape": "h2v2",
+      "category": "woods_heavy",
+      "tiles": ["17_0", "17_1", "17_2", "17_3"],
+      "offsets": [[0, 0], [0, 1], [-1, 0], [-1, 1]]
+    },
+    "18": {
+      "name": "Bosque Denso 3",
+      "shape": "col3_col2",
+      "category": "woods_heavy",
+      "tiles": ["18_0", "18_1", "18_2", "18_3", "18_4"],
+      "offsets": [[0, 0], [0, 1], [0, 2], [-1, 0], [-1, 1]]
+    },
+    "19": {
+      "name": "Bosque 4",
+      "shape": "mega7",
+      "category": "woods",
+      "tiles": ["19_0", "19_1", "19_2", "19_3", "19_4", "19_5", "19_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "20": {
+      "name": "Bosque 5",
+      "shape": "mega7",
+      "category": "woods",
+      "tiles": ["20_0", "20_1", "20_2", "20_3", "20_4", "20_5", "20_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "21": {
+      "name": "Bosque Denso 4",
+      "shape": "mega9",
+      "category": "woods_heavy",
+      "tiles": ["21_0", "21_1", "21_2", "21_3", "21_4", "21_5", "21_6", "21_7", "21_8"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1], [-1, -1], [1, -1]]
+    },
+    "22": {
+      "name": "Lago 1",
+      "shape": "diag_br",
+      "category": "water",
+      "tiles": ["22_0", "22_1"],
+      "offsets": [[0, 0], [1, 1]]
+    },
+    "23": {
+      "name": "Lago 2",
+      "shape": "right2",
+      "category": "water",
+      "tiles": ["23_0", "23_1", "23_2"],
+      "offsets": [[0, 0], [1, 0], [1, 1]]
+    },
+    "24": {
+      "name": "Lago 3",
+      "shape": "mega7",
+      "category": "water",
+      "tiles": ["24_0", "24_1", "24_2", "24_3", "24_4", "24_5", "24_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "25": {
+      "name": "Lago 4",
+      "shape": "mega7",
+      "category": "water",
+      "tiles": ["25_0", "25_1", "25_2", "25_3", "25_4", "25_5", "25_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "31": {
+      "name": "Río 5",
+      "shape": "diag_br",
+      "category": "water",
+      "tiles": ["31_0", "31_1"],
+      "offsets": [[0, 0], [1, 1]]
+    },
+    "32": {
+      "name": "Río 6",
+      "shape": "diag_br",
+      "category": "water",
+      "tiles": ["32_0", "32_1"],
+      "offsets": [[0, 0], [1, 1]]
+    },
+    "33": {
+      "name": "Río 7",
+      "shape": "diag3",
+      "category": "water",
+      "tiles": ["33_0", "33_1", "33_2"],
+      "offsets": [[0, 0], [1, 0], [1, 1]]
+    },
+    "34": {
+      "name": "Río 8",
+      "shape": "v2_topright",
+      "category": "water",
+      "tiles": ["34_0", "34_1", "34_2"],
+      "offsets": [[0, 0], [0, 1], [1, 0]]
+    },
+    "35": {
+      "name": "Río 9",
+      "shape": "left2",
+      "category": "water",
+      "tiles": ["35_0", "35_1", "35_2"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1]]
+    },
+    "36": {
+      "name": "Río 10",
+      "shape": "right2",
+      "category": "water",
+      "tiles": ["36_0", "36_1", "36_2"],
+      "offsets": [[0, 0], [1, 0], [1, 1]]
+    },
+    "37": {
+      "name": "Río 11",
+      "shape": "h2v2",
+      "category": "water",
+      "tiles": ["37_0", "37_1", "37_2", "37_3"],
+      "offsets": [[0, 0], [0, 1], [1, 0], [1, 1]]
+    },
+    "38": {
+      "name": "Río Largo 1",
+      "shape": "v4",
+      "category": "water",
+      "tiles": ["38_0", "38_1", "38_2", "38_3"],
+      "offsets": [[0, 0], [0, 1], [0, 2], [0, 3]]
+    },
+    "39": {
+      "name": "Río Largo 2",
+      "shape": "v4",
+      "category": "water",
+      "tiles": ["39_0", "39_1", "39_2", "39_3"],
+      "offsets": [[0, 0], [0, 1], [0, 2], [0, 3]]
+    },
+    "46": {
+      "name": "Edificio Medio 1",
+      "shape": "v2",
+      "category": "urban",
+      "tiles": ["46_0", "46_1"],
+      "offsets": [[0, 0], [0, 1]]
+    },
+    "47": {
+      "name": "Edificio Medio 2",
+      "shape": "diag_br",
+      "category": "urban",
+      "tiles": ["47_0", "47_1"],
+      "offsets": [[0, 0], [1, 1]]
+    },
+    "48": {
+      "name": "Edificio Medio 3",
+      "shape": "diag_br",
+      "category": "urban",
+      "tiles": ["48_0", "48_1"],
+      "offsets": [[0, 0], [1, 1]]
+    },
+    "49": {
+      "name": "Edificio Medio 4",
+      "shape": "diag_br",
+      "category": "urban",
+      "tiles": ["49_0", "49_1"],
+      "offsets": [[0, 0], [1, 1]]
+    },
+    "50": {
+      "name": "Edificio Medio 5",
+      "shape": "left2",
+      "category": "urban",
+      "tiles": ["50_0", "50_1", "50_2"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1]]
+    },
+    "51": {
+      "name": "Edificio Grande 1",
+      "shape": "cross4",
+      "category": "urban",
+      "tiles": ["51_0", "51_1", "51_2", "51_3"],
+      "offsets": [[0, 0], [0, 1], [-1, 0], [1, 0]]
+    },
+    "52": {
+      "name": "Edificio Grande 2",
+      "shape": "mega7",
+      "category": "urban",
+      "tiles": ["52_0", "52_1", "52_2", "52_3", "52_4", "52_5", "52_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "53": {
+      "name": "Edificio Grande 3",
+      "shape": "mega7",
+      "category": "urban",
+      "tiles": ["53_0", "53_1", "53_2", "53_3", "53_4", "53_5", "53_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "54": {
+      "name": "Edificio Grande 4",
+      "shape": "mega7",
+      "category": "urban",
+      "tiles": ["54_0", "54_1", "54_2", "54_3", "54_4", "54_5", "54_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "55": {
+      "name": "Edificio Grande 5",
+      "shape": "mega7",
+      "category": "urban",
+      "tiles": ["55_0", "55_1", "55_2", "55_3", "55_4", "55_5", "55_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "56": {
+      "name": "Edificio Grande 6",
+      "shape": "mega7",
+      "category": "urban",
+      "tiles": ["56_0", "56_1", "56_2", "56_3", "56_4", "56_5", "56_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    },
+    "57": {
+      "name": "Edificio Grande 7",
+      "shape": "mega7",
+      "category": "urban",
+      "tiles": ["57_0", "57_1", "57_2", "57_3", "57_4", "57_5", "57_6"],
+      "offsets": [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]]
+    }
+  },
+  "singles": {
+    "11": { "name": "Llanura", "category": "terrain" },
+    "27": { "name": "Río 1", "category": "water" },
+    "28": { "name": "Río 2", "category": "water" },
+    "29": { "name": "Río 3", "category": "water" },
+    "30": { "name": "Río 4", "category": "water" },
+    "40": { "name": "Edificio 1", "category": "urban" },
+    "41": { "name": "Edificio 2", "category": "urban" },
+    "42": { "name": "Edificio 3", "category": "urban" },
+    "43": { "name": "Edificio 4", "category": "urban" },
+    "44": { "name": "Edificio 5", "category": "urban" },
+    "45": { "name": "Búnker", "category": "urban" },
+    "59": { "name": "Rocoso", "category": "rough" },
+    "60": { "name": "Terreno Difícil", "category": "rough" },
+    "61": { "name": "Rough 1", "category": "rough" },
+    "62": { "name": "Rough 2", "category": "rough" },
+    "63": { "name": "Rough 3", "category": "rough" },
+    "64": { "name": "Rough 4", "category": "rough" },
+    "65": { "name": "Rough 5", "category": "rough" },
+    "66": { "name": "Rough 6", "category": "rough" },
+    "67": { "name": "Escombros 1", "category": "rubble" },
+    "68": { "name": "Escombros 2", "category": "rubble" },
+    "69": { "name": "Escombros LR 1", "category": "rubble" },
+    "70": { "name": "Escombros LR 2", "category": "rubble" },
+    "71": { "name": "Minas Vibra", "category": "hazards" },
+    "72": { "name": "Minas Detonación", "category": "hazards" },
+    "73": { "name": "Minas Convencional", "category": "hazards" },
+    "74": { "name": "Humo", "category": "hazards" }
+  },
+  "terrainRules": {
+    "clear": {
+      "mpCost": 1,
+      "toHitMod": 0,
+      "blocksLOS": false,
+      "description": "Terreno despejado"
+    },
+    "woods": {
+      "mpCost": 2,
+      "toHitMod": 1,
+      "blocksLOS": false,
+      "partialCover": true,
+      "description": "Bosque ligero - +1 to-hit, cobertura parcial"
+    },
+    "woods_heavy": {
+      "mpCost": 3,
+      "toHitMod": 2,
+      "blocksLOS": true,
+      "description": "Bosque denso - +2 to-hit, bloquea LOS"
+    },
+    "water_depth0": {
+      "mpCost": 1,
+      "toHitMod": 0,
+      "description": "Agua nivel 0 (vado)"
+    },
+    "water_depth1": {
+      "mpCost": 2,
+      "toHitMod": 0,
+      "heatSink": 2,
+      "description": "Agua nivel 1 - disipa 2 calor extra"
+    },
+    "water_depth2": {
+      "mpCost": 4,
+      "toHitMod": 0,
+      "heatSink": 4,
+      "description": "Agua nivel 2 - disipa 4 calor extra"
+    },
+    "rough": {
+      "mpCost": 2,
+      "toHitMod": 0,
+      "pilotingMod": 1,
+      "description": "Terreno difícil - +1 piloting"
+    },
+    "rubble": {
+      "mpCost": 2,
+      "toHitMod": 1,
+      "pilotingMod": 1,
+      "description": "Escombros - +1 to-hit, +1 piloting"
+    },
+    "urban": {
+      "mpCost": 999,
+      "toHitMod": 0,
+      "blocksLOS": true,
+      "cfValue": 15,
+      "description": "Edificio - bloquea movimiento y LOS"
+    },
+    "hazards": {
+      "mpCost": 1,
+      "special": true,
+      "description": "Peligros especiales (minas, humo, etc)"
+    }
+  },
+  "elevationRules": {
+    "description": "Cambio de elevación afecta movimiento y combate",
+    "mpPerLevel": 1,
+    "jumpRequired": 2,
+    "losBlocked": 2,
+    "toHitPerLevel": 1
+  }
+}

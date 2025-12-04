@@ -1251,7 +1251,7 @@ class MapEditor {
         }
     }
     
-    drawHexTile(x, y, tile) {
+    drawHexTile(x, y, tile, cell = null) {
         // Hexágonos flat-top (lado plano arriba) - igual que display/renderer.js
         const size = this.tileSize / 2; // Radio del hexágono
         
@@ -1269,6 +1269,9 @@ class MapEditor {
         const cx = x * horizSpacing + size;
         const cy = offsetY + y * vertSpacing + hexHeight / 2;
         const radius = size;
+        
+        // Obtener elevación del cell (si existe)
+        const elevation = cell?.elevation || 0;
         
         // Si hay imagen, dibujarla dentro del hexágono (carga lazy)
         const img = this.getTileImage(tile.id);
@@ -1310,6 +1313,11 @@ class MapEditor {
             this.ctx.strokeStyle = 'rgba(0,0,0,0.3)';
             this.ctx.lineWidth = 1;
             this.ctx.stroke();
+            
+            // Mostrar elevación si es BattleTech y mayor a 0
+            if (this.systemId === 'battletech' && elevation > 0) {
+                this.drawElevationIndicator(cx, cy, radius, elevation);
+            }
             return;
         }
         
@@ -1729,12 +1737,24 @@ class MapEditor {
     }
     
     drawElevationIndicator(cx, cy, radius, elevation) {
-        // Pequeño indicador de nivel en esquina
-        this.ctx.fillStyle = 'rgba(0,0,0,0.6)';
-        this.ctx.font = `bold ${this.tileSize * 0.2}px Arial`;
+        // Número de elevación grande y visible en el centro del hex
+        const fontSize = Math.max(10, this.tileSize * 0.35);
+        
+        // Fondo semitransparente para mejor legibilidad
+        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        this.ctx.beginPath();
+        this.ctx.arc(cx, cy, fontSize * 0.7, 0, Math.PI * 2);
+        this.ctx.fill();
+        
+        // Texto de elevación
+        this.ctx.font = `bold ${fontSize}px Arial`;
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
-        this.ctx.fillText(`+${elevation}`, cx + radius * 0.5, cy - radius * 0.5);
+        
+        // Color según elevación
+        const colors = ['#fff', '#90caf9', '#64b5f6', '#42a5f5', '#1e88e5'];
+        this.ctx.fillStyle = colors[Math.min(elevation, 4)] || '#fff';
+        this.ctx.fillText(elevation.toString(), cx, cy);
     }
     
     drawCoverIndicator(cx, cy, radius, coverType) {
@@ -2004,6 +2024,12 @@ class MapEditor {
     }
     
     generateLocalMap(width, height, type) {
+        // Si es BattleTech, usar el generador especializado
+        if (this.systemId === 'battletech' && type.startsWith('bt_')) {
+            this.generateBattleTechMap(width, height, type);
+            return;
+        }
+        
         // Determinar tile base según sistema
         const baseTile = this.systemId === 'battletech' ? 'bt_11' : 'grass';
         this.createNewMap(width, height, baseTile);
@@ -2021,26 +2047,31 @@ class MapEditor {
             case 'town':
                 this.generateTown();
                 break;
-            // === BattleTech Maps ===
-            case 'bt_grasslands':
-                this.generateBTGrasslands();
-                break;
-            case 'bt_forest':
-                this.generateBTForest();
-                break;
-            case 'bt_city':
-                this.generateBTCity();
-                break;
-            case 'bt_river':
-                this.generateBTRiver();
-                break;
-            case 'bt_ruins':
-                this.generateBTRuins();
-                break;
-            case 'bt_desert':
-                this.generateBTDesert();
-                break;
         }
+        
+        this.render();
+    }
+    
+    /**
+     * Genera un mapa de BattleTech usando el generador especializado
+     */
+    generateBattleTechMap(width, height, type) {
+        console.log(`🎮 Generando mapa BattleTech: ${width}x${height} tipo: ${type}`);
+        
+        // Crear o reusar el generador
+        if (!this.btGenerator) {
+            this.btGenerator = new BattleTechMapGenerator(this);
+        }
+        
+        // Generar el mapa
+        const mapData = this.btGenerator.generate(width, height, type);
+        
+        // Aplicar al editor
+        this.mapWidth = mapData.width;
+        this.mapHeight = mapData.height;
+        this.currentMap = mapData;
+        
+        console.log('📊 Mapa generado:', mapData);
         
         this.render();
     }
@@ -2738,6 +2769,7 @@ function updateMapTypeSelector(systemId) {
             { value: 'bt_river', label: '🌊 Río' },
             { value: 'bt_ruins', label: '💥 Ruinas' },
             { value: 'bt_desert', label: '🏜️ Desierto' },
+            { value: 'bt_mountains', label: '⛰️ Montañas' },
         ],
         default: [
             { value: 'dungeon', label: '🏰 Mazmorra' },
