@@ -875,54 +875,40 @@ class MapEditor {
                 break;
             
             case 'bosque_denso3': // 5 hex: 3 columna izq + 2 columna der
-                // Columna izquierda (3 hexes) - es la más alta
-                // El centro está en la columna derecha (x), añadimos los de la izquierda
+                // Columna izquierda tiene 3 hexes, columna derecha (donde está el centro) tiene 2
+                // La columna izquierda es la más alta
+                
+                // Usamos neighbors que ya manejan la paridad correctamente
                 cells.push(neighbors[0]); // arriba-izq
-                cells.push(neighbors[1]); // abajo-izq
-                // El tercer hex de la columna izquierda (más abajo)
-                if (isOddCol) {
-                    // x impar -> x-1 par
-                    cells.push({ x: x - 1, y: y + 1 }); // abajo del abajo-izq
-                } else {
-                    // x par -> x-1 impar  
-                    cells.push({ x: x - 1, y: y + 1 }); // el tercero abajo
-                }
+                cells.push(neighbors[1]); // medio-izq (abajo-izq del centro)
+                
+                // El tercer hex de la columna izquierda (debajo de neighbors[1])
+                const n1 = neighbors[1];
+                cells.push({ x: n1.x, y: n1.y + 1 }); // abajo del abajo-izq
+                
                 // Centro abajo (segunda de la columna derecha)
                 cells.push({ x, y: y + 1 });
                 break;
             
             case 'bosque_denso4': // 9 hex: 3 columnas x 3 filas, centro más alto
                 // El centro clickeado es el hex central de la columna del medio
-                // Columna centro (x): centro + arriba + abajo
+                // Usamos neighbors que ya manejan la paridad correctamente
+                
+                // Columna centro (x): arriba y abajo del centro
                 cells.push({ x, y: y - 1 }); // arriba
                 cells.push({ x, y: y + 1 }); // abajo
                 
-                // Columna izquierda (x-1): 3 hexes
-                // En flat-top, al moverse a columna adyacente hay offset según paridad
-                if (isOddCol) {
-                    // x impar, x-1 es par (más arriba visualmente)
-                    cells.push({ x: x - 1, y: y - 1 }); // arriba-izq
-                    cells.push({ x: x - 1, y: y });     // medio-izq (alineado con centro)
-                    cells.push({ x: x - 1, y: y + 1 }); // abajo-izq
-                } else {
-                    // x par, x-1 es impar (más abajo visualmente)
-                    cells.push({ x: x - 1, y: y });     // arriba-izq (alineado con y-1 del centro)
-                    cells.push({ x: x - 1, y: y + 1 }); // medio-izq (alineado con centro)
-                    cells.push({ x: x - 1, y: y + 2 }); // abajo-izq
-                }
+                // Columna izquierda: usamos neighbors[0] (arriba-izq) como referencia
+                const leftTop = neighbors[0]; // arriba-izq
+                cells.push(leftTop);
+                cells.push({ x: leftTop.x, y: leftTop.y + 1 }); // medio-izq
+                cells.push({ x: leftTop.x, y: leftTop.y + 2 }); // abajo-izq
                 
-                // Columna derecha (x+1): 3 hexes
-                if (isOddCol) {
-                    // x impar, x+1 es par
-                    cells.push({ x: x + 1, y: y - 1 }); // arriba-der
-                    cells.push({ x: x + 1, y: y });     // medio-der
-                    cells.push({ x: x + 1, y: y + 1 }); // abajo-der
-                } else {
-                    // x par, x+1 es impar
-                    cells.push({ x: x + 1, y: y });     // arriba-der
-                    cells.push({ x: x + 1, y: y + 1 }); // medio-der
-                    cells.push({ x: x + 1, y: y + 2 }); // abajo-der
-                }
+                // Columna derecha: usamos neighbors[4] (arriba-der) como referencia  
+                const rightTop = neighbors[4]; // arriba-der
+                cells.push(rightTop);
+                cells.push({ x: rightTop.x, y: rightTop.y + 1 }); // medio-der
+                cells.push({ x: rightTop.x, y: rightTop.y + 2 }); // abajo-der
                 break;
                 
             default:
