@@ -1881,7 +1881,9 @@ class MapEditor {
     }
     
     generateLocalMap(width, height, type) {
-        this.createNewMap(width, height, 'grass');
+        // Determinar tile base según sistema
+        const baseTile = this.systemId === 'battletech' ? 'bt_11' : 'grass';
+        this.createNewMap(width, height, baseTile);
         
         switch (type) {
             case 'dungeon':
@@ -1895,6 +1897,25 @@ class MapEditor {
                 break;
             case 'town':
                 this.generateTown();
+                break;
+            // === BattleTech Maps ===
+            case 'bt_grasslands':
+                this.generateBTGrasslands();
+                break;
+            case 'bt_forest':
+                this.generateBTForest();
+                break;
+            case 'bt_city':
+                this.generateBTCity();
+                break;
+            case 'bt_river':
+                this.generateBTRiver();
+                break;
+            case 'bt_ruins':
+                this.generateBTRuins();
+                break;
+            case 'bt_desert':
+                this.generateBTDesert();
                 break;
         }
         
@@ -2172,6 +2193,302 @@ class MapEditor {
                 objLayer[doorY][doorX] = { tileId: 'door_wood' };
             }
         });
+    }
+    
+    // === BattleTech Map Generators ===
+    
+    /**
+     * Helper: obtiene un tile aleatorio de un grupo
+     */
+    getRandomBTTile(group) {
+        const tiles = Object.keys(this.tiles).filter(id => {
+            const tile = this.tiles[id];
+            return tile.group === group || id.startsWith(`bt_${group}`);
+        });
+        if (tiles.length === 0) return `bt_${group}`;
+        return tiles[Math.floor(Math.random() * tiles.length)];
+    }
+    
+    /**
+     * Grasslands - Llanuras con bosques dispersos
+     */
+    generateBTGrasslands() {
+        const layer = this.currentMap.layers.terrain;
+        
+        // Base de llanura
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                layer[y][x] = { tileId: 'bt_11' }; // Llanura
+            }
+        }
+        
+        // Clusters de bosques (15% del mapa)
+        const numClusters = Math.floor((this.mapWidth * this.mapHeight) * 0.03);
+        for (let i = 0; i < numClusters; i++) {
+            const cx = Math.floor(Math.random() * this.mapWidth);
+            const cy = Math.floor(Math.random() * this.mapHeight);
+            const size = 2 + Math.floor(Math.random() * 3);
+            
+            this.placeBTCluster(layer, cx, cy, size, ['13', '14', '16', '19', '20']);
+        }
+        
+        // Algunos bosques densos (5%)
+        const numDense = Math.floor((this.mapWidth * this.mapHeight) * 0.01);
+        for (let i = 0; i < numDense; i++) {
+            const x = Math.floor(Math.random() * this.mapWidth);
+            const y = Math.floor(Math.random() * this.mapHeight);
+            if (this.isValidCoord(x, y)) {
+                layer[y][x] = { tileId: this.getRandomBTTile('15') };
+            }
+        }
+        
+        // Terreno rocoso disperso
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                if (layer[y][x].tileId === 'bt_11' && Math.random() < 0.03) {
+                    layer[y][x] = { tileId: this.getRandomBTTile('59') };
+                }
+            }
+        }
+    }
+    
+    /**
+     * Forest - Bosque denso con claros
+     */
+    generateBTForest() {
+        const layer = this.currentMap.layers.terrain;
+        
+        // Todo bosque denso primero
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                const r = Math.random();
+                if (r < 0.4) {
+                    layer[y][x] = { tileId: this.getRandomBTTile('15') }; // Denso
+                } else if (r < 0.8) {
+                    layer[y][x] = { tileId: this.getRandomBTTile('13') }; // Normal
+                } else {
+                    layer[y][x] = { tileId: 'bt_11' }; // Claro
+                }
+            }
+        }
+        
+        // Crear algunos claros grandes
+        const numClearings = 2 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < numClearings; i++) {
+            const cx = Math.floor(Math.random() * this.mapWidth);
+            const cy = Math.floor(Math.random() * this.mapHeight);
+            const size = 2 + Math.floor(Math.random() * 2);
+            
+            this.placeBTCluster(layer, cx, cy, size, ['11']);
+        }
+        
+        // Un pequeño lago o arroyo
+        if (Math.random() < 0.5) {
+            const lx = Math.floor(Math.random() * (this.mapWidth - 4)) + 2;
+            const ly = Math.floor(Math.random() * (this.mapHeight - 4)) + 2;
+            this.placeBTCluster(layer, lx, ly, 2, ['27', '28', '29', '30']);
+        }
+    }
+    
+    /**
+     * City - Ciudad con edificios y calles
+     */
+    generateBTCity() {
+        const layer = this.currentMap.layers.terrain;
+        
+        // Base de llanura (calles)
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                layer[y][x] = { tileId: 'bt_11' };
+            }
+        }
+        
+        // Crear grid de edificios
+        const blockSize = 4;
+        const streetWidth = 1;
+        
+        for (let by = 0; by < Math.floor(this.mapHeight / (blockSize + streetWidth)); by++) {
+            for (let bx = 0; bx < Math.floor(this.mapWidth / (blockSize + streetWidth)); bx++) {
+                const startX = bx * (blockSize + streetWidth);
+                const startY = by * (blockSize + streetWidth);
+                
+                // Decidir tipo de edificio
+                const r = Math.random();
+                let buildingTiles;
+                if (r < 0.3) {
+                    buildingTiles = ['40', '41', '42', '43', '44']; // Pequeños
+                } else if (r < 0.6) {
+                    buildingTiles = ['46', '47', '48', '49', '50']; // Medianos
+                } else if (r < 0.85) {
+                    buildingTiles = ['52', '53', '54', '55', '56', '57']; // Grandes
+                } else {
+                    buildingTiles = ['45']; // Búnker
+                }
+                
+                // Llenar el bloque
+                for (let dy = 0; dy < blockSize - 1; dy++) {
+                    for (let dx = 0; dx < blockSize - 1; dx++) {
+                        const x = startX + dx;
+                        const y = startY + dy;
+                        if (this.isValidCoord(x, y)) {
+                            const tile = buildingTiles[Math.floor(Math.random() * buildingTiles.length)];
+                            layer[y][x] = { tileId: this.getRandomBTTile(tile) };
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Añadir escombros en algunas zonas
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                if (layer[y][x].tileId === 'bt_11' && Math.random() < 0.05) {
+                    layer[y][x] = { tileId: this.getRandomBTTile('67') };
+                }
+            }
+        }
+    }
+    
+    /**
+     * River - Río atravesando llanura
+     */
+    generateBTRiver() {
+        const layer = this.currentMap.layers.terrain;
+        
+        // Base de llanura
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                layer[y][x] = { tileId: 'bt_11' };
+            }
+        }
+        
+        // Río serpenteante de arriba a abajo
+        let riverX = Math.floor(this.mapWidth / 2);
+        const riverTiles = ['27', '28', '29', '30', '31', '32', '33', '34', '35', '36', '37'];
+        
+        for (let y = 0; y < this.mapHeight; y++) {
+            // Serpenteo
+            riverX += Math.floor(Math.random() * 3) - 1;
+            riverX = Math.max(2, Math.min(this.mapWidth - 3, riverX));
+            
+            // Colocar río (2-3 hexes de ancho)
+            for (let dx = -1; dx <= 1; dx++) {
+                const x = riverX + dx;
+                if (this.isValidCoord(x, y)) {
+                    const tile = riverTiles[Math.floor(Math.random() * riverTiles.length)];
+                    layer[y][x] = { tileId: this.getRandomBTTile(tile) };
+                }
+            }
+        }
+        
+        // Lagos en algunos puntos del río
+        if (Math.random() < 0.7) {
+            const lakeY = Math.floor(Math.random() * (this.mapHeight - 4)) + 2;
+            this.placeBTCluster(layer, riverX, lakeY, 3, ['22', '23', '24', '25']);
+        }
+        
+        // Bosques a los lados del río
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                if (layer[y][x].tileId === 'bt_11') {
+                    const distToRiver = Math.abs(x - riverX);
+                    if (distToRiver < 4 && Math.random() < 0.2) {
+                        layer[y][x] = { tileId: this.getRandomBTTile('13') };
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Ruins - Ruinas de batalla con escombros
+     */
+    generateBTRuins() {
+        const layer = this.currentMap.layers.terrain;
+        
+        // Base mixta
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                const r = Math.random();
+                if (r < 0.4) {
+                    layer[y][x] = { tileId: 'bt_11' }; // Llanura
+                } else if (r < 0.6) {
+                    layer[y][x] = { tileId: this.getRandomBTTile('67') }; // Escombros
+                } else if (r < 0.75) {
+                    layer[y][x] = { tileId: this.getRandomBTTile('59') }; // Rocoso
+                } else {
+                    // Edificios destruidos parcialmente
+                    layer[y][x] = { tileId: this.getRandomBTTile('40') };
+                }
+            }
+        }
+        
+        // Cráteres (usando rocoso)
+        const numCraters = 3 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < numCraters; i++) {
+            const cx = Math.floor(Math.random() * this.mapWidth);
+            const cy = Math.floor(Math.random() * this.mapHeight);
+            this.placeBTCluster(layer, cx, cy, 2, ['59', '60', '61', '62']);
+        }
+        
+        // Zonas de fuego/humo
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                if (Math.random() < 0.03) {
+                    layer[y][x] = { tileId: 'bt_74' }; // Humo
+                }
+            }
+        }
+    }
+    
+    /**
+     * Desert - Desierto rocoso
+     */
+    generateBTDesert() {
+        const layer = this.currentMap.layers.terrain;
+        
+        // Base de terreno rocoso/difícil
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                const r = Math.random();
+                if (r < 0.5) {
+                    layer[y][x] = { tileId: 'bt_11' }; // Arena (llanura)
+                } else if (r < 0.8) {
+                    layer[y][x] = { tileId: this.getRandomBTTile('59') }; // Rocoso
+                } else {
+                    layer[y][x] = { tileId: this.getRandomBTTile('61') }; // Rough
+                }
+            }
+        }
+        
+        // Formaciones rocosas
+        const numFormations = 4 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < numFormations; i++) {
+            const fx = Math.floor(Math.random() * this.mapWidth);
+            const fy = Math.floor(Math.random() * this.mapHeight);
+            this.placeBTCluster(layer, fx, fy, 2, ['59', '60', '61', '62', '63', '64']);
+        }
+    }
+    
+    /**
+     * Helper: coloca un cluster de tiles en hexágonos adyacentes
+     */
+    placeBTCluster(layer, centerX, centerY, radius, tileOptions) {
+        for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                const x = centerX + dx;
+                const y = centerY + dy;
+                
+                // Distancia aproximada en hex grid
+                const dist = Math.abs(dx) + Math.abs(dy);
+                if (dist <= radius && this.isValidCoord(x, y)) {
+                    if (Math.random() < 0.7) { // No todos para variedad
+                        const tile = tileOptions[Math.floor(Math.random() * tileOptions.length)];
+                        layer[y][x] = { tileId: this.getRandomBTTile(tile) };
+                    }
+                }
+            }
+        }
     }
     
     // === Proyección en Display ===
