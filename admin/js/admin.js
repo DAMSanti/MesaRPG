@@ -217,6 +217,11 @@ async function setGameSystem(systemId) {
             // Actualizar galería de tokens para el nuevo sistema
             renderTokenGallery();
             renderSheetsForToken();
+            
+            // Recargar editor de mapas con los tiles del nuevo sistema
+            if (typeof reloadMapEditor === 'function') {
+                reloadMapEditor();
+            }
         } else {
             alert('Error al cambiar el sistema de juego');
         }

@@ -1,725 +1,817 @@
 {
-  "version": "1.0",
   "system": "battletech",
+  "name": "BattleTech",
   "gridType": "hex",
-  "layerSystem": true,
-  "layers": {
-    "terrain": {
-      "name": "Terreno Base",
-      "order": 0,
-      "description": "Capa base del terreno"
-    },
-    "elevation": {
-      "name": "Elevación",
-      "order": 1,
-      "description": "Niveles de altura y colinas"
-    },
-    "features": {
-      "name": "Características",
-      "order": 2,
-      "description": "Árboles, rocas, edificios"
-    },
-    "effects": {
-      "name": "Efectos",
-      "order": 3,
-      "description": "Fuego, humo, agua corriente"
-    }
-  },
+  "hexSize": 84,
   "categories": {
-    "terrain_base": {
-      "name": "Terreno Base",
-      "icon": "🗺️",
-      "layer": "terrain"
-    },
-    "elevation": {
-      "name": "Elevación",
-      "icon": "⛰️",
-      "layer": "elevation"
+    "terrain": {
+      "name": "Terreno",
+      "icon": "🌿",
+      "color": "#4a7c23"
     },
     "woods": {
       "name": "Bosques",
       "icon": "🌲",
-      "layer": "features"
+      "color": "#2e7d32"
     },
     "water": {
       "name": "Agua",
       "icon": "💧",
-      "layer": "terrain"
+      "color": "#1976d2"
     },
-    "roads": {
-      "name": "Carreteras",
-      "icon": "🛣️",
-      "layer": "terrain"
-    },
-    "buildings": {
-      "name": "Edificios",
+    "urban": {
+      "name": "Urbano",
       "icon": "🏢",
-      "layer": "features"
+      "color": "#757575"
     },
-    "industrial": {
-      "name": "Industrial",
-      "icon": "🏭",
-      "layer": "features"
+    "rough": {
+      "name": "Rocoso",
+      "icon": "🪨",
+      "color": "#8d6e63"
     },
-    "fortifications": {
-      "name": "Fortificaciones",
-      "icon": "🏰",
-      "layer": "features"
+    "rubble": {
+      "name": "Escombros",
+      "icon": "🧱",
+      "color": "#a1887f"
     },
-    "special": {
-      "name": "Especiales",
-      "icon": "⚡",
-      "layer": "effects"
+    "hazards": {
+      "name": "Peligros",
+      "icon": "⚠️",
+      "color": "#f44336"
     }
   },
   "tiles": {
-    "clear": {
-      "id": "clear",
-      "name": "Terreno Despejado",
-      "category": "terrain_base",
-      "layer": "terrain",
-      "colors": {
-        "base": "#7cb342",
-        "variation1": "#8bc34a",
-        "variation2": "#689f38"
-      },
-      "pattern": "grass",
+    "tile_11": {
+      "id": "tile_11",
+      "name": "Llanura",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech/11.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/76.png",
       "movementCost": 1,
-      "toHitModifier": 0,
-      "providesCover": false,
-      "elevation": 0,
-      "description": "Terreno abierto sin obstáculos. Pradera o campo despejado."
+      "defenseBonus": 0,
+      "color": "#4a7c23",
+      "icon": "🌿"
     },
-    "rough": {
-      "id": "rough",
-      "name": "Terreno Irregular",
-      "category": "terrain_base",
-      "layer": "terrain",
-      "colors": {
-        "base": "#6d4c41",
-        "variation1": "#795548",
-        "variation2": "#5d4037"
-      },
-      "pattern": "rough",
+    "tile_12": {
+      "id": "tile_12",
+      "name": "Llanura (Mega)",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech/12.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/77.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "color": "#4a7c23",
+      "icon": "🌿",
+      "size": "mega"
+    },
+    "tile_13": {
+      "id": "tile_13",
+      "name": "Bosque 1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/13.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/78.png",
       "movementCost": 2,
-      "toHitModifier": 1,
-      "providesCover": false,
-      "elevation": 0,
-      "description": "Terreno rocoso e irregular. Piedras sueltas y terreno accidentado."
+      "defenseBonus": 1,
+      "color": "#2e7d32",
+      "icon": "🌲"
     },
-    "pavement": {
-      "id": "pavement",
-      "name": "Pavimento",
-      "category": "roads",
-      "layer": "terrain",
-      "colors": {
-        "base": "#546e7a",
-        "lines": "#90a4ae",
-        "cracks": "#37474f"
-      },
-      "pattern": "pavement",
-      "movementCost": 1,
-      "toHitModifier": 0,
-      "providesCover": false,
-      "elevation": 0,
-      "description": "Carretera o zona pavimentada. Superficie dura y lisa."
-    },
-    "road_dirt": {
-      "id": "road_dirt",
-      "name": "Camino de Tierra",
-      "category": "roads",
-      "layer": "terrain",
-      "colors": {
-        "base": "#a1887f",
-        "tracks": "#8d6e63",
-        "edges": "#6d4c41"
-      },
-      "pattern": "dirt_road",
-      "movementCost": 1,
-      "toHitModifier": 0,
-      "providesCover": false,
-      "elevation": 0,
-      "description": "Camino de tierra compactada con marcas de vehículos."
-    },
-    "sand": {
-      "id": "sand",
-      "name": "Arena/Desierto",
-      "category": "terrain_base",
-      "layer": "terrain",
-      "colors": {
-        "base": "#fff59d",
-        "dunes": "#ffee58",
-        "shadows": "#fdd835"
-      },
-      "pattern": "sand",
+    "tile_14": {
+      "id": "tile_14",
+      "name": "Bosque 2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/14.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/79.png",
       "movementCost": 2,
-      "toHitModifier": 0,
-      "providesCover": false,
-      "elevation": 0,
-      "description": "Terreno arenoso o desértico. Arena suelta que dificulta el movimiento."
+      "defenseBonus": 1,
+      "color": "#2e7d32",
+      "icon": "🌲"
     },
-    "mud": {
-      "id": "mud",
-      "name": "Barro",
-      "category": "terrain_base",
-      "layer": "terrain",
-      "colors": {
-        "base": "#5d4037",
-        "puddles": "#4e342e",
-        "dry": "#6d4c41"
-      },
-      "pattern": "mud",
+    "tile_15": {
+      "id": "tile_15",
+      "name": "Bosque Denso 1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/15.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/80.png",
       "movementCost": 3,
-      "toHitModifier": 0,
-      "providesCover": false,
-      "pilotingModifier": 1,
-      "elevation": 0,
-      "description": "Barro profundo. Muy difícil de atravesar, riesgo de atascarse."
+      "defenseBonus": 2,
+      "color": "#2e7d32",
+      "icon": "🌲",
+      "blocksLOS": true,
+      "blocksVision": true
     },
-    "snow": {
-      "id": "snow",
-      "name": "Nieve",
-      "category": "terrain_base",
-      "layer": "terrain",
-      "colors": {
-        "base": "#eceff1",
-        "shadows": "#b0bec5",
-        "ice": "#e3f2fd"
-      },
-      "pattern": "snow",
+    "tile_16": {
+      "id": "tile_16",
+      "name": "Bosque 3",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/16.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/81.png",
       "movementCost": 2,
-      "toHitModifier": 0,
-      "providesCover": false,
-      "pilotingModifier": 1,
-      "elevation": 0,
-      "description": "Terreno cubierto de nieve. Reduce tracción y visibilidad."
+      "defenseBonus": 1,
+      "color": "#2e7d32",
+      "icon": "🌲"
     },
-    "ice": {
-      "id": "ice",
-      "name": "Hielo",
-      "category": "terrain_base",
-      "layer": "terrain",
-      "colors": {
-        "base": "#b3e5fc",
-        "cracks": "#81d4fa",
-        "shine": "#e1f5fe"
-      },
-      "pattern": "ice",
-      "movementCost": 1,
-      "toHitModifier": 0,
-      "providesCover": false,
-      "pilotingModifier": 2,
-      "elevation": 0,
-      "description": "Superficie helada muy resbaladiza. Alto riesgo de caída."
+    "tile_17": {
+      "id": "tile_17",
+      "name": "Bosque Denso 2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/17.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/82.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "color": "#2e7d32",
+      "icon": "🌲",
+      "blocksLOS": true,
+      "blocksVision": true
     },
-    "water_shallow": {
-      "id": "water_shallow",
-      "name": "Agua Poco Profunda",
-      "category": "water",
-      "layer": "terrain",
-      "colors": {
-        "base": "#4fc3f7",
-        "ripples": "#81d4fa",
-        "bottom": "#29b6f6"
-      },
-      "pattern": "water",
-      "animated": true,
+    "tile_18": {
+      "id": "tile_18",
+      "name": "Bosque Denso 3",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/18.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/83.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "color": "#2e7d32",
+      "icon": "🌲",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_19": {
+      "id": "tile_19",
+      "name": "Bosque 4",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/19.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/84.png",
       "movementCost": 2,
-      "toHitModifier": 0,
-      "providesCover": false,
-      "depth": 1,
-      "heatDissipation": 2,
-      "elevation": -1,
-      "description": "Agua hasta la cintura de un Mech. Ayuda a disipar calor."
+      "defenseBonus": 1,
+      "color": "#2e7d32",
+      "icon": "🌲"
     },
-    "water_deep": {
-      "id": "water_deep",
-      "name": "Agua Profunda",
+    "tile_20": {
+      "id": "tile_20",
+      "name": "Bosque 5",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/20.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/85.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#2e7d32",
+      "icon": "🌲"
+    },
+    "tile_21": {
+      "id": "tile_21",
+      "name": "Bosque Denso 4",
+      "category": "woods",
+      "file": "/assets/tiles/battletech/21.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/86.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "color": "#2e7d32",
+      "icon": "🌲",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_22": {
+      "id": "tile_22",
+      "name": "Lago 1",
       "category": "water",
-      "layer": "terrain",
-      "colors": {
-        "base": "#0288d1",
-        "dark": "#01579b",
-        "surface": "#03a9f4"
-      },
-      "pattern": "deep_water",
-      "animated": true,
+      "file": "/assets/tiles/battletech/22.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/87.png",
       "movementCost": 4,
-      "toHitModifier": 0,
-      "providesCover": "partial",
-      "depth": 2,
-      "heatDissipation": 4,
-      "elevation": -2,
-      "description": "Agua profunda. Mechs parcialmente sumergidos, excelente disipación de calor."
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
     },
-    "swamp": {
-      "id": "swamp",
-      "name": "Pantano",
+    "tile_23": {
+      "id": "tile_23",
+      "name": "Lago 2",
       "category": "water",
-      "layer": "terrain",
-      "colors": {
-        "base": "#558b2f",
-        "water": "#33691e",
-        "vegetation": "#689f38"
-      },
-      "pattern": "swamp",
+      "file": "/assets/tiles/battletech/23.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/88.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_24": {
+      "id": "tile_24",
+      "name": "Lago 3",
+      "category": "water",
+      "file": "/assets/tiles/battletech/24.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/89.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_25": {
+      "id": "tile_25",
+      "name": "Lago 4",
+      "category": "water",
+      "file": "/assets/tiles/battletech/25.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/90.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_26": {
+      "id": "tile_26",
+      "name": "Lago Grande",
+      "category": "water",
+      "file": "/assets/tiles/battletech/26.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/91.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧",
+      "size": "large"
+    },
+    "tile_27": {
+      "id": "tile_27",
+      "name": "Río 1",
+      "category": "water",
+      "file": "/assets/tiles/battletech/27.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/92.png",
       "movementCost": 3,
-      "toHitModifier": 1,
-      "providesCover": false,
-      "pilotingModifier": 2,
-      "depth": 1,
-      "elevation": 0,
-      "description": "Terreno pantanoso con vegetación. Muy difícil de atravesar."
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
     },
-    "level_1": {
-      "id": "level_1",
-      "name": "Elevación Nivel 1",
-      "category": "elevation",
-      "layer": "elevation",
-      "colors": {
-        "base": "#a5d6a7",
-        "contour": "#81c784",
-        "shadow": "#66bb6a"
-      },
-      "pattern": "contour",
-      "stackable": true,
-      "movementCost": 0,
-      "toHitModifier": 0,
-      "elevation": 1,
-      "elevationChange": true,
-      "description": "Colina o elevación de 1 nivel. Proporciona ventaja de altura."
-    },
-    "level_2": {
-      "id": "level_2",
-      "name": "Elevación Nivel 2",
-      "category": "elevation",
-      "layer": "elevation",
-      "colors": {
-        "base": "#81c784",
-        "contour": "#66bb6a",
-        "shadow": "#4caf50"
-      },
-      "pattern": "contour",
-      "stackable": true,
-      "movementCost": 0,
-      "toHitModifier": 0,
-      "elevation": 2,
-      "elevationChange": true,
-      "description": "Colina o elevación de 2 niveles."
-    },
-    "level_3": {
-      "id": "level_3",
-      "name": "Elevación Nivel 3",
-      "category": "elevation",
-      "layer": "elevation",
-      "colors": {
-        "base": "#66bb6a",
-        "contour": "#4caf50",
-        "shadow": "#43a047"
-      },
-      "pattern": "contour",
-      "stackable": true,
-      "movementCost": 0,
-      "toHitModifier": 0,
-      "elevation": 3,
-      "elevationChange": true,
-      "description": "Colina o elevación de 3 niveles."
-    },
-    "cliff": {
-      "id": "cliff",
-      "name": "Acantilado",
-      "category": "elevation",
-      "layer": "elevation",
-      "colors": {
-        "base": "#78909c",
-        "face": "#546e7a",
-        "top": "#90a4ae"
-      },
-      "pattern": "cliff",
-      "movementCost": 999,
-      "toHitModifier": 0,
-      "blocksMovement": true,
-      "elevation": 3,
-      "description": "Pared vertical infranqueable. Bloquea movimiento y línea de visión."
-    },
-    "woods_light": {
-      "id": "woods_light",
-      "name": "Bosque Ligero",
-      "category": "woods",
-      "layer": "features",
-      "colors": {
-        "trees": "#2e7d32",
-        "shadows": "#1b5e20",
-        "canopy": "#43a047"
-      },
-      "pattern": "scattered_trees",
-      "stackable": true,
-      "movementCost": 1,
-      "toHitModifier": 1,
-      "providesCover": "light",
-      "blocksLOS": false,
-      "description": "Árboles dispersos. Proporciona cobertura ligera (+1 al impacto)."
-    },
-    "woods_heavy": {
-      "id": "woods_heavy",
-      "name": "Bosque Denso",
-      "category": "woods",
-      "layer": "features",
-      "colors": {
-        "trees": "#1b5e20",
-        "shadows": "#0d3310",
-        "canopy": "#2e7d32"
-      },
-      "pattern": "dense_trees",
-      "stackable": true,
-      "movementCost": 2,
-      "toHitModifier": 2,
-      "providesCover": "heavy",
-      "blocksLOS": true,
-      "description": "Bosque denso. Cobertura pesada (+2 al impacto), bloquea línea de visión."
-    },
-    "jungle": {
-      "id": "jungle",
-      "name": "Jungla",
-      "category": "woods",
-      "layer": "features",
-      "colors": {
-        "vegetation": "#1b5e20",
-        "undergrowth": "#33691e",
-        "canopy": "#2e7d32"
-      },
-      "pattern": "jungle",
-      "stackable": true,
+    "tile_28": {
+      "id": "tile_28",
+      "name": "Río 2",
+      "category": "water",
+      "file": "/assets/tiles/battletech/28.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/93.png",
       "movementCost": 3,
-      "toHitModifier": 2,
-      "providesCover": "heavy",
-      "blocksLOS": true,
-      "pilotingModifier": 1,
-      "description": "Vegetación tropical densa. Muy difícil de atravesar."
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
     },
-    "building_light": {
-      "id": "building_light",
-      "name": "Edificio Ligero",
-      "category": "buildings",
-      "layer": "features",
-      "colors": {
-        "walls": "#bdbdbd",
-        "roof": "#9e9e9e",
-        "windows": "#42a5f5",
-        "shadow": "#757575"
-      },
-      "pattern": "building_top",
+    "tile_29": {
+      "id": "tile_29",
+      "name": "Río 3",
+      "category": "water",
+      "file": "/assets/tiles/battletech/29.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/94.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_30": {
+      "id": "tile_30",
+      "name": "Río 4",
+      "category": "water",
+      "file": "/assets/tiles/battletech/30.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/95.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_31": {
+      "id": "tile_31",
+      "name": "Río 5",
+      "category": "water",
+      "file": "/assets/tiles/battletech/31.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/96.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_32": {
+      "id": "tile_32",
+      "name": "Río 6",
+      "category": "water",
+      "file": "/assets/tiles/battletech/32.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/97.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_33": {
+      "id": "tile_33",
+      "name": "Río 7",
+      "category": "water",
+      "file": "/assets/tiles/battletech/33.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/98.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_34": {
+      "id": "tile_34",
+      "name": "Río 8",
+      "category": "water",
+      "file": "/assets/tiles/battletech/34.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/99.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_35": {
+      "id": "tile_35",
+      "name": "Río 9",
+      "category": "water",
+      "file": "/assets/tiles/battletech/35.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/100.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_36": {
+      "id": "tile_36",
+      "name": "Río 10",
+      "category": "water",
+      "file": "/assets/tiles/battletech/36.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/101.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_37": {
+      "id": "tile_37",
+      "name": "Río 11",
+      "category": "water",
+      "file": "/assets/tiles/battletech/37.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/102.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧"
+    },
+    "tile_38": {
+      "id": "tile_38",
+      "name": "Río Largo 1",
+      "category": "water",
+      "file": "/assets/tiles/battletech/38.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/103.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧",
+      "size": "long"
+    },
+    "tile_39": {
+      "id": "tile_39",
+      "name": "Río Largo 2",
+      "category": "water",
+      "file": "/assets/tiles/battletech/39.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/104.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "color": "#1976d2",
+      "icon": "💧",
+      "size": "long"
+    },
+    "tile_40": {
+      "id": "tile_40",
+      "name": "Edificio 1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/40.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/105.png",
       "movementCost": 999,
-      "toHitModifier": 3,
-      "providesCover": "hardened",
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
       "blocksLOS": true,
-      "blocksMovement": true,
-      "structurePoints": 15,
-      "constructionFactor": 1,
-      "height": 2,
-      "description": "Edificio de construcción ligera (madera, metal fino). Altura 2 niveles."
+      "blocksVision": true
     },
-    "building_medium": {
-      "id": "building_medium",
-      "name": "Edificio Medio",
-      "category": "buildings",
-      "layer": "features",
-      "colors": {
-        "walls": "#78909c",
-        "roof": "#546e7a",
-        "windows": "#29b6f6",
-        "shadow": "#455a64"
-      },
-      "pattern": "building_top",
+    "tile_41": {
+      "id": "tile_41",
+      "name": "Edificio 2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/41.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/106.png",
       "movementCost": 999,
-      "toHitModifier": 4,
-      "providesCover": "hardened",
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
       "blocksLOS": true,
-      "blocksMovement": true,
-      "structurePoints": 40,
-      "constructionFactor": 2,
-      "height": 3,
-      "description": "Edificio de construcción media (ladrillo, hormigón). Altura 3 niveles."
+      "blocksVision": true
     },
-    "building_heavy": {
-      "id": "building_heavy",
-      "name": "Edificio Pesado",
-      "category": "buildings",
-      "layer": "features",
-      "colors": {
-        "walls": "#455a64",
-        "roof": "#37474f",
-        "windows": "#0288d1",
-        "shadow": "#263238"
-      },
-      "pattern": "building_top",
+    "tile_42": {
+      "id": "tile_42",
+      "name": "Edificio 3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/42.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/107.png",
       "movementCost": 999,
-      "toHitModifier": 5,
-      "providesCover": "hardened",
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
       "blocksLOS": true,
-      "blocksMovement": true,
-      "structurePoints": 90,
-      "constructionFactor": 3,
-      "height": 4,
-      "description": "Edificio reforzado (hormigón armado, bunker). Altura 4 niveles."
+      "blocksVision": true
     },
-    "building_hardened": {
-      "id": "building_hardened",
-      "name": "Edificio Blindado",
-      "category": "buildings",
-      "layer": "features",
-      "colors": {
-        "walls": "#37474f",
-        "roof": "#263238",
-        "vents": "#546e7a",
-        "shadow": "#000000"
-      },
-      "pattern": "bunker_top",
+    "tile_43": {
+      "id": "tile_43",
+      "name": "Edificio 4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/43.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/108.png",
       "movementCost": 999,
-      "toHitModifier": 6,
-      "providesCover": "hardened",
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
       "blocksLOS": true,
-      "blocksMovement": true,
-      "structurePoints": 150,
-      "constructionFactor": 4,
-      "height": 2,
-      "description": "Estructura militar blindada. Extremadamente resistente."
+      "blocksVision": true
     },
-    "rubble": {
-      "id": "rubble",
-      "name": "Escombros",
-      "category": "buildings",
-      "layer": "features",
-      "colors": {
-        "debris": "#9e9e9e",
-        "concrete": "#757575",
-        "rebar": "#5d4037"
-      },
-      "pattern": "rubble",
-      "stackable": true,
+    "tile_44": {
+      "id": "tile_44",
+      "name": "Edificio 5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/44.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/109.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_45": {
+      "id": "tile_45",
+      "name": "Búnker",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/45.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/110.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_46": {
+      "id": "tile_46",
+      "name": "Edificio Medio 1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/46.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/111.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_47": {
+      "id": "tile_47",
+      "name": "Edificio Medio 2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/47.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/112.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_48": {
+      "id": "tile_48",
+      "name": "Edificio Medio 3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/48.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/113.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_49": {
+      "id": "tile_49",
+      "name": "Edificio Medio 4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/49.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/114.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_50": {
+      "id": "tile_50",
+      "name": "Edificio Medio 5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/50.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/115.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_51": {
+      "id": "tile_51",
+      "name": "Edificio Grande 1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/51.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/116.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_52": {
+      "id": "tile_52",
+      "name": "Edificio Grande 2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/52.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/117.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_53": {
+      "id": "tile_53",
+      "name": "Edificio Grande 3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/53.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/118.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_54": {
+      "id": "tile_54",
+      "name": "Edificio Grande 4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/54.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/119.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_55": {
+      "id": "tile_55",
+      "name": "Edificio Grande 5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/55.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/120.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_56": {
+      "id": "tile_56",
+      "name": "Edificio Grande 6",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/56.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/121.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_57": {
+      "id": "tile_57",
+      "name": "Edificio Grande 7",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/57.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/122.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_58": {
+      "id": "tile_58",
+      "name": "Complejo Industrial",
+      "category": "urban",
+      "file": "/assets/tiles/battletech/58.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/123.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "color": "#757575",
+      "icon": "🏢",
+      "blocksLOS": true,
+      "blocksVision": true,
+      "size": "mega"
+    },
+    "tile_59": {
+      "id": "tile_59",
+      "name": "Rocoso",
+      "category": "rough",
+      "file": "/assets/tiles/battletech/59.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/124.png",
       "movementCost": 2,
-      "toHitModifier": 1,
-      "providesCover": "light",
-      "pilotingModifier": 1,
-      "description": "Restos de edificio destruido. Dificulta movimiento y proporciona algo de cobertura."
+      "defenseBonus": 1,
+      "color": "#8d6e63",
+      "icon": "🪨"
     },
-    "factory": {
-      "id": "factory",
-      "name": "Fábrica",
-      "category": "industrial",
-      "layer": "features",
-      "colors": {
-        "structure": "#607d8b",
-        "roof": "#455a64",
-        "smokestacks": "#37474f",
-        "pipes": "#78909c"
-      },
-      "pattern": "factory_top",
-      "movementCost": 999,
-      "toHitModifier": 4,
-      "providesCover": "hardened",
-      "blocksLOS": true,
-      "blocksMovement": true,
-      "structurePoints": 60,
-      "height": 3,
-      "description": "Instalación industrial con chimeneas y maquinaria."
-    },
-    "fuel_tank": {
-      "id": "fuel_tank",
-      "name": "Tanque de Combustible",
-      "category": "industrial",
-      "layer": "features",
-      "colors": {
-        "tank": "#eceff1",
-        "shadow": "#b0bec5",
-        "top": "#cfd8dc",
-        "pipes": "#607d8b"
-      },
-      "pattern": "cylinder_top",
-      "movementCost": 999,
-      "toHitModifier": 2,
-      "blocksLOS": true,
-      "blocksMovement": true,
-      "structurePoints": 20,
-      "explosive": true,
-      "explosionDamage": 20,
-      "explosionRadius": 2,
-      "height": 2,
-      "description": "Tanque de almacenamiento de combustible. ¡EXPLOSIVO si es destruido!"
-    },
-    "cooling_tower": {
-      "id": "cooling_tower",
-      "name": "Torre de Enfriamiento",
-      "category": "industrial",
-      "layer": "features",
-      "colors": {
-        "structure": "#b0bec5",
-        "steam": "#eceff1",
-        "base": "#78909c"
-      },
-      "pattern": "cone_top",
-      "movementCost": 999,
-      "toHitModifier": 3,
-      "blocksLOS": true,
-      "blocksMovement": true,
-      "structurePoints": 40,
-      "height": 5,
-      "description": "Torre de refrigeración industrial. Muy alta, visible a distancia."
-    },
-    "wall_low": {
-      "id": "wall_low",
-      "name": "Muro Bajo",
-      "category": "fortifications",
-      "layer": "features",
-      "colors": {
-        "wall": "#78909c",
-        "top": "#90a4ae",
-        "shadow": "#546e7a"
-      },
-      "pattern": "wall",
-      "movementCost": 1,
-      "toHitModifier": 1,
-      "providesCover": "partial",
-      "height": 1,
-      "description": "Muro bajo para infantería. Mechs pueden pasar por encima."
-    },
-    "wall_high": {
-      "id": "wall_high",
-      "name": "Muro Alto",
-      "category": "fortifications",
-      "layer": "features",
-      "colors": {
-        "wall": "#546e7a",
-        "top": "#78909c",
-        "shadow": "#37474f"
-      },
-      "pattern": "wall",
-      "movementCost": 999,
-      "toHitModifier": 3,
-      "providesCover": "heavy",
-      "blocksLOS": true,
-      "blocksMovement": true,
-      "structurePoints": 30,
-      "height": 2,
-      "description": "Muro defensivo alto. Bloquea movimiento de Mechs."
-    },
-    "trench": {
-      "id": "trench",
-      "name": "Trinchera",
-      "category": "fortifications",
-      "layer": "features",
-      "colors": {
-        "walls": "#5d4037",
-        "floor": "#4e342e",
-        "sandbags": "#8d6e63"
-      },
-      "pattern": "trench",
-      "stackable": true,
-      "movementCost": 1,
-      "toHitModifier": 3,
-      "providesCover": "heavy",
-      "elevation": -1,
-      "description": "Trinchera excavada. Excelente cobertura para infantería."
-    },
-    "fire": {
-      "id": "fire",
-      "name": "Fuego",
-      "category": "special",
-      "layer": "effects",
-      "colors": {
-        "flames": "#ff5722",
-        "center": "#ffeb3b",
-        "smoke": "#424242"
-      },
-      "pattern": "fire",
-      "animated": true,
-      "stackable": true,
+    "tile_60": {
+      "id": "tile_60",
+      "name": "Terreno Difícil",
+      "category": "rough",
+      "file": "/assets/tiles/battletech/60.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/125.png",
       "movementCost": 2,
-      "toHitModifier": 0,
-      "heatGeneration": 5,
-      "damage": 5,
-      "spreadChance": 0.3,
-      "description": "Fuego activo. Genera calor adicional y puede propagarse."
+      "defenseBonus": 1,
+      "color": "#8d6e63",
+      "icon": "🪨"
     },
-    "smoke": {
-      "id": "smoke",
+    "tile_61": {
+      "id": "tile_61",
+      "name": "Rough 1",
+      "category": "rough",
+      "file": "/assets/tiles/battletech/61.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/126.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#8d6e63",
+      "icon": "🪨"
+    },
+    "tile_62": {
+      "id": "tile_62",
+      "name": "Rough 2",
+      "category": "rough",
+      "file": "/assets/tiles/battletech/62.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/127.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#8d6e63",
+      "icon": "🪨"
+    },
+    "tile_63": {
+      "id": "tile_63",
+      "name": "Rough 3",
+      "category": "rough",
+      "file": "/assets/tiles/battletech/63.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/128.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#8d6e63",
+      "icon": "🪨"
+    },
+    "tile_64": {
+      "id": "tile_64",
+      "name": "Rough 4",
+      "category": "rough",
+      "file": "/assets/tiles/battletech/64.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/129.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#8d6e63",
+      "icon": "🪨"
+    },
+    "tile_65": {
+      "id": "tile_65",
+      "name": "Rough 5",
+      "category": "rough",
+      "file": "/assets/tiles/battletech/65.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/130.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#8d6e63",
+      "icon": "🪨"
+    },
+    "tile_66": {
+      "id": "tile_66",
+      "name": "Rough 6",
+      "category": "rough",
+      "file": "/assets/tiles/battletech/66.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/131.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#8d6e63",
+      "icon": "🪨"
+    },
+    "tile_67": {
+      "id": "tile_67",
+      "name": "Escombros 1",
+      "category": "rubble",
+      "file": "/assets/tiles/battletech/67.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/132.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#a1887f",
+      "icon": "🧱"
+    },
+    "tile_68": {
+      "id": "tile_68",
+      "name": "Escombros 2",
+      "category": "rubble",
+      "file": "/assets/tiles/battletech/68.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/133.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#a1887f",
+      "icon": "🧱"
+    },
+    "tile_69": {
+      "id": "tile_69",
+      "name": "Escombros LR 1",
+      "category": "rubble",
+      "file": "/assets/tiles/battletech/69.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/134.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#a1887f",
+      "icon": "🧱"
+    },
+    "tile_70": {
+      "id": "tile_70",
+      "name": "Escombros LR 2",
+      "category": "rubble",
+      "file": "/assets/tiles/battletech/70.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/135.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "color": "#a1887f",
+      "icon": "🧱"
+    },
+    "tile_71": {
+      "id": "tile_71",
+      "name": "Minas Vibra",
+      "category": "hazards",
+      "file": "/assets/tiles/battletech/71.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/136.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "color": "#f44336",
+      "icon": "⚠️",
+      "special": "mine_vibra"
+    },
+    "tile_72": {
+      "id": "tile_72",
+      "name": "Minas Detonación",
+      "category": "hazards",
+      "file": "/assets/tiles/battletech/72.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/137.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "color": "#f44336",
+      "icon": "⚠️",
+      "special": "mine_command"
+    },
+    "tile_73": {
+      "id": "tile_73",
+      "name": "Minas Convencional",
+      "category": "hazards",
+      "file": "/assets/tiles/battletech/73.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/138.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "color": "#f44336",
+      "icon": "⚠️",
+      "special": "mine_conv"
+    },
+    "tile_74": {
+      "id": "tile_74",
       "name": "Humo",
-      "category": "special",
-      "layer": "effects",
-      "colors": {
-        "smoke": "#616161",
-        "light": "#9e9e9e",
-        "dense": "#424242"
-      },
-      "pattern": "smoke",
-      "animated": true,
-      "stackable": true,
-      "movementCost": 0,
-      "toHitModifier": 2,
-      "blocksLOS": true,
-      "temporary": true,
-      "duration": 3,
-      "description": "Columna de humo. Bloquea línea de visión temporalmente."
-    },
-    "crater": {
-      "id": "crater",
-      "name": "Cráter",
-      "category": "special",
-      "layer": "terrain",
-      "colors": {
-        "rim": "#5d4037",
-        "interior": "#3e2723",
-        "scorched": "#212121"
-      },
-      "pattern": "crater",
-      "movementCost": 2,
-      "toHitModifier": 1,
-      "providesCover": "light",
-      "elevation": -1,
-      "description": "Cráter de impacto. Proporciona algo de cobertura."
-    },
-    "minefield": {
-      "id": "minefield",
-      "name": "Campo de Minas",
-      "category": "special",
-      "layer": "effects",
-      "colors": {
-        "base": "#7cb342",
-        "warning": "#f44336"
-      },
-      "pattern": "hazard",
-      "stackable": true,
+      "category": "hazards",
+      "file": "/assets/tiles/battletech/74.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/139.png",
       "movementCost": 1,
-      "toHitModifier": 0,
-      "mineStrength": 20,
-      "mineDensity": 5,
-      "hidden": true,
-      "description": "Zona minada. Peligro al moverse por ella."
-    }
-  },
-  "renderingConfig": {
-    "hexOrientation": "flat-top",
-    "defaultTileSize": 50,
-    "shadowAngle": 135,
-    "shadowOpacity": 0.3,
-    "detailLevel": "high",
-    "patterns": {
-      "grass": {
-        "type": "noise",
-        "density": 0.3,
-        "variation": 0.15
-      },
-      "water": {
-        "type": "animated",
-        "waveSpeed": 0.5,
-        "reflections": true
-      },
-      "building_top": {
-        "type": "structural",
-        "showVents": true,
-        "showAC": true,
-        "perspective": "top-down"
-      }
+      "defenseBonus": 1,
+      "color": "#f44336",
+      "icon": "⚠️",
+      "blocksLOS": true,
+      "blocksVision": true
+    },
+    "tile_75": {
+      "id": "tile_75",
+      "name": "Fuego",
+      "category": "hazards",
+      "file": "/assets/tiles/battletech/75.png",
+      "thumbnail": "/assets/tiles/battletech/thumbnails/140.png",
+      "movementCost": 2,
+      "defenseBonus": 0,
+      "color": "#f44336",
+      "icon": "⚠️",
+      "special": "fire"
     }
   }
 }

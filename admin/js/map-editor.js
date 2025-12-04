@@ -91,7 +91,7 @@ class MapEditor {
             }
             
             // Detectar si es BattleTech y configurar grid hexagonal
-            if (data.gridType === 'hex' || this.systemId === 'battletech') {
+            if (data.gridType === 'hex' || data.system === 'battletech' || this.systemId === 'battletech') {
                 this.gridType = 'hex';
                 console.log('🔷 Modo hexagonal activado');
             }
@@ -1699,6 +1699,19 @@ function initMapEditor() {
     if (!mapEditor) {
         mapEditor = new MapEditor();
         loadSavedMapsList();
+    }
+}
+
+// Reinicializar el editor con nuevo sistema
+async function reloadMapEditor() {
+    if (mapEditor) {
+        // Recargar configuración del sistema y tiles
+        await mapEditor.loadGameSystemConfig();
+        await mapEditor.loadTileLibrary();
+        await mapEditor.preloadTileImages();
+        mapEditor.renderTilePalette();
+        mapEditor.createNewMap(mapEditor.mapWidth, mapEditor.mapHeight);
+        console.log('🔄 Editor de mapas recargado');
     }
 }
 
