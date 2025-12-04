@@ -538,7 +538,7 @@ class MapEditor {
         
         // Seleccionar tile de relleno según el sistema
         if (!fillTile) {
-            fillTile = this.systemId === 'battletech' ? 'clear' : 'grass';
+            fillTile = this.systemId === 'battletech' ? 'bt_11' : 'grass';
         }
         
         // Configurar capas según el sistema
@@ -2723,10 +2723,25 @@ function generateMap() {
     const height = parseInt(document.getElementById('gen-height')?.value || 15);
     const type = document.getElementById('gen-type')?.value || 'dungeon';
     
+    console.log(`🎲 Generando mapa: ${width}x${height} tipo: ${type}`);
+    console.log('mapEditor existe:', !!mapEditor);
+    
     if (mapEditor) {
+        console.log('Sistema:', mapEditor.systemId);
+        console.log('Tiles cargados:', Object.keys(mapEditor.tiles).length);
         mapEditor.generateLocalMap(width, height, type);
         document.querySelector('.map-canvas-container')?.classList.add('has-map');
         showToast(`🎲 Mapa ${type} generado`, 'success');
+    } else {
+        console.error('mapEditor no está inicializado!');
+        // Intentar inicializar
+        initMapEditor();
+        setTimeout(() => {
+            if (mapEditor) {
+                mapEditor.generateLocalMap(width, height, type);
+                showToast(`🎲 Mapa ${type} generado`, 'success');
+            }
+        }, 500);
     }
 }
 
