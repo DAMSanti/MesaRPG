@@ -805,9 +805,9 @@ class MapEditor {
                 cells.push(n0[2]); // arriba del arriba-izq
                 
                 // Desde abajo-izq (neighbors[1])
-                const n1 = this.getHexNeighbors(neighbors[1].x, neighbors[1].y);
-                cells.push(n1[1]); // más abajo-izq
-                cells.push(n1[3]); // abajo del abajo-izq
+                const n1_bl = this.getHexNeighbors(neighbors[1].x, neighbors[1].y);
+                cells.push(n1_bl[1]); // más abajo-izq
+                cells.push(n1_bl[3]); // abajo del abajo-izq
                 
                 // Desde arriba-der (neighbors[4])
                 const n4 = this.getHexNeighbors(neighbors[4].x, neighbors[4].y);
@@ -883,8 +883,8 @@ class MapEditor {
                 cells.push(neighbors[1]); // medio-izq (abajo-izq del centro)
                 
                 // El tercer hex de la columna izquierda (debajo de neighbors[1])
-                const n1 = neighbors[1];
-                cells.push({ x: n1.x, y: n1.y + 1 }); // abajo del abajo-izq
+                const leftMid = neighbors[1];
+                cells.push({ x: leftMid.x, y: leftMid.y + 1 }); // abajo del abajo-izq
                 
                 // Centro abajo (segunda de la columna derecha)
                 cells.push({ x, y: y + 1 });
