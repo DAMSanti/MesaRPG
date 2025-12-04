@@ -547,37 +547,37 @@ class GameRenderer {
     }
     
     drawHexGrid(ctx, w, h) {
-        // Hexágonos pointy-top (punta arriba) - tamaño basado en gridSize (1 pulgada)
+        // Hexágonos flat-top (lado plano arriba) - tamaño basado en gridSize (1 pulgada)
         const size = this.gridSize / 2; // Radio del hexágono (la mitad del gridSize)
         
-        // Dimensiones de un hexágono pointy-top
-        const hexWidth = Math.sqrt(3) * size;  
-        const hexHeight = size * 2;             
+        // Dimensiones de un hexágono flat-top
+        const hexWidth = size * 2;              // Ancho = 2 * radio
+        const hexHeight = Math.sqrt(3) * size;  // Alto = sqrt(3) * radio
         
         // Espaciado entre centros
-        const horizSpacing = hexWidth;          // Horizontal: ancho completo
-        const vertSpacing = hexHeight * 0.75;   // Vertical: 3/4 de altura
+        const horizSpacing = hexWidth * 0.75;   // Horizontal: 3/4 de ancho
+        const vertSpacing = hexHeight;          // Vertical: alto completo
         
         ctx.strokeStyle = 'rgba(255, 215, 0, 0.25)';
         ctx.lineWidth = 2;
         
-        let row = 0;
-        for (let y = size; y < h + hexHeight; y += vertSpacing) {
-            // Filas impares se desplazan medio hexágono
-            const offsetX = (row % 2 === 1) ? hexWidth / 2 : 0;
+        let col = 0;
+        for (let x = size; x < w + hexWidth; x += horizSpacing) {
+            // Columnas impares se desplazan medio hexágono hacia abajo
+            const offsetY = (col % 2 === 1) ? hexHeight / 2 : 0;
             
-            for (let x = offsetX + hexWidth / 2; x < w + hexWidth; x += horizSpacing) {
+            for (let y = offsetY + hexHeight / 2; y < h + hexHeight; y += vertSpacing) {
                 this.drawHexagon(ctx, x, y, size);
             }
-            row++;
+            col++;
         }
     }
     
     drawHexagon(ctx, cx, cy, size) {
         ctx.beginPath();
         for (let i = 0; i < 6; i++) {
-            // Pointy-top: empieza desde arriba (ángulo -90° = -PI/2)
-            const angle = (Math.PI / 3) * i - Math.PI / 2;
+            // Flat-top: empieza desde derecha (ángulo 0°)
+            const angle = (Math.PI / 3) * i;
             const x = cx + size * Math.cos(angle);
             const y = cy + size * Math.sin(angle);
             if (i === 0) {
