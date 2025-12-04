@@ -3,8 +3,8 @@ MesaRPG - Modelos de datos
 Define las estructuras de datos usadas en todo el sistema
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional, List, Dict, Any, ClassVar
 from enum import Enum
 from datetime import datetime
 
@@ -96,6 +96,9 @@ class Character(BaseModel):
     
     class Config:
         populate_by_name = True
+    
+    # Pydantic v2 configuration
+    model_config: ClassVar[ConfigDict] = ConfigDict(populate_by_name=True)
     
     @classmethod
     def from_sheet(cls, sheet: CharacterSheet) -> "Character":
