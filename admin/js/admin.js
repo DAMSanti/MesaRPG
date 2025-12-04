@@ -522,9 +522,6 @@ function renderTokenGallery() {
     } else if (currentTokenCategory === 'generic') {
         tokens = tokenLibrary.generic || [];
     }
-    } else if (currentTokenCategory === 'generic') {
-        tokens = tokenLibrary.generic || [];
-    }
     
     if (tokens.length === 0) {
         container.innerHTML = '<p class="empty-state">No hay tokens disponibles</p>';
