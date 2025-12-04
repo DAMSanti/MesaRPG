@@ -2854,13 +2854,19 @@ async function deleteMapById(mapId) {
 function generateMap() {
     const width = parseInt(document.getElementById('gen-width')?.value || 20);
     const height = parseInt(document.getElementById('gen-height')?.value || 15);
-    const type = document.getElementById('gen-type')?.value || 'dungeon';
+    let type = document.getElementById('gen-type')?.value || 'dungeon';
     
     console.log(`🎲 Generando mapa: ${width}x${height} tipo: ${type}`);
     
     if (!mapEditor || !mapEditor.systemId) {
         showToast('⚠️ Selecciona un sistema de juego primero', 'error');
         return;
+    }
+    
+    // Si es BattleTech y eligieron un tipo de D&D, usar llanuras por defecto
+    if (mapEditor.systemId === 'battletech' && !type.startsWith('bt_')) {
+        type = 'bt_grasslands';
+        console.log('🔄 Cambiando a tipo BattleTech:', type);
     }
     
     console.log('Sistema:', mapEditor.systemId);
