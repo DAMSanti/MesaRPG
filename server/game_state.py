@@ -15,6 +15,8 @@ from .models import (
     GameAction, DetectedMarker, PlayerRole, ActionResult
 )
 
+from server.schemas import MapModel
+
 
 class GameStateManager:
     """
@@ -569,10 +571,9 @@ class GameStateManager:
             return [self._serialize_datetime(item) for item in obj]
         return obj
 
-from server.schemas import MapModel
     
     # === Gestión de Mapas ===
-    
+
     async def get_all_maps(self) -> List[dict]:
         """Obtiene todos los mapas guardados"""
         maps_dir = self.config_path / "maps"
