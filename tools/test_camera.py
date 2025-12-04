@@ -35,9 +35,11 @@ def test_camera(camera_id: int = 0):
     return None
 
 
+    """
 def find_cameras(max_cameras: int = 10):
     """Busca todas las cámaras disponibles"""
     print("🔍 Buscando cámaras disponibles...")
+    import pytest
     print("-" * 40)
     
     found = []
@@ -45,8 +47,9 @@ def find_cameras(max_cameras: int = 10):
     for i in range(max_cameras):
         cap = cv2.VideoCapture(i)
         if cap.isOpened():
-            width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        # If there's no camera device (e.g., CI/droplet/headless), skip the test.
+        if not cap.isOpened():
+            pytest.skip(f"No camera available at index {camera_id}")
             found.append({
                 "id": i,
                 "resolution": f"{width}x{height}"
@@ -59,7 +62,9 @@ def find_cameras(max_cameras: int = 10):
         print("❌ No se encontraron cámaras")
         return []
     
-    print(f"✅ Se encontraron {len(found)} cámara(s):")
+        if not ret:
+            cap.release()
+            pytest.skip("No frame captured from camera")
     for cam in found:
         print(f"   - Cámara {cam['id']}: {cam['resolution']}")
     
