@@ -517,9 +517,10 @@ async def get_map(map_id: str):
     return map_data
 
 @app.post("/api/maps")
-async def save_map(body: dict = Body(...)):
-    """Guarda un mapa (nuevo o actualizado)"""
-    result = await game_state.save_map(body)
+async def save_map(map_payload: GameStateManager.MapModel = Body(...)):
+    """Guarda un mapa (nuevo o actualizado) usando validación Pydantic"""
+    # Normalizar a dict y delegar al GameStateManager (ya valida internamente)
+    result = await game_state.save_map(map_payload.model_dump())
     return result
 
 @app.delete("/api/maps/{map_id}")
