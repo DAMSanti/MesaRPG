@@ -722,12 +722,29 @@ class MapEditor {
                 break;
                 
             case 'h3v2': // 6 hex (3 columnas x 2 filas)
-                // Usar getHexNeighbors que ya maneja la paridad
-                cells.push(neighbors[0]); // arriba-izq
-                cells.push(neighbors[4]); // arriba-der
-                cells.push(neighbors[1]); // abajo-izq
-                cells.push({ x, y: y + 1 }); // abajo centro
-                cells.push(neighbors[5]); // abajo-der
+                // Fila superior: centro ya está, añadir izq y der
+                // Fila inferior: 3 hexes debajo
+                
+                // Izquierda de la fila superior
+                if (isOddCol) {
+                    cells.push({ x: x - 1, y: y });     // izq-arriba
+                    cells.push({ x: x - 1, y: y + 1 }); // izq-abajo
+                } else {
+                    cells.push({ x: x - 1, y: y });     // izq-arriba
+                    cells.push({ x: x - 1, y: y + 1 }); // izq-abajo
+                }
+                
+                // Centro abajo
+                cells.push({ x, y: y + 1 });
+                
+                // Derecha
+                if (isOddCol) {
+                    cells.push({ x: x + 1, y: y });     // der-arriba
+                    cells.push({ x: x + 1, y: y + 1 }); // der-abajo
+                } else {
+                    cells.push({ x: x + 1, y: y });     // der-arriba  
+                    cells.push({ x: x + 1, y: y + 1 }); // der-abajo
+                }
                 break;
             
             case 'h3v3': // 9 hex (3 columnas x 3 filas)
@@ -770,28 +787,43 @@ class MapEditor {
                 }
                 break;
                 
-            case 'h5v5': // ~19 hex (5 columnas x 5 filas, forma de diamante/hex grande)
-                // Centro + 2 anillos
-                // Anillo 1 (6 vecinos)
+            case 'h5v5': // 19 hex (hexágono de radio 2)
+                // Centro (1) + Anillo 1 (6) + Anillo 2 (12) = 19
+                
+                // Anillo 1: los 6 vecinos directos
                 neighbors.forEach(n => cells.push(n));
-                // Anillo 2 
-                // Arriba y abajo lejanos
+                
+                // Anillo 2: 12 hexes en el segundo anillo
+                // Arriba y abajo lejanos (misma columna)
                 cells.push({ x, y: y - 2 });
                 cells.push({ x, y: y + 2 });
-                // Izquierda y derecha lejanos
-                const leftNeighbor = this.getHexNeighbors(neighbors[0].x, neighbors[0].y);
-                const rightNeighbor = this.getHexNeighbors(neighbors[4].x, neighbors[4].y);
-                cells.push(leftNeighbor[0]); // izq-izq arriba
-                cells.push(leftNeighbor[1]); // izq-izq abajo
-                cells.push(rightNeighbor[4]); // der-der arriba
-                cells.push(rightNeighbor[5]); // der-der abajo
-                // Esquinas diagonales
-                const topNeighbor = this.getHexNeighbors(x, y - 1);
-                const bottomNeighbor = this.getHexNeighbors(x, y + 1);
-                cells.push(topNeighbor[0]); // arriba-izq
-                cells.push(topNeighbor[4]); // arriba-der
-                cells.push(bottomNeighbor[1]); // abajo-izq
-                cells.push(bottomNeighbor[5]); // abajo-der
+                
+                // Vecinos de cada vecino del anillo 1 que están en el anillo 2
+                // Desde arriba-izq (neighbors[0])
+                const n0 = this.getHexNeighbors(neighbors[0].x, neighbors[0].y);
+                cells.push(n0[0]); // más arriba-izq
+                cells.push(n0[2]); // arriba del arriba-izq
+                
+                // Desde abajo-izq (neighbors[1])
+                const n1 = this.getHexNeighbors(neighbors[1].x, neighbors[1].y);
+                cells.push(n1[1]); // más abajo-izq
+                cells.push(n1[3]); // abajo del abajo-izq
+                
+                // Desde arriba-der (neighbors[4])
+                const n4 = this.getHexNeighbors(neighbors[4].x, neighbors[4].y);
+                cells.push(n4[4]); // más arriba-der
+                cells.push(n4[2]); // arriba del arriba-der
+                
+                // Desde abajo-der (neighbors[5])
+                const n5 = this.getHexNeighbors(neighbors[5].x, neighbors[5].y);
+                cells.push(n5[5]); // más abajo-der
+                cells.push(n5[3]); // abajo del abajo-der
+                
+                // Las 2 posiciones faltantes: izquierda y derecha lejanas
+                // Desde arriba (neighbors[2]) -> su arriba-izq y arriba-der
+                const n2 = this.getHexNeighbors(neighbors[2].x, neighbors[2].y);
+                cells.push(n2[0]); // arriba del arriba -> izq
+                cells.push(n2[4]); // arriba del arriba -> der
                 break;
                 
             case 'h3': // 3-4 hex línea horizontal
