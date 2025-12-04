@@ -152,31 +152,68 @@ class MapEditor {
     
     async preloadTileImages() {
         /**
-         * Precarga las imágenes de los tiles para renderizado rápido
+         * Precarga imágenes de tiles - versión optimizada
+         * Solo precarga las primeras de cada categoría, el resto se carga bajo demanda
          */
-        console.log('🖼️ Precargando imágenes de tiles...');
+        console.log('🖼️ Preparando carga de imágenes...');
+        
+        // Solo precargar unos pocos tiles esenciales
+        const essentialTiles = ['bt_11', 'grass', 'wall_stone'];
         const loadPromises = [];
         
-        for (const [tileId, tile] of Object.entries(this.tiles)) {
-            if (tile.file) {
-                const promise = new Promise((resolve) => {
-                    const img = new Image();
-                    img.onload = () => {
-                        this.tileImages[tileId] = img;
-                        resolve();
-                    };
-                    img.onerror = () => {
-                        console.warn(`No se pudo cargar imagen para ${tileId}: ${tile.file}`);
-                        resolve();
-                    };
-                    img.src = tile.file;
-                });
+        for (const tileId of essentialTiles) {
+            const tile = this.tiles[tileId];
+            if (tile?.file) {
+                const promise = this.loadTileImage(tileId, tile.file);
                 loadPromises.push(promise);
             }
         }
         
         await Promise.all(loadPromises);
-        console.log(`✅ ${Object.keys(this.tileImages).length} imágenes cargadas`);
+        console.log(`✅ Imágenes esenciales cargadas, resto se carga bajo demanda`);
+    }
+    
+    loadTileImage(tileId, filePath) {
+        return new Promise((resolve) => {
+            if (this.tileImages[tileId]) {
+                resolve(this.tileImages[tileId]);
+                return;
+            }
+            
+            const img = new Image();
+            img.onload = () => {
+                this.tileImages[tileId] = img;
+                resolve(img);
+            };
+            img.onerror = () => {
+                // console.warn(`No se pudo cargar: ${filePath}`);
+                resolve(null);
+            };
+            img.src = filePath;
+        });
+    }
+    
+    getTileImage(tileId) {
+        // Si ya está cargada, devolverla
+        if (this.tileImages[tileId]) {
+            return this.tileImages[tileId];
+        }
+        
+        // Cargar bajo demanda (async, no bloquea)
+        const tile = this.tiles[tileId];
+        if (tile?.file) {
+            this.loadTileImage(tileId, tile.file).then(() => {
+                // Re-renderizar cuando cargue
+                if (this.renderPending) return;
+                this.renderPending = true;
+                requestAnimationFrame(() => {
+                    this.renderPending = false;
+                    this.render();
+                });
+            });
+        }
+        
+        return null;
     }
     
     setupUI() {
@@ -1072,11 +1109,8 @@ class MapEditor {
     
     render() {
         if (!this.ctx || !this.currentMap) {
-            console.warn('❌ No se puede renderizar:', { ctx: !!this.ctx, currentMap: !!this.currentMap });
             return;
         }
-        
-        console.log('🎨 Renderizando mapa...', this.canvas.width, 'x', this.canvas.height);
         
         // Limpiar canvas
         this.ctx.fillStyle = '#1a1a2e';
@@ -1090,8 +1124,6 @@ class MapEditor {
         
         // Dibujar grid
         this.drawGrid();
-        
-        console.log('✅ Render completo');
     }
     
     renderLayer(layerName) {
@@ -1194,8 +1226,8 @@ class MapEditor {
         const cy = offsetY + y * vertSpacing + hexHeight / 2;
         const radius = size;
         
-        // Si hay imagen, dibujarla dentro del hexágono
-        const img = this.tileImages[tile.id];
+        // Si hay imagen, dibujarla dentro del hexágono (carga lazy)
+        const img = this.getTileImage(tile.id);
         if (img) {
             this.ctx.save();
             // Crear path hexagonal para clip (flat-top: empieza desde derecha)
@@ -2618,13 +2650,23 @@ function initMapEditor() {
 // Reinicializar el editor con nuevo sistema
 async function reloadMapEditor() {
     if (mapEditor) {
+        // Limpiar imágenes cacheadas del sistema anterior
+        mapEditor.tileImages = {};
+        
         // Recargar configuración del sistema y tiles
         await mapEditor.loadGameSystemConfig();
+        
+        if (!mapEditor.systemId) {
+            mapEditor.showNoSystemMessage();
+            return;
+        }
+        
         await mapEditor.loadTileLibrary();
         await mapEditor.preloadTileImages();
         mapEditor.renderTilePalette();
+        mapEditor.setupCanvas(); // Re-inicializar canvas
         mapEditor.createNewMap(mapEditor.mapWidth, mapEditor.mapHeight);
-        console.log('🔄 Editor de mapas recargado');
+        console.log('🔄 Editor de mapas recargado para:', mapEditor.systemId);
     } else {
         // Si el editor no existe todavía, marcar para recargar cuando se inicie
         pendingSystemReload = true;
