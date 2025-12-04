@@ -62,7 +62,9 @@
       "defenseBonus": 0,
       "color": "#4a7c23",
       "icon": "🌿",
-      "size": "mega"
+      "size": "mega",
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_13": {
       "id": "tile_13",
@@ -73,7 +75,9 @@
       "movementCost": 2,
       "defenseBonus": 1,
       "color": "#2e7d32",
-      "icon": "🌲"
+      "icon": "🌲",
+      "hexCount": 2,
+      "shape": "v2"
     },
     "tile_14": {
       "id": "tile_14",
@@ -84,7 +88,9 @@
       "movementCost": 2,
       "defenseBonus": 1,
       "color": "#2e7d32",
-      "icon": "🌲"
+      "icon": "🌲",
+      "hexCount": 2,
+      "shape": "v2"
     },
     "tile_15": {
       "id": "tile_15",
@@ -97,7 +103,9 @@
       "color": "#2e7d32",
       "icon": "🌲",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 3,
+      "shape": "unknown"
     },
     "tile_16": {
       "id": "tile_16",
@@ -108,7 +116,9 @@
       "movementCost": 2,
       "defenseBonus": 1,
       "color": "#2e7d32",
-      "icon": "🌲"
+      "icon": "🌲",
+      "hexCount": 3,
+      "shape": "tri_down"
     },
     "tile_17": {
       "id": "tile_17",
@@ -121,7 +131,9 @@
       "color": "#2e7d32",
       "icon": "🌲",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 4,
+      "shape": "h2v2"
     },
     "tile_18": {
       "id": "tile_18",
@@ -134,7 +146,9 @@
       "color": "#2e7d32",
       "icon": "🌲",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 5,
+      "shape": "h2v3"
     },
     "tile_19": {
       "id": "tile_19",
@@ -145,7 +159,9 @@
       "movementCost": 2,
       "defenseBonus": 1,
       "color": "#2e7d32",
-      "icon": "🌲"
+      "icon": "🌲",
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_20": {
       "id": "tile_20",
@@ -156,7 +172,9 @@
       "movementCost": 2,
       "defenseBonus": 1,
       "color": "#2e7d32",
-      "icon": "🌲"
+      "icon": "🌲",
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_21": {
       "id": "tile_21",
@@ -169,7 +187,9 @@
       "color": "#2e7d32",
       "icon": "🌲",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 6,
+      "shape": "h3v2"
     },
     "tile_22": {
       "id": "tile_22",
@@ -180,7 +200,9 @@
       "movementCost": 4,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 2,
+      "shape": "h2"
     },
     "tile_23": {
       "id": "tile_23",
@@ -191,7 +213,9 @@
       "movementCost": 4,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 3,
+      "shape": "tri_down"
     },
     "tile_24": {
       "id": "tile_24",
@@ -202,7 +226,9 @@
       "movementCost": 4,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_25": {
       "id": "tile_25",
@@ -213,7 +239,9 @@
       "movementCost": 4,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_26": {
       "id": "tile_26",
@@ -225,7 +253,9 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "size": "large"
+      "size": "large",
+      "hexCount": 13,
+      "shape": "mega13"
     },
     "tile_27": {
       "id": "tile_27",
@@ -280,7 +310,9 @@
       "movementCost": 3,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 2,
+      "shape": "h2"
     },
     "tile_32": {
       "id": "tile_32",
@@ -291,7 +323,9 @@
       "movementCost": 3,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 2,
+      "shape": "h2"
     },
     "tile_33": {
       "id": "tile_33",
@@ -302,7 +336,9 @@
       "movementCost": 3,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 4,
+      "shape": "h3"
     },
     "tile_34": {
       "id": "tile_34",
@@ -313,7 +349,9 @@
       "movementCost": 3,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 4,
+      "shape": "h2v2"
     },
     "tile_35": {
       "id": "tile_35",
@@ -324,7 +362,9 @@
       "movementCost": 3,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 3,
+      "shape": "tri_down"
     },
     "tile_36": {
       "id": "tile_36",
@@ -335,7 +375,9 @@
       "movementCost": 3,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 3,
+      "shape": "tri_down"
     },
     "tile_37": {
       "id": "tile_37",
@@ -346,7 +388,9 @@
       "movementCost": 3,
       "defenseBonus": 0,
       "color": "#1976d2",
-      "icon": "💧"
+      "icon": "💧",
+      "hexCount": 4,
+      "shape": "h2v2"
     },
     "tile_38": {
       "id": "tile_38",
@@ -358,7 +402,9 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "size": "long"
+      "size": "long",
+      "hexCount": 4,
+      "shape": "v4"
     },
     "tile_39": {
       "id": "tile_39",
@@ -370,7 +416,9 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "size": "long"
+      "size": "long",
+      "hexCount": 4,
+      "shape": "v4"
     },
     "tile_40": {
       "id": "tile_40",
@@ -461,7 +509,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 2,
+      "shape": "v2"
     },
     "tile_47": {
       "id": "tile_47",
@@ -474,7 +524,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 2,
+      "shape": "h2"
     },
     "tile_48": {
       "id": "tile_48",
@@ -487,7 +539,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 2,
+      "shape": "h2"
     },
     "tile_49": {
       "id": "tile_49",
@@ -500,7 +554,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 2,
+      "shape": "h2"
     },
     "tile_50": {
       "id": "tile_50",
@@ -513,7 +569,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 3,
+      "shape": "tri_down"
     },
     "tile_51": {
       "id": "tile_51",
@@ -526,7 +584,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 4,
+      "shape": "h3"
     },
     "tile_52": {
       "id": "tile_52",
@@ -539,7 +599,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_53": {
       "id": "tile_53",
@@ -552,7 +614,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_54": {
       "id": "tile_54",
@@ -565,7 +629,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_55": {
       "id": "tile_55",
@@ -578,7 +644,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_56": {
       "id": "tile_56",
@@ -591,7 +659,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_57": {
       "id": "tile_57",
@@ -604,7 +674,9 @@
       "color": "#757575",
       "icon": "🏢",
       "blocksLOS": true,
-      "blocksVision": true
+      "blocksVision": true,
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_58": {
       "id": "tile_58",
@@ -618,7 +690,9 @@
       "icon": "🏢",
       "blocksLOS": true,
       "blocksVision": true,
-      "size": "mega"
+      "size": "mega",
+      "hexCount": 10,
+      "shape": "h5"
     },
     "tile_59": {
       "id": "tile_59",
