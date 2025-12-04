@@ -1,550 +1,1665 @@
 {
-  "name": "BattleTech Tiles",
-  "basePath": "/assets/tiles/battletech_singles/",
+  "system": "battletech",
+  "name": "BattleTech Singles",
+  "gridType": "hex",
+  "hexSize": 84,
   "categories": {
     "terrain": {
       "name": "Terreno",
       "icon": "🌿",
-      "color": "#4a7c23",
-      "tiles": [
-        {
-          "id": "llanura",
-          "name": "Llanura",
-          "files": ["11.png"],
-          "movement_cost": 1,
-          "defense_bonus": 0
-        },
-        {
-          "id": "llanura_mega",
-          "name": "Llanura (Mega)",
-          "files": ["12_0.png", "12_1.png", "12_2.png", "12_3.png", "12_4.png", "12_5.png", "12_6.png"],
-          "movement_cost": 1,
-          "defense_bonus": 0,
-          "grouped": true
-        }
-      ]
+      "color": "#4a7c23"
     },
     "woods": {
       "name": "Bosques",
       "icon": "🌲",
-      "color": "#2e7d32",
-      "tiles": [
-        {
-          "id": "bosque_1",
-          "name": "Bosque 1",
-          "files": ["13_0.png", "13_1.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1,
-          "grouped": true
-        },
-        {
-          "id": "bosque_2",
-          "name": "Bosque 2",
-          "files": ["14_0.png", "14_1.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1,
-          "grouped": true
-        },
-        {
-          "id": "bosque_denso_1",
-          "name": "Bosque Denso 1",
-          "files": ["15_0.png", "15_1.png", "15_2.png"],
-          "movement_cost": 3,
-          "defense_bonus": 2,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "bosque_3",
-          "name": "Bosque 3",
-          "files": ["16_0.png", "16_1.png", "16_2.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1,
-          "grouped": true
-        },
-        {
-          "id": "bosque_denso_2",
-          "name": "Bosque Denso 2",
-          "files": ["17_0.png", "17_1.png", "17_2.png", "17_3.png"],
-          "movement_cost": 3,
-          "defense_bonus": 2,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "bosque_denso_3",
-          "name": "Bosque Denso 3",
-          "files": ["18_0.png", "18_1.png", "18_2.png", "18_3.png", "18_4.png"],
-          "movement_cost": 3,
-          "defense_bonus": 2,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "bosque_4",
-          "name": "Bosque 4",
-          "files": ["19_0.png", "19_1.png", "19_2.png", "19_3.png", "19_4.png", "19_5.png", "19_6.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1,
-          "grouped": true
-        },
-        {
-          "id": "bosque_5",
-          "name": "Bosque 5",
-          "files": ["20_0.png", "20_1.png", "20_2.png", "20_3.png", "20_4.png", "20_5.png", "20_6.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1,
-          "grouped": true
-        },
-        {
-          "id": "bosque_denso_4",
-          "name": "Bosque Denso 4",
-          "files": ["21_0.png", "21_1.png", "21_2.png", "21_3.png", "21_4.png", "21_5.png", "21_6.png", "21_7.png", "21_8.png"],
-          "movement_cost": 3,
-          "defense_bonus": 2,
-          "blocksLOS": true,
-          "grouped": true
-        }
-      ]
+      "color": "#2e7d32"
     },
     "water": {
       "name": "Agua",
       "icon": "💧",
-      "color": "#1976d2",
-      "tiles": [
-        {
-          "id": "lago_1",
-          "name": "Lago 1",
-          "files": ["22_0.png", "22_1.png"],
-          "movement_cost": 4,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "lago_2",
-          "name": "Lago 2",
-          "files": ["23_0.png", "23_1.png", "23_2.png"],
-          "movement_cost": 4,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "lago_3",
-          "name": "Lago 3",
-          "files": ["24_0.png", "24_1.png", "24_2.png", "24_3.png", "24_4.png", "24_5.png", "24_6.png"],
-          "movement_cost": 4,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "lago_4",
-          "name": "Lago 4",
-          "files": ["25_0.png", "25_1.png", "25_2.png", "25_3.png", "25_4.png", "25_5.png", "25_6.png"],
-          "movement_cost": 4,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_1",
-          "name": "Río 1",
-          "files": ["27.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0
-        },
-        {
-          "id": "rio_2",
-          "name": "Río 2",
-          "files": ["28.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0
-        },
-        {
-          "id": "rio_3",
-          "name": "Río 3",
-          "files": ["29.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0
-        },
-        {
-          "id": "rio_4",
-          "name": "Río 4",
-          "files": ["30.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0
-        },
-        {
-          "id": "rio_5",
-          "name": "Río 5",
-          "files": ["31_0.png", "31_1.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_6",
-          "name": "Río 6",
-          "files": ["32_0.png", "32_1.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_7",
-          "name": "Río 7",
-          "files": ["33_0.png", "33_1.png", "33_2.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_8",
-          "name": "Río 8",
-          "files": ["34_0.png", "34_1.png", "34_2.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_9",
-          "name": "Río 9",
-          "files": ["35_0.png", "35_1.png", "35_2.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_10",
-          "name": "Río 10",
-          "files": ["36_0.png", "36_1.png", "36_2.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_11",
-          "name": "Río 11",
-          "files": ["37_0.png", "37_1.png", "37_2.png", "37_3.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_largo_1",
-          "name": "Río Largo 1",
-          "files": ["38_0.png", "38_1.png", "38_2.png", "38_3.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        },
-        {
-          "id": "rio_largo_2",
-          "name": "Río Largo 2",
-          "files": ["39_0.png", "39_1.png", "39_2.png", "39_3.png"],
-          "movement_cost": 3,
-          "defense_bonus": 0,
-          "grouped": true
-        }
-      ]
+      "color": "#1976d2"
     },
     "urban": {
       "name": "Urbano",
       "icon": "🏢",
-      "color": "#757575",
-      "tiles": [
-        {
-          "id": "edificio_1",
-          "name": "Edificio 1",
-          "files": ["40.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true
-        },
-        {
-          "id": "edificio_2",
-          "name": "Edificio 2",
-          "files": ["41.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true
-        },
-        {
-          "id": "edificio_3",
-          "name": "Edificio 3",
-          "files": ["42.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true
-        },
-        {
-          "id": "edificio_4",
-          "name": "Edificio 4",
-          "files": ["43.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true
-        },
-        {
-          "id": "edificio_5",
-          "name": "Edificio 5",
-          "files": ["44.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true
-        },
-        {
-          "id": "bunker",
-          "name": "Búnker",
-          "files": ["45.png"],
-          "movement_cost": 999,
-          "defense_bonus": 4,
-          "blocksLOS": true
-        },
-        {
-          "id": "edificio_medio_1",
-          "name": "Edificio Medio 1",
-          "files": ["46_0.png", "46_1.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_medio_2",
-          "name": "Edificio Medio 2",
-          "files": ["47_0.png", "47_1.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_medio_3",
-          "name": "Edificio Medio 3",
-          "files": ["48_0.png", "48_1.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_medio_4",
-          "name": "Edificio Medio 4",
-          "files": ["49_0.png", "49_1.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_medio_5",
-          "name": "Edificio Medio 5",
-          "files": ["50_0.png", "50_1.png", "50_2.png"],
-          "movement_cost": 999,
-          "defense_bonus": 3,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_grande_1",
-          "name": "Edificio Grande 1",
-          "files": ["51_0.png", "51_1.png", "51_2.png", "51_3.png"],
-          "movement_cost": 999,
-          "defense_bonus": 4,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_grande_2",
-          "name": "Edificio Grande 2",
-          "files": ["52_0.png", "52_1.png", "52_2.png", "52_3.png", "52_4.png", "52_5.png", "52_6.png"],
-          "movement_cost": 999,
-          "defense_bonus": 4,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_grande_3",
-          "name": "Edificio Grande 3",
-          "files": ["53_0.png", "53_1.png", "53_2.png", "53_3.png", "53_4.png", "53_5.png", "53_6.png"],
-          "movement_cost": 999,
-          "defense_bonus": 4,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_grande_4",
-          "name": "Edificio Grande 4",
-          "files": ["54_0.png", "54_1.png", "54_2.png", "54_3.png", "54_4.png", "54_5.png", "54_6.png"],
-          "movement_cost": 999,
-          "defense_bonus": 4,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_grande_5",
-          "name": "Edificio Grande 5",
-          "files": ["55_0.png", "55_1.png", "55_2.png", "55_3.png", "55_4.png", "55_5.png", "55_6.png"],
-          "movement_cost": 999,
-          "defense_bonus": 4,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_grande_6",
-          "name": "Edificio Grande 6",
-          "files": ["56_0.png", "56_1.png", "56_2.png", "56_3.png", "56_4.png", "56_5.png", "56_6.png"],
-          "movement_cost": 999,
-          "defense_bonus": 4,
-          "blocksLOS": true,
-          "grouped": true
-        },
-        {
-          "id": "edificio_grande_7",
-          "name": "Edificio Grande 7",
-          "files": ["57_0.png", "57_1.png", "57_2.png", "57_3.png", "57_4.png", "57_5.png", "57_6.png"],
-          "movement_cost": 999,
-          "defense_bonus": 4,
-          "blocksLOS": true,
-          "grouped": true
-        }
-      ]
+      "color": "#757575"
     },
     "rough": {
       "name": "Rocoso",
       "icon": "🪨",
-      "color": "#8d6e63",
-      "tiles": [
-        {
-          "id": "rocoso",
-          "name": "Rocoso",
-          "files": ["59.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "terreno_dificil",
-          "name": "Terreno Difícil",
-          "files": ["60.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "rough_1",
-          "name": "Rough 1",
-          "files": ["61.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "rough_2",
-          "name": "Rough 2",
-          "files": ["62.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "rough_3",
-          "name": "Rough 3",
-          "files": ["63.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "rough_4",
-          "name": "Rough 4",
-          "files": ["64.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "rough_5",
-          "name": "Rough 5",
-          "files": ["65.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "rough_6",
-          "name": "Rough 6",
-          "files": ["66.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        }
-      ]
+      "color": "#8d6e63"
     },
     "rubble": {
       "name": "Escombros",
       "icon": "🧱",
-      "color": "#a1887f",
-      "tiles": [
-        {
-          "id": "escombros_1",
-          "name": "Escombros 1",
-          "files": ["67.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "escombros_2",
-          "name": "Escombros 2",
-          "files": ["68.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "escombros_lr_1",
-          "name": "Escombros LR 1",
-          "files": ["69.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        },
-        {
-          "id": "escombros_lr_2",
-          "name": "Escombros LR 2",
-          "files": ["70.png"],
-          "movement_cost": 2,
-          "defense_bonus": 1
-        }
-      ]
+      "color": "#a1887f"
     },
     "hazards": {
       "name": "Peligros",
       "icon": "⚠️",
-      "color": "#f44336",
-      "tiles": [
-        {
-          "id": "minas_vibra",
-          "name": "Minas Vibra",
-          "files": ["71.png"],
-          "movement_cost": 1,
-          "defense_bonus": 0,
-          "special": "mine_vibra"
-        },
-        {
-          "id": "minas_detonacion",
-          "name": "Minas Detonación",
-          "files": ["72.png"],
-          "movement_cost": 1,
-          "defense_bonus": 0,
-          "special": "mine_command"
-        },
-        {
-          "id": "minas_convencional",
-          "name": "Minas Convencional",
-          "files": ["73.png"],
-          "movement_cost": 1,
-          "defense_bonus": 0,
-          "special": "mine_conv"
-        },
-        {
-          "id": "humo",
-          "name": "Humo",
-          "files": ["74.png"],
-          "movement_cost": 1,
-          "defense_bonus": 1,
-          "blocksLOS": true
-        }
-      ]
+      "color": "#f44336"
+    }
+  },
+  "tiles": {
+    "bt_11": {
+      "id": "bt_11",
+      "name": "Llanura",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech_singles/11.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": null
+    },
+    "bt_12_0": {
+      "id": "bt_12_0",
+      "name": "Llanura Mega #0",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech_singles/12_0.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": "12"
+    },
+    "bt_12_1": {
+      "id": "bt_12_1",
+      "name": "Llanura Mega #1",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech_singles/12_1.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": "12"
+    },
+    "bt_12_2": {
+      "id": "bt_12_2",
+      "name": "Llanura Mega #2",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech_singles/12_2.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": "12"
+    },
+    "bt_12_3": {
+      "id": "bt_12_3",
+      "name": "Llanura Mega #3",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech_singles/12_3.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": "12"
+    },
+    "bt_12_4": {
+      "id": "bt_12_4",
+      "name": "Llanura Mega #4",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech_singles/12_4.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": "12"
+    },
+    "bt_12_5": {
+      "id": "bt_12_5",
+      "name": "Llanura Mega #5",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech_singles/12_5.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": "12"
+    },
+    "bt_12_6": {
+      "id": "bt_12_6",
+      "name": "Llanura Mega #6",
+      "category": "terrain",
+      "file": "/assets/tiles/battletech_singles/12_6.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": "12"
+    },
+    "bt_13_0": {
+      "id": "bt_13_0",
+      "name": "Bosque 1 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/13_0.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "13"
+    },
+    "bt_13_1": {
+      "id": "bt_13_1",
+      "name": "Bosque 1 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/13_1.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "13"
+    },
+    "bt_14_0": {
+      "id": "bt_14_0",
+      "name": "Bosque 2 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/14_0.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "14"
+    },
+    "bt_14_1": {
+      "id": "bt_14_1",
+      "name": "Bosque 2 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/14_1.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "14"
+    },
+    "bt_15_0": {
+      "id": "bt_15_0",
+      "name": "Bosque Denso 1 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/15_0.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "15"
+    },
+    "bt_15_1": {
+      "id": "bt_15_1",
+      "name": "Bosque Denso 1 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/15_1.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "15"
+    },
+    "bt_15_2": {
+      "id": "bt_15_2",
+      "name": "Bosque Denso 1 #2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/15_2.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "15"
+    },
+    "bt_16_0": {
+      "id": "bt_16_0",
+      "name": "Bosque 3 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/16_0.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "16"
+    },
+    "bt_16_1": {
+      "id": "bt_16_1",
+      "name": "Bosque 3 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/16_1.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "16"
+    },
+    "bt_16_2": {
+      "id": "bt_16_2",
+      "name": "Bosque 3 #2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/16_2.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "16"
+    },
+    "bt_17_0": {
+      "id": "bt_17_0",
+      "name": "Bosque Denso 2 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/17_0.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "17"
+    },
+    "bt_17_1": {
+      "id": "bt_17_1",
+      "name": "Bosque Denso 2 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/17_1.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "17"
+    },
+    "bt_17_2": {
+      "id": "bt_17_2",
+      "name": "Bosque Denso 2 #2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/17_2.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "17"
+    },
+    "bt_17_3": {
+      "id": "bt_17_3",
+      "name": "Bosque Denso 2 #3",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/17_3.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "17"
+    },
+    "bt_18_0": {
+      "id": "bt_18_0",
+      "name": "Bosque Denso 3 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/18_0.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "18"
+    },
+    "bt_18_1": {
+      "id": "bt_18_1",
+      "name": "Bosque Denso 3 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/18_1.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "18"
+    },
+    "bt_18_2": {
+      "id": "bt_18_2",
+      "name": "Bosque Denso 3 #2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/18_2.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "18"
+    },
+    "bt_18_3": {
+      "id": "bt_18_3",
+      "name": "Bosque Denso 3 #3",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/18_3.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "18"
+    },
+    "bt_18_4": {
+      "id": "bt_18_4",
+      "name": "Bosque Denso 3 #4",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/18_4.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "18"
+    },
+    "bt_19_0": {
+      "id": "bt_19_0",
+      "name": "Bosque 4 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/19_0.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "19"
+    },
+    "bt_19_1": {
+      "id": "bt_19_1",
+      "name": "Bosque 4 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/19_1.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "19"
+    },
+    "bt_19_2": {
+      "id": "bt_19_2",
+      "name": "Bosque 4 #2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/19_2.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "19"
+    },
+    "bt_19_3": {
+      "id": "bt_19_3",
+      "name": "Bosque 4 #3",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/19_3.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "19"
+    },
+    "bt_19_4": {
+      "id": "bt_19_4",
+      "name": "Bosque 4 #4",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/19_4.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "19"
+    },
+    "bt_19_5": {
+      "id": "bt_19_5",
+      "name": "Bosque 4 #5",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/19_5.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "19"
+    },
+    "bt_19_6": {
+      "id": "bt_19_6",
+      "name": "Bosque 4 #6",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/19_6.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "19"
+    },
+    "bt_20_0": {
+      "id": "bt_20_0",
+      "name": "Bosque 5 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/20_0.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "20"
+    },
+    "bt_20_1": {
+      "id": "bt_20_1",
+      "name": "Bosque 5 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/20_1.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "20"
+    },
+    "bt_20_2": {
+      "id": "bt_20_2",
+      "name": "Bosque 5 #2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/20_2.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "20"
+    },
+    "bt_20_3": {
+      "id": "bt_20_3",
+      "name": "Bosque 5 #3",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/20_3.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "20"
+    },
+    "bt_20_4": {
+      "id": "bt_20_4",
+      "name": "Bosque 5 #4",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/20_4.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "20"
+    },
+    "bt_20_5": {
+      "id": "bt_20_5",
+      "name": "Bosque 5 #5",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/20_5.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "20"
+    },
+    "bt_20_6": {
+      "id": "bt_20_6",
+      "name": "Bosque 5 #6",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/20_6.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": "20"
+    },
+    "bt_21_0": {
+      "id": "bt_21_0",
+      "name": "Bosque Denso 4 #0",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_0.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_21_1": {
+      "id": "bt_21_1",
+      "name": "Bosque Denso 4 #1",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_1.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_21_2": {
+      "id": "bt_21_2",
+      "name": "Bosque Denso 4 #2",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_2.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_21_3": {
+      "id": "bt_21_3",
+      "name": "Bosque Denso 4 #3",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_3.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_21_4": {
+      "id": "bt_21_4",
+      "name": "Bosque Denso 4 #4",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_4.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_21_5": {
+      "id": "bt_21_5",
+      "name": "Bosque Denso 4 #5",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_5.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_21_6": {
+      "id": "bt_21_6",
+      "name": "Bosque Denso 4 #6",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_6.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_21_7": {
+      "id": "bt_21_7",
+      "name": "Bosque Denso 4 #7",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_7.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_21_8": {
+      "id": "bt_21_8",
+      "name": "Bosque Denso 4 #8",
+      "category": "woods",
+      "file": "/assets/tiles/battletech_singles/21_8.png",
+      "movementCost": 3,
+      "defenseBonus": 2,
+      "group": "21"
+    },
+    "bt_22_0": {
+      "id": "bt_22_0",
+      "name": "Lago 1 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/22_0.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "22"
+    },
+    "bt_22_1": {
+      "id": "bt_22_1",
+      "name": "Lago 1 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/22_1.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "22"
+    },
+    "bt_23_0": {
+      "id": "bt_23_0",
+      "name": "Lago 2 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/23_0.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "23"
+    },
+    "bt_23_1": {
+      "id": "bt_23_1",
+      "name": "Lago 2 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/23_1.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "23"
+    },
+    "bt_23_2": {
+      "id": "bt_23_2",
+      "name": "Lago 2 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/23_2.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "23"
+    },
+    "bt_24_0": {
+      "id": "bt_24_0",
+      "name": "Lago 3 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/24_0.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "24"
+    },
+    "bt_24_1": {
+      "id": "bt_24_1",
+      "name": "Lago 3 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/24_1.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "24"
+    },
+    "bt_24_2": {
+      "id": "bt_24_2",
+      "name": "Lago 3 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/24_2.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "24"
+    },
+    "bt_24_3": {
+      "id": "bt_24_3",
+      "name": "Lago 3 #3",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/24_3.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "24"
+    },
+    "bt_24_4": {
+      "id": "bt_24_4",
+      "name": "Lago 3 #4",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/24_4.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "24"
+    },
+    "bt_24_5": {
+      "id": "bt_24_5",
+      "name": "Lago 3 #5",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/24_5.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "24"
+    },
+    "bt_24_6": {
+      "id": "bt_24_6",
+      "name": "Lago 3 #6",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/24_6.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "24"
+    },
+    "bt_25_0": {
+      "id": "bt_25_0",
+      "name": "Lago 4 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/25_0.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "25"
+    },
+    "bt_25_1": {
+      "id": "bt_25_1",
+      "name": "Lago 4 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/25_1.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "25"
+    },
+    "bt_25_2": {
+      "id": "bt_25_2",
+      "name": "Lago 4 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/25_2.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "25"
+    },
+    "bt_25_3": {
+      "id": "bt_25_3",
+      "name": "Lago 4 #3",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/25_3.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "25"
+    },
+    "bt_25_4": {
+      "id": "bt_25_4",
+      "name": "Lago 4 #4",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/25_4.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "25"
+    },
+    "bt_25_5": {
+      "id": "bt_25_5",
+      "name": "Lago 4 #5",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/25_5.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "25"
+    },
+    "bt_25_6": {
+      "id": "bt_25_6",
+      "name": "Lago 4 #6",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/25_6.png",
+      "movementCost": 4,
+      "defenseBonus": 0,
+      "group": "25"
+    },
+    "bt_27": {
+      "id": "bt_27",
+      "name": "Río 1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/27.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": null
+    },
+    "bt_28": {
+      "id": "bt_28",
+      "name": "Río 2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/28.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": null
+    },
+    "bt_29": {
+      "id": "bt_29",
+      "name": "Río 3",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/29.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": null
+    },
+    "bt_30": {
+      "id": "bt_30",
+      "name": "Río 4",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/30.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": null
+    },
+    "bt_31_0": {
+      "id": "bt_31_0",
+      "name": "Río 5 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/31_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "31"
+    },
+    "bt_31_1": {
+      "id": "bt_31_1",
+      "name": "Río 5 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/31_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "31"
+    },
+    "bt_32_0": {
+      "id": "bt_32_0",
+      "name": "Río 6 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/32_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "32"
+    },
+    "bt_32_1": {
+      "id": "bt_32_1",
+      "name": "Río 6 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/32_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "32"
+    },
+    "bt_33_0": {
+      "id": "bt_33_0",
+      "name": "Río 7 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/33_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "33"
+    },
+    "bt_33_1": {
+      "id": "bt_33_1",
+      "name": "Río 7 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/33_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "33"
+    },
+    "bt_33_2": {
+      "id": "bt_33_2",
+      "name": "Río 7 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/33_2.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "33"
+    },
+    "bt_34_0": {
+      "id": "bt_34_0",
+      "name": "Río 8 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/34_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "34"
+    },
+    "bt_34_1": {
+      "id": "bt_34_1",
+      "name": "Río 8 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/34_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "34"
+    },
+    "bt_34_2": {
+      "id": "bt_34_2",
+      "name": "Río 8 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/34_2.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "34"
+    },
+    "bt_35_0": {
+      "id": "bt_35_0",
+      "name": "Río 9 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/35_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "35"
+    },
+    "bt_35_1": {
+      "id": "bt_35_1",
+      "name": "Río 9 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/35_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "35"
+    },
+    "bt_35_2": {
+      "id": "bt_35_2",
+      "name": "Río 9 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/35_2.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "35"
+    },
+    "bt_36_0": {
+      "id": "bt_36_0",
+      "name": "Río 10 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/36_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "36"
+    },
+    "bt_36_1": {
+      "id": "bt_36_1",
+      "name": "Río 10 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/36_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "36"
+    },
+    "bt_36_2": {
+      "id": "bt_36_2",
+      "name": "Río 10 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/36_2.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "36"
+    },
+    "bt_37_0": {
+      "id": "bt_37_0",
+      "name": "Río 11 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/37_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "37"
+    },
+    "bt_37_1": {
+      "id": "bt_37_1",
+      "name": "Río 11 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/37_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "37"
+    },
+    "bt_37_2": {
+      "id": "bt_37_2",
+      "name": "Río 11 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/37_2.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "37"
+    },
+    "bt_37_3": {
+      "id": "bt_37_3",
+      "name": "Río 11 #3",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/37_3.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "37"
+    },
+    "bt_38_0": {
+      "id": "bt_38_0",
+      "name": "Río Largo 1 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/38_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "38"
+    },
+    "bt_38_1": {
+      "id": "bt_38_1",
+      "name": "Río Largo 1 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/38_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "38"
+    },
+    "bt_38_2": {
+      "id": "bt_38_2",
+      "name": "Río Largo 1 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/38_2.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "38"
+    },
+    "bt_38_3": {
+      "id": "bt_38_3",
+      "name": "Río Largo 1 #3",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/38_3.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "38"
+    },
+    "bt_39_0": {
+      "id": "bt_39_0",
+      "name": "Río Largo 2 #0",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/39_0.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "39"
+    },
+    "bt_39_1": {
+      "id": "bt_39_1",
+      "name": "Río Largo 2 #1",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/39_1.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "39"
+    },
+    "bt_39_2": {
+      "id": "bt_39_2",
+      "name": "Río Largo 2 #2",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/39_2.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "39"
+    },
+    "bt_39_3": {
+      "id": "bt_39_3",
+      "name": "Río Largo 2 #3",
+      "category": "water",
+      "file": "/assets/tiles/battletech_singles/39_3.png",
+      "movementCost": 3,
+      "defenseBonus": 0,
+      "group": "39"
+    },
+    "bt_40": {
+      "id": "bt_40",
+      "name": "Edificio 1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/40.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": null
+    },
+    "bt_41": {
+      "id": "bt_41",
+      "name": "Edificio 2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/41.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": null
+    },
+    "bt_42": {
+      "id": "bt_42",
+      "name": "Edificio 3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/42.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": null
+    },
+    "bt_43": {
+      "id": "bt_43",
+      "name": "Edificio 4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/43.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": null
+    },
+    "bt_44": {
+      "id": "bt_44",
+      "name": "Edificio 5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/44.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": null
+    },
+    "bt_45": {
+      "id": "bt_45",
+      "name": "Búnker",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/45.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": null
+    },
+    "bt_46_0": {
+      "id": "bt_46_0",
+      "name": "Edificio Medio 1 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/46_0.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "46"
+    },
+    "bt_46_1": {
+      "id": "bt_46_1",
+      "name": "Edificio Medio 1 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/46_1.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "46"
+    },
+    "bt_47_0": {
+      "id": "bt_47_0",
+      "name": "Edificio Medio 2 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/47_0.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "47"
+    },
+    "bt_47_1": {
+      "id": "bt_47_1",
+      "name": "Edificio Medio 2 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/47_1.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "47"
+    },
+    "bt_48_0": {
+      "id": "bt_48_0",
+      "name": "Edificio Medio 3 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/48_0.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "48"
+    },
+    "bt_48_1": {
+      "id": "bt_48_1",
+      "name": "Edificio Medio 3 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/48_1.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "48"
+    },
+    "bt_49_0": {
+      "id": "bt_49_0",
+      "name": "Edificio Medio 4 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/49_0.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "49"
+    },
+    "bt_49_1": {
+      "id": "bt_49_1",
+      "name": "Edificio Medio 4 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/49_1.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "49"
+    },
+    "bt_50_0": {
+      "id": "bt_50_0",
+      "name": "Edificio Medio 5 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/50_0.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "50"
+    },
+    "bt_50_1": {
+      "id": "bt_50_1",
+      "name": "Edificio Medio 5 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/50_1.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "50"
+    },
+    "bt_50_2": {
+      "id": "bt_50_2",
+      "name": "Edificio Medio 5 #2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/50_2.png",
+      "movementCost": 999,
+      "defenseBonus": 3,
+      "group": "50"
+    },
+    "bt_51_0": {
+      "id": "bt_51_0",
+      "name": "Edificio Grande 1 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/51_0.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "51"
+    },
+    "bt_51_1": {
+      "id": "bt_51_1",
+      "name": "Edificio Grande 1 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/51_1.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "51"
+    },
+    "bt_51_2": {
+      "id": "bt_51_2",
+      "name": "Edificio Grande 1 #2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/51_2.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "51"
+    },
+    "bt_51_3": {
+      "id": "bt_51_3",
+      "name": "Edificio Grande 1 #3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/51_3.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "51"
+    },
+    "bt_52_0": {
+      "id": "bt_52_0",
+      "name": "Edificio Grande 2 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/52_0.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "52"
+    },
+    "bt_52_1": {
+      "id": "bt_52_1",
+      "name": "Edificio Grande 2 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/52_1.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "52"
+    },
+    "bt_52_2": {
+      "id": "bt_52_2",
+      "name": "Edificio Grande 2 #2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/52_2.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "52"
+    },
+    "bt_52_3": {
+      "id": "bt_52_3",
+      "name": "Edificio Grande 2 #3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/52_3.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "52"
+    },
+    "bt_52_4": {
+      "id": "bt_52_4",
+      "name": "Edificio Grande 2 #4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/52_4.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "52"
+    },
+    "bt_52_5": {
+      "id": "bt_52_5",
+      "name": "Edificio Grande 2 #5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/52_5.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "52"
+    },
+    "bt_52_6": {
+      "id": "bt_52_6",
+      "name": "Edificio Grande 2 #6",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/52_6.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "52"
+    },
+    "bt_53_0": {
+      "id": "bt_53_0",
+      "name": "Edificio Grande 3 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/53_0.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "53"
+    },
+    "bt_53_1": {
+      "id": "bt_53_1",
+      "name": "Edificio Grande 3 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/53_1.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "53"
+    },
+    "bt_53_2": {
+      "id": "bt_53_2",
+      "name": "Edificio Grande 3 #2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/53_2.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "53"
+    },
+    "bt_53_3": {
+      "id": "bt_53_3",
+      "name": "Edificio Grande 3 #3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/53_3.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "53"
+    },
+    "bt_53_4": {
+      "id": "bt_53_4",
+      "name": "Edificio Grande 3 #4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/53_4.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "53"
+    },
+    "bt_53_5": {
+      "id": "bt_53_5",
+      "name": "Edificio Grande 3 #5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/53_5.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "53"
+    },
+    "bt_53_6": {
+      "id": "bt_53_6",
+      "name": "Edificio Grande 3 #6",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/53_6.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "53"
+    },
+    "bt_54_0": {
+      "id": "bt_54_0",
+      "name": "Edificio Grande 4 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/54_0.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "54"
+    },
+    "bt_54_1": {
+      "id": "bt_54_1",
+      "name": "Edificio Grande 4 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/54_1.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "54"
+    },
+    "bt_54_2": {
+      "id": "bt_54_2",
+      "name": "Edificio Grande 4 #2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/54_2.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "54"
+    },
+    "bt_54_3": {
+      "id": "bt_54_3",
+      "name": "Edificio Grande 4 #3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/54_3.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "54"
+    },
+    "bt_54_4": {
+      "id": "bt_54_4",
+      "name": "Edificio Grande 4 #4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/54_4.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "54"
+    },
+    "bt_54_5": {
+      "id": "bt_54_5",
+      "name": "Edificio Grande 4 #5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/54_5.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "54"
+    },
+    "bt_54_6": {
+      "id": "bt_54_6",
+      "name": "Edificio Grande 4 #6",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/54_6.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "54"
+    },
+    "bt_55_0": {
+      "id": "bt_55_0",
+      "name": "Edificio Grande 5 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/55_0.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "55"
+    },
+    "bt_55_1": {
+      "id": "bt_55_1",
+      "name": "Edificio Grande 5 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/55_1.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "55"
+    },
+    "bt_55_2": {
+      "id": "bt_55_2",
+      "name": "Edificio Grande 5 #2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/55_2.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "55"
+    },
+    "bt_55_3": {
+      "id": "bt_55_3",
+      "name": "Edificio Grande 5 #3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/55_3.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "55"
+    },
+    "bt_55_4": {
+      "id": "bt_55_4",
+      "name": "Edificio Grande 5 #4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/55_4.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "55"
+    },
+    "bt_55_5": {
+      "id": "bt_55_5",
+      "name": "Edificio Grande 5 #5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/55_5.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "55"
+    },
+    "bt_55_6": {
+      "id": "bt_55_6",
+      "name": "Edificio Grande 5 #6",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/55_6.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "55"
+    },
+    "bt_56_0": {
+      "id": "bt_56_0",
+      "name": "Edificio Grande 6 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/56_0.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "56"
+    },
+    "bt_56_1": {
+      "id": "bt_56_1",
+      "name": "Edificio Grande 6 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/56_1.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "56"
+    },
+    "bt_56_2": {
+      "id": "bt_56_2",
+      "name": "Edificio Grande 6 #2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/56_2.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "56"
+    },
+    "bt_56_3": {
+      "id": "bt_56_3",
+      "name": "Edificio Grande 6 #3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/56_3.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "56"
+    },
+    "bt_56_4": {
+      "id": "bt_56_4",
+      "name": "Edificio Grande 6 #4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/56_4.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "56"
+    },
+    "bt_56_5": {
+      "id": "bt_56_5",
+      "name": "Edificio Grande 6 #5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/56_5.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "56"
+    },
+    "bt_56_6": {
+      "id": "bt_56_6",
+      "name": "Edificio Grande 6 #6",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/56_6.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "56"
+    },
+    "bt_57_0": {
+      "id": "bt_57_0",
+      "name": "Edificio Grande 7 #0",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/57_0.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "57"
+    },
+    "bt_57_1": {
+      "id": "bt_57_1",
+      "name": "Edificio Grande 7 #1",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/57_1.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "57"
+    },
+    "bt_57_2": {
+      "id": "bt_57_2",
+      "name": "Edificio Grande 7 #2",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/57_2.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "57"
+    },
+    "bt_57_3": {
+      "id": "bt_57_3",
+      "name": "Edificio Grande 7 #3",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/57_3.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "57"
+    },
+    "bt_57_4": {
+      "id": "bt_57_4",
+      "name": "Edificio Grande 7 #4",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/57_4.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "57"
+    },
+    "bt_57_5": {
+      "id": "bt_57_5",
+      "name": "Edificio Grande 7 #5",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/57_5.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "57"
+    },
+    "bt_57_6": {
+      "id": "bt_57_6",
+      "name": "Edificio Grande 7 #6",
+      "category": "urban",
+      "file": "/assets/tiles/battletech_singles/57_6.png",
+      "movementCost": 999,
+      "defenseBonus": 4,
+      "group": "57"
+    },
+    "bt_59": {
+      "id": "bt_59",
+      "name": "Rocoso",
+      "category": "rough",
+      "file": "/assets/tiles/battletech_singles/59.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_60": {
+      "id": "bt_60",
+      "name": "Terreno Difícil",
+      "category": "rough",
+      "file": "/assets/tiles/battletech_singles/60.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_61": {
+      "id": "bt_61",
+      "name": "Rough 1",
+      "category": "rough",
+      "file": "/assets/tiles/battletech_singles/61.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_62": {
+      "id": "bt_62",
+      "name": "Rough 2",
+      "category": "rough",
+      "file": "/assets/tiles/battletech_singles/62.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_63": {
+      "id": "bt_63",
+      "name": "Rough 3",
+      "category": "rough",
+      "file": "/assets/tiles/battletech_singles/63.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_64": {
+      "id": "bt_64",
+      "name": "Rough 4",
+      "category": "rough",
+      "file": "/assets/tiles/battletech_singles/64.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_65": {
+      "id": "bt_65",
+      "name": "Rough 5",
+      "category": "rough",
+      "file": "/assets/tiles/battletech_singles/65.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_66": {
+      "id": "bt_66",
+      "name": "Rough 6",
+      "category": "rough",
+      "file": "/assets/tiles/battletech_singles/66.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_67": {
+      "id": "bt_67",
+      "name": "Escombros 1",
+      "category": "rubble",
+      "file": "/assets/tiles/battletech_singles/67.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_68": {
+      "id": "bt_68",
+      "name": "Escombros 2",
+      "category": "rubble",
+      "file": "/assets/tiles/battletech_singles/68.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_69": {
+      "id": "bt_69",
+      "name": "Escombros LR 1",
+      "category": "rubble",
+      "file": "/assets/tiles/battletech_singles/69.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_70": {
+      "id": "bt_70",
+      "name": "Escombros LR 2",
+      "category": "rubble",
+      "file": "/assets/tiles/battletech_singles/70.png",
+      "movementCost": 2,
+      "defenseBonus": 1,
+      "group": null
+    },
+    "bt_71": {
+      "id": "bt_71",
+      "name": "Minas Vibra",
+      "category": "hazards",
+      "file": "/assets/tiles/battletech_singles/71.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": null
+    },
+    "bt_72": {
+      "id": "bt_72",
+      "name": "Minas Detonación",
+      "category": "hazards",
+      "file": "/assets/tiles/battletech_singles/72.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": null
+    },
+    "bt_73": {
+      "id": "bt_73",
+      "name": "Minas Convencional",
+      "category": "hazards",
+      "file": "/assets/tiles/battletech_singles/73.png",
+      "movementCost": 1,
+      "defenseBonus": 0,
+      "group": null
+    },
+    "bt_74": {
+      "id": "bt_74",
+      "name": "Humo",
+      "category": "hazards",
+      "file": "/assets/tiles/battletech_singles/74.png",
+      "movementCost": 1,
+      "defenseBonus": 1,
+      "group": null
     }
   }
 }
