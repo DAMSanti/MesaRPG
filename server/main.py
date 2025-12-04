@@ -494,6 +494,20 @@ async def get_available_markers():
     return {"markers": game_state.state.available_markers}
 
 
+# === Archivos de Configuración ===
+
+@app.get("/config/{filename}")
+async def get_config_file(filename: str):
+    """Sirve archivos JSON de configuración"""
+    if not filename.endswith('.json'):
+        raise HTTPException(status_code=400, detail="Solo archivos JSON permitidos")
+    
+    file_path = CONFIG_DIR / filename
+    if file_path.exists():
+        return FileResponse(file_path, media_type="application/json")
+    raise HTTPException(status_code=404, detail=f"Archivo de configuración no encontrado: {filename}")
+
+
 # === API de Tiles y Mapas ===
 
 @app.get("/api/tiles")
