@@ -216,15 +216,14 @@ class GameStateManager:
         if not sheet or sheet.status != CharacterStatus.APPROVED:
             return False
         
-        # Verificar que el marcador está disponible
-        if marker_id not in self.state.available_markers:
-            return False
-        
         # Asignar marcador y token visual
         sheet.marker_id = marker_id
         sheet.token_visual = token_visual
         sheet.status = CharacterStatus.IN_GAME
-        self.state.available_markers.remove(marker_id)
+        
+        # Quitar de available_markers si estaba ahí (legacy ArUco)
+        if marker_id in self.state.available_markers:
+            self.state.available_markers.remove(marker_id)
         
         await self._notify_change("token_assigned", {
             "sheet": self._serialize_sheet(sheet),

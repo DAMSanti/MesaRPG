@@ -213,6 +213,10 @@ async function setGameSystem(systemId) {
             loadPendingSheets();
             loadApprovedSheets();
             loadAvailableMarkers();
+            
+            // Actualizar galería de tokens para el nuevo sistema
+            renderTokenGallery();
+            renderSheetsForToken();
         } else {
             alert('Error al cambiar el sistema de juego');
         }
@@ -276,7 +280,8 @@ async function loadApprovedSheets() {
         approvedSheets = await response.json();
         renderApprovedSheets();
         renderAssignedTokens();
-        updateSheetForTokenSelect();
+        renderSheetsForToken();
+        renderTokenGallery();
     } catch (error) {
         console.error('Error loading approved sheets:', error);
     }
