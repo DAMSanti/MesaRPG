@@ -640,6 +640,21 @@ class MapEditor {
         
         const neighbors = this.getHexNeighbors(x, y);
         const cells = [{ x, y, isCenter: true }]; // Siempre incluir el centro/origen
+        const isOddCol = (x % 2) === 1;
+        
+        // Helper para obtener el vecino "horizontal" derecho alineado
+        const getRightNeighbor = (col, row) => {
+            // En flat-top, al ir a la columna siguiente, si cambiamos de paridad
+            // necesitamos ajustar y para mantener alineación visual
+            if (col % 2 === 0) {
+                // De par a impar: el vecino alineado es (col+1, row)
+                return { x: col + 1, y: row };
+            } else {
+                // De impar a par: el vecino alineado es (col+1, row-1) para alinear arriba
+                // o (col+1, row) para alinear abajo
+                return { x: col + 1, y: row };
+            }
+        };
         
         switch (shape) {
             case 'mega': // 7 hex - centro + 6 vecinos
@@ -647,26 +662,34 @@ class MapEditor {
                 break;
                 
             case 'h2': // 2 hex horizontal (derecha)
-                // En flat-top, vecino horizontal derecho
-                cells.push(neighbors[5]); // abajo-der para columna par, o neighbors[4] para impar
+                // Usar el vecino derecho que esté más alineado horizontalmente
+                if (isOddCol) {
+                    cells.push(neighbors[4]); // arriba-der para columna impar
+                } else {
+                    cells.push(neighbors[5]); // abajo-der para columna par
+                }
                 break;
                 
             case 'v2': // 2 hex vertical (abajo)
-                cells.push(neighbors[3]); // abajo (mismo x, y+1)
+                cells.push({ x, y: y + 1 }); // Directamente abajo en la misma columna
                 break;
                 
             case 'tri_down': // 3 hex triángulo hacia abajo
-                cells.push(neighbors[3]); // abajo
+                cells.push({ x, y: y + 1 }); // abajo
                 cells.push(neighbors[5]); // abajo-der
                 break;
                 
             case 'h2v2': // 4 hex (2x2) - 2 columnas, 2 filas
-                // Columna actual: centro y abajo
-                cells.push(neighbors[3]); // abajo
-                // Columna derecha: al lado y abajo
-                cells.push({ x: x + 1, y: y });
-                const n1 = this.getHexNeighbors(x + 1, y);
-                cells.push(n1[3]); // abajo de x+1
+                // Columna actual: centro y uno abajo
+                cells.push({ x, y: y + 1 });
+                // Columna derecha: usar vecinos correctos según paridad
+                if (isOddCol) {
+                    cells.push(neighbors[4]); // arriba-der
+                    cells.push(neighbors[5]); // abajo-der
+                } else {
+                    cells.push(neighbors[4]); // arriba-der
+                    cells.push(neighbors[5]); // abajo-der
+                }
                 break;
                 
             case 'v3': // 3 hex vertical
@@ -681,37 +704,49 @@ class MapEditor {
                 break;
                 
             case 'h2v3': // 5-6 hex (2 columnas x 3 filas)
-                // Columna izquierda: y, y+1, y+2
+                // Columna actual: y, y+1, y+2
                 cells.push({ x, y: y + 1 });
                 cells.push({ x, y: y + 2 });
-                // Columna derecha
-                cells.push({ x: x + 1, y: y });
-                cells.push({ x: x + 1, y: y + 1 });
+                // Columna derecha: usar vecinos según paridad
+                if (isOddCol) {
+                    // Columna impar -> par
+                    cells.push({ x: x + 1, y: y });
+                    cells.push({ x: x + 1, y: y + 1 });
+                } else {
+                    // Columna par -> impar
+                    cells.push({ x: x + 1, y: y });
+                    cells.push({ x: x + 1, y: y + 1 });
+                }
                 break;
                 
             case 'h3v2': // 6 hex (3 columnas x 2 filas)
-                // Fila superior: x-1, x, x+1
-                cells.push({ x: x - 1, y: y });
-                cells.push({ x: x + 1, y: y });
-                // Fila inferior
+                // Usar getHexNeighbors que ya maneja la paridad
+                cells.push(neighbors[0]); // arriba-izq
+                cells.push(neighbors[4]); // arriba-der
                 cells.push(neighbors[1]); // abajo-izq
-                cells.push(neighbors[3]); // abajo
+                cells.push({ x, y: y + 1 }); // abajo centro
                 cells.push(neighbors[5]); // abajo-der
                 break;
                 
             case 'h3': // 3-4 hex línea horizontal
-                cells.push({ x: x - 1, y: y }); // izquierda (ajustar y según paridad)
-                cells.push({ x: x + 1, y: y }); // derecha
+                // Izquierda y derecha usando vecinos
+                cells.push(neighbors[0]); // arriba-izq (o abajo-izq según vista)
+                cells.push(neighbors[4]); // arriba-der
                 if (hexCount >= 4) {
-                    cells.push({ x: x + 2, y: y });
+                    const rightNeighbors = this.getHexNeighbors(neighbors[4].x, neighbors[4].y);
+                    cells.push(rightNeighbors[4]);
                 }
                 break;
                 
             case 'h5': // 5+ hex línea horizontal
-                cells.push({ x: x - 2, y: y });
-                cells.push({ x: x - 1, y: y });
-                cells.push({ x: x + 1, y: y });
-                cells.push({ x: x + 2, y: y });
+                cells.push(neighbors[0]); // izq
+                cells.push(neighbors[4]); // der
+                // Más a la izquierda
+                const leftN = this.getHexNeighbors(neighbors[0].x, neighbors[0].y);
+                cells.push(leftN[0]);
+                // Más a la derecha
+                const rightN = this.getHexNeighbors(neighbors[4].x, neighbors[4].y);
+                cells.push(rightN[4]);
                 break;
                 
             case 'mega13': // 13 hex - mega central + anillo exterior
