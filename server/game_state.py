@@ -8,7 +8,6 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, List, Callable, Any
-from pydantic import BaseModel, Field
 import uuid
 
 from .models import (
@@ -570,29 +569,7 @@ class GameStateManager:
             return [self._serialize_datetime(item) for item in obj]
         return obj
 
-    # === Modelos Pydantic para Mapas ===
-
-    class MapTile(BaseModel):
-        x: int
-        y: int
-        tileId: str
-
-    class MapModel(BaseModel):
-        id: Optional[str] = None
-        name: str = Field(default="Mapa sin nombre")
-        width: int = Field(default=20)
-        height: int = Field(default=15)
-        gridType: str = Field(default="square")
-        cellSize: float = Field(default=32.0)
-        tiles: List["GameStateManager.MapTile"] = Field(default_factory=list)
-        metadata: Dict[str, Any] = Field(default_factory=dict)
-        seed: Optional[str] = None
-        type: str = Field(default="custom")
-        created_at: Optional[str] = None
-        updated_at: Optional[str] = None
-
-    # Pydantic forward refs
-    MapModel.update_forward_refs()
+from server.schemas import MapModel
     
     # === Gestión de Mapas ===
     

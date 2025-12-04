@@ -22,6 +22,7 @@ from .models import (
     ActionRequest
 )
 from .game_state import GameStateManager
+from .schemas import MapModel, MapMeta
 from .websocket_manager import ConnectionManager
 
 
@@ -502,19 +503,20 @@ async def get_tiles_for_system(system_id: str):
     
     return {"categories": {}, "tiles": {}}
 
-@app.get("/api/maps")
+@app.get("/api/maps", response_model=dict)
 async def get_all_maps():
     """Obtiene todos los mapas guardados"""
     maps = await game_state.get_all_maps()
     return {"maps": maps}
 
-@app.get("/api/maps/{map_id}")
+@app.get("/api/maps/{map_id}", response_model=MapModel)
 async def get_map(map_id: str):
     """Obtiene un mapa específico"""
     map_data = await game_state.get_map(map_id)
     if not map_data:
         raise HTTPException(status_code=404, detail="Mapa no encontrado")
-    return map_data
+    # FastAPI will validate/serialize using MapModel
+    return MapModel(**map_data)
 
 @app.post("/api/maps")
 async def save_map(map_payload: GameStateManager.MapModel = Body(...)):
