@@ -94,9 +94,6 @@ class Character(BaseModel):
     is_visible: bool = True
     sheet_data: Dict[str, Any] = {}  # Datos completos de la ficha
     
-    class Config:
-        populate_by_name = True
-    
     # Pydantic v2 configuration
     model_config: ClassVar[ConfigDict] = ConfigDict(populate_by_name=True)
     
