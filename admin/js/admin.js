@@ -434,6 +434,8 @@ async function loadTokenLibrary() {
         const response = await fetch('/assets/markers/tokens.json');
         tokenLibrary = await response.json();
         console.log('Token library loaded:', tokenLibrary);
+        // Renderizar galería después de cargar
+        renderTokenGallery();
     } catch (error) {
         console.error('Error loading token library:', error);
         // Fallback con tokens genéricos
@@ -447,6 +449,7 @@ async function loadTokenLibrary() {
                 { id: 'player4', name: 'Player 4', number: 4, file: 'generic/player4.svg' }
             ]
         };
+        renderTokenGallery();
     }
 }
 
@@ -496,18 +499,29 @@ function selectSheetForToken(sheetId) {
 // Render token gallery based on current system and category
 function renderTokenGallery() {
     const container = document.getElementById('token-gallery');
-    if (!container || !tokenLibrary) return;
+    if (!container) return;
+    
+    // Si tokenLibrary no está cargado aún, mostrar mensaje
+    if (!tokenLibrary) {
+        container.innerHTML = '<p class="empty-state">Cargando tokens...</p>';
+        return;
+    }
     
     let tokens = [];
     
     if (currentTokenCategory === 'system') {
         // Get tokens based on current game system
-        const systemId = currentSystemId || 'dnd';
+        const systemId = currentSystemId || 'dnd5e';
+        console.log('Rendering tokens for system:', systemId);
+        
         if (systemId.includes('battletech')) {
             tokens = tokenLibrary.battletech || [];
         } else {
             tokens = tokenLibrary.dnd || [];
         }
+    } else if (currentTokenCategory === 'generic') {
+        tokens = tokenLibrary.generic || [];
+    }
     } else if (currentTokenCategory === 'generic') {
         tokens = tokenLibrary.generic || [];
     }
