@@ -1,0 +1,210 @@
+openapi: 3.0.3
+info:
+  title: MesaRPG API
+  version: 0.1.0
+  description: API spec for maps, tiles, projection and vision integration (Hito 1)
+
+servers:
+  - url: /
+
+paths:
+  /api/tiles:
+    get:
+      summary: List tile definitions
+      responses:
+        '200':
+          description: Array of tiles
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tile'
+
+  /api/maps:
+    get:
+      summary: List saved maps
+      responses:
+        '200':
+          description: Array of maps
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/MapMeta'
+    post:
+      summary: Create a new map
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Map'
+      responses:
+        '201':
+          description: Map created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MapMeta'
+
+  /api/maps/{mapId}:
+    parameters:
+      - name: mapId
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Retrieve a map
+      responses:
+        '200':
+          description: Map JSON
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Map'
+    put:
+      summary: Replace or update a map
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Map'
+      responses:
+        '200':
+          description: Map updated
+    delete:
+      summary: Delete a map
+      responses:
+        '204':
+          description: Deleted
+
+  /api/maps/{mapId}/project:
+    post:
+      summary: Project this map to the Display (trigger WebSocket update)
+      parameters:
+        - name: mapId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Projection queued
+
+  /api/tokens/register-touch:
+    post:
+      summary: Register a token touch event from the Display
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenTouch'
+      responses:
+        '200':
+          description: Registered
+
+  /api/vision/track:
+    post:
+      summary: Submit or request vision tracking data / inference
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Vision results
+
+components:
+  schemas:
+    Tile:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        icon:
+          type: string
+        color:
+          type: string
+        movementCost:
+          type: number
+        blocksVision:
+          type: boolean
+        isWalkable:
+          type: boolean
+        description:
+          type: string
+
+    MapMeta:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        seed:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    Map:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        gridType:
+          type: string
+          enum: [square, hex]
+        cellSize:
+          type: number
+          description: 'size of a cell in pixels or configurable units'
+        tiles:
+          type: array
+          items:
+            type: object
+            properties:
+              x:
+                type: integer
+              y:
+                type: integer
+              tileId:
+                type: string
+        metadata:
+          type: object
+
+    TokenTouch:
+      type: object
+      properties:
+        tokenId:
+          type: string
+          description: optional known token id (can be null)
+        x:
+          type: number
+        y:
+          type: number
+        pressure:
+          type: number
+        timestamp:
+          type: string
+          format: date-time
