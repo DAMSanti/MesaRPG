@@ -118,7 +118,7 @@
       "color": "#2e7d32",
       "icon": "🌲",
       "hexCount": 3,
-      "shape": "tri_down"
+      "shape": "bosque3"
     },
     "tile_17": {
       "id": "tile_17",
@@ -148,7 +148,7 @@
       "blocksLOS": true,
       "blocksVision": true,
       "hexCount": 5,
-      "shape": "h2v3"
+      "shape": "bosque_denso3"
     },
     "tile_19": {
       "id": "tile_19",
@@ -188,8 +188,8 @@
       "icon": "🌲",
       "blocksLOS": true,
       "blocksVision": true,
-      "hexCount": 7,
-      "shape": "mega"
+      "hexCount": 9,
+      "shape": "bosque_denso4"
     },
     "tile_22": {
       "id": "tile_22",
