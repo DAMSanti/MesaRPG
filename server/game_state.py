@@ -585,7 +585,7 @@ class GameStateManager:
                 with open(map_file, 'r', encoding='utf-8') as f:
                     map_data = json.load(f)
                     try:
-                        model = self.MapModel(**map_data)
+                        model = MapModel(**map_data)
                         maps.append({
                             "id": map_file.stem,
                             "name": model.name,
@@ -621,7 +621,7 @@ class GameStateManager:
             with open(map_file, 'r', encoding='utf-8') as f:
                 map_data = json.load(f)
                 try:
-                    model = self.MapModel(**map_data)
+                    model = MapModel(**map_data)
                     return model.model_dump()
                 except Exception:
                     return map_data
@@ -635,7 +635,7 @@ class GameStateManager:
         maps_dir.mkdir(exist_ok=True)
         # Validate and normalize via Pydantic model
         try:
-            model = self.MapModel(**map_data)
+            model = MapModel(**map_data)
         except Exception as e:
             # If validation fails, raise to caller
             raise
