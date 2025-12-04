@@ -296,14 +296,48 @@ class MapEditor {
         const maxWidth = container.clientWidth - 20;
         const maxHeight = container.clientHeight - 20;
         
-        // Calcular tamaño del tile para que quepa el mapa
-        const tileW = Math.floor(maxWidth / this.mapWidth);
-        const tileH = Math.floor(maxHeight / this.mapHeight);
-        this.tileSize = Math.min(tileW, tileH, 48); // Máximo 48px
-        this.tileSize = Math.max(this.tileSize, 16); // Mínimo 16px
-        
-        this.canvas.width = this.mapWidth * this.tileSize;
-        this.canvas.height = this.mapHeight * this.tileSize;
+        if (this.gridType === 'hex') {
+            // Para hexágonos pointy-top
+            // Ancho total = hexWidth * (mapWidth) + hexWidth/2 (para filas impares)
+            // Alto total = vertSpacing * (mapHeight - 1) + hexHeight
+            // donde size = tileSize/2, hexWidth = sqrt(3)*size, hexHeight = 2*size
+            // vertSpacing = hexHeight * 0.75 = 1.5 * size
+            
+            // Calcular el tamaño máximo de tile que cabe
+            // maxWidth = sqrt(3) * (tileSize/2) * mapWidth + sqrt(3) * (tileSize/4)
+            // maxWidth = sqrt(3) * tileSize * (mapWidth + 0.5) / 2
+            // tileSize = maxWidth * 2 / (sqrt(3) * (mapWidth + 0.5))
+            
+            const tileFromWidth = (maxWidth * 2) / (Math.sqrt(3) * (this.mapWidth + 0.5));
+            
+            // maxHeight = 1.5 * (tileSize/2) * (mapHeight - 1) + tileSize
+            // maxHeight = tileSize * (0.75 * (mapHeight - 1) + 1)
+            // maxHeight = tileSize * (0.75 * mapHeight + 0.25)
+            // tileSize = maxHeight / (0.75 * mapHeight + 0.25)
+            
+            const tileFromHeight = maxHeight / (0.75 * this.mapHeight + 0.25);
+            
+            this.tileSize = Math.min(tileFromWidth, tileFromHeight, 60);
+            this.tileSize = Math.max(this.tileSize, 20); // Mínimo 20px para hex
+            
+            // Calcular dimensiones reales del canvas
+            const size = this.tileSize / 2;
+            const hexWidth = Math.sqrt(3) * size;
+            const hexHeight = size * 2;
+            const vertSpacing = hexHeight * 0.75;
+            
+            this.canvas.width = hexWidth * (this.mapWidth + 0.5);
+            this.canvas.height = vertSpacing * (this.mapHeight - 1) + hexHeight;
+        } else {
+            // Grid cuadrado
+            const tileW = Math.floor(maxWidth / this.mapWidth);
+            const tileH = Math.floor(maxHeight / this.mapHeight);
+            this.tileSize = Math.min(tileW, tileH, 48);
+            this.tileSize = Math.max(this.tileSize, 16);
+            
+            this.canvas.width = this.mapWidth * this.tileSize;
+            this.canvas.height = this.mapHeight * this.tileSize;
+        }
         
         this.render();
     }
@@ -360,14 +394,16 @@ class MapEditor {
     }
     
     getHexCoords(mouseX, mouseY) {
-        const hexWidth = this.tileSize;
-        const hexHeight = hexWidth * 0.866;
-        const rowHeight = hexHeight * 0.75;
+        // Hexágonos pointy-top
+        const size = this.tileSize / 2; // Radio del hexágono
+        const hexWidth = Math.sqrt(3) * size;
+        const hexHeight = size * 2;
+        const vertSpacing = hexHeight * 0.75;
         
         // Estimación inicial
-        const roughY = Math.floor(mouseY / rowHeight);
-        const offset = (roughY % 2) * (hexWidth / 2);
-        const roughX = Math.floor((mouseX - offset) / hexWidth);
+        const roughY = Math.floor(mouseY / vertSpacing);
+        const offsetX = (roughY % 2 === 1) ? hexWidth / 2 : 0;
+        const roughX = Math.floor((mouseX - offsetX) / hexWidth);
         
         // Verificar hex más cercano entre candidatos
         let bestDist = Infinity;
@@ -378,9 +414,11 @@ class MapEditor {
             for (let dx = -1; dx <= 1; dx++) {
                 const testY = roughY + dy;
                 const testX = roughX + dx;
-                const testOffset = (testY % 2) * (hexWidth / 2);
-                const cx = testX * hexWidth + testOffset + hexWidth / 2;
-                const cy = testY * rowHeight + hexHeight / 2;
+                if (testY < 0 || testX < 0) continue;
+                
+                const testOffset = (testY % 2 === 1) ? hexWidth / 2 : 0;
+                const cx = testOffset + testX * hexWidth + hexWidth / 2;
+                const cy = testY * vertSpacing + size;
                 const dist = Math.sqrt((mouseX - cx) ** 2 + (mouseY - cy) ** 2);
                 if (dist < bestDist) {
                     bestDist = dist;
@@ -551,22 +589,81 @@ class MapEditor {
         return layer;
     }
     
+    /**
+     * Obtiene los vecinos de un hexágono en grid pointy-top
+     * Devuelve las 6 celdas adyacentes
+     */
+    getHexNeighbors(x, y) {
+        // Para hex pointy-top, las filas pares e impares tienen offsets diferentes
+        const isOddRow = (y % 2) === 1;
+        
+        if (isOddRow) {
+            // Fila impar (desplazada a la derecha)
+            return [
+                { x: x,     y: y - 1 }, // arriba-izq
+                { x: x + 1, y: y - 1 }, // arriba-der
+                { x: x - 1, y: y     }, // izquierda
+                { x: x + 1, y: y     }, // derecha
+                { x: x,     y: y + 1 }, // abajo-izq
+                { x: x + 1, y: y + 1 }, // abajo-der
+            ];
+        } else {
+            // Fila par
+            return [
+                { x: x - 1, y: y - 1 }, // arriba-izq
+                { x: x,     y: y - 1 }, // arriba-der
+                { x: x - 1, y: y     }, // izquierda
+                { x: x + 1, y: y     }, // derecha
+                { x: x - 1, y: y + 1 }, // abajo-izq
+                { x: x,     y: y + 1 }, // abajo-der
+            ];
+        }
+    }
+    
     paintTile(x, y) {
         if (!this.selectedTile || !this.isValidCoord(x, y)) return;
         
         const layer = this.currentMap.layers[this.currentLayer];
+        const tile = this.selectedTile;
         
-        // Aplicar brush size
-        for (let dy = 0; dy < this.brushSize; dy++) {
-            for (let dx = 0; dx < this.brushSize; dx++) {
-                const px = x + dx;
-                const py = y + dy;
-                if (this.isValidCoord(px, py)) {
-                    layer[py][px] = { 
-                        tileId: this.selectedTile.id,
+        // Verificar si es un tile mega (7 hexágonos)
+        if (tile.size === 'mega' && this.gridType === 'hex') {
+            // Pintar el centro
+            layer[y][x] = { 
+                tileId: tile.id,
+                rotation: 0,
+                variant: 0,
+                isMegaCenter: true
+            };
+            
+            // Pintar los 6 vecinos con el mismo tile (marcados como parte del mega)
+            const neighbors = this.getHexNeighbors(x, y);
+            neighbors.forEach((n, idx) => {
+                if (this.isValidCoord(n.x, n.y)) {
+                    layer[n.y][n.x] = { 
+                        tileId: tile.id,
                         rotation: 0,
-                        variant: 0
+                        variant: 0,
+                        isMegaPart: true,
+                        megaCenterX: x,
+                        megaCenterY: y,
+                        megaIndex: idx  // 0-5 para saber qué parte es
                     };
+                }
+            });
+        } else {
+            // Tile normal - aplicar brush size
+            for (let dy = 0; dy < this.brushSize; dy++) {
+                for (let dx = 0; dx < this.brushSize; dx++) {
+                    const px = x + dx;
+                    const py = y + dy;
+                    if (this.isValidCoord(px, py)) {
+                        layer[py][px] = { 
+                            tileId: tile.id,
+                            rotation: 0,
+                            variant: 0
+                        };
+                    }
                 }
             }
         }
@@ -660,22 +757,42 @@ class MapEditor {
         const layer = this.currentMap.layers[layerName];
         if (!layer) return;
         
+        // Primer pase: tiles normales y partes mega (sin dibujar imagen mega)
         for (let y = 0; y < this.mapHeight; y++) {
             for (let x = 0; x < this.mapWidth; x++) {
                 const cell = layer[y][x];
                 if (cell?.tileId) {
                     const tile = this.tiles[cell.tileId];
                     if (tile) {
-                        this.drawTile(x, y, tile);
+                        // Si es parte de un mega tile (no el centro), dibujar solo el color base
+                        if (cell.isMegaPart) {
+                            this.drawHexTileColorOnly(x, y, tile);
+                        } else if (!cell.isMegaCenter) {
+                            // Tile normal
+                            this.drawTile(x, y, tile, cell);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Segundo pase: dibujar las imágenes mega encima
+        for (let y = 0; y < this.mapHeight; y++) {
+            for (let x = 0; x < this.mapWidth; x++) {
+                const cell = layer[y][x];
+                if (cell?.isMegaCenter && cell?.tileId) {
+                    const tile = this.tiles[cell.tileId];
+                    if (tile) {
+                        this.drawMegaTile(x, y, tile);
                     }
                 }
             }
         }
     }
     
-    drawTile(x, y, tile) {
+    drawTile(x, y, tile, cell = null) {
         if (this.gridType === 'hex') {
-            this.drawHexTile(x, y, tile);
+            this.drawHexTile(x, y, tile, cell);
         } else {
             this.drawSquareTile(x, y, tile);
         }
@@ -713,22 +830,32 @@ class MapEditor {
     }
     
     drawHexTile(x, y, tile) {
-        const hexWidth = this.tileSize;
-        const hexHeight = hexWidth * 0.866; // sqrt(3)/2
-        const offset = (y % 2) * (hexWidth / 2);
+        // Hexágonos pointy-top (punta arriba) - igual que display/renderer.js
+        const size = this.tileSize / 2; // Radio del hexágono
         
-        const cx = x * hexWidth + offset + hexWidth / 2;
-        const cy = y * hexHeight * 0.75 + hexHeight / 2;
-        const radius = hexWidth / 2 - 1;
+        // Dimensiones de un hexágono pointy-top
+        const hexWidth = Math.sqrt(3) * size;  // Ancho = sqrt(3) * radio
+        const hexHeight = size * 2;             // Alto = 2 * radio
+        
+        // Espaciado entre centros
+        const horizSpacing = hexWidth;          // Horizontal: ancho completo
+        const vertSpacing = hexHeight * 0.75;   // Vertical: 3/4 de altura
+        
+        // Filas impares se desplazan medio hexágono
+        const offsetX = (y % 2 === 1) ? hexWidth / 2 : 0;
+        
+        const cx = offsetX + x * horizSpacing + hexWidth / 2;
+        const cy = y * vertSpacing + size;
+        const radius = size;
         
         // Si hay imagen, dibujarla dentro del hexágono
         const img = this.tileImages[tile.id];
         if (img) {
             this.ctx.save();
-            // Crear path hexagonal para clip
+            // Crear path hexagonal para clip (pointy-top: empieza desde arriba)
             this.ctx.beginPath();
             for (let i = 0; i < 6; i++) {
-                const angle = (Math.PI / 3) * i - Math.PI / 6;
+                const angle = (Math.PI / 3) * i - Math.PI / 2; // -90° = punta arriba
                 const hx = cx + radius * Math.cos(angle);
                 const hy = cy + radius * Math.sin(angle);
                 if (i === 0) {
@@ -748,7 +875,7 @@ class MapEditor {
             // Borde del hexágono
             this.ctx.beginPath();
             for (let i = 0; i < 6; i++) {
-                const angle = (Math.PI / 3) * i - Math.PI / 6;
+                const angle = (Math.PI / 3) * i - Math.PI / 2;
                 const hx = cx + radius * Math.cos(angle);
                 const hy = cy + radius * Math.sin(angle);
                 if (i === 0) {
@@ -764,10 +891,10 @@ class MapEditor {
             return;
         }
         
-        // Fallback: dibujar hexágono con color
+        // Fallback: dibujar hexágono con color (pointy-top)
         this.ctx.beginPath();
         for (let i = 0; i < 6; i++) {
-            const angle = (Math.PI / 3) * i - Math.PI / 6;
+            const angle = (Math.PI / 3) * i - Math.PI / 2; // -90° = punta arriba
             const hx = cx + radius * Math.cos(angle);
             const hy = cy + radius * Math.sin(angle);
             if (i === 0) {
@@ -830,13 +957,94 @@ class MapEditor {
         }
     }
     
+    /**
+     * Dibuja solo el color de fondo de un hex (para partes de mega tiles)
+     */
+    drawHexTileColorOnly(x, y, tile) {
+        const size = this.tileSize / 2;
+        const hexWidth = Math.sqrt(3) * size;
+        const hexHeight = size * 2;
+        const horizSpacing = hexWidth;
+        const vertSpacing = hexHeight * 0.75;
+        const offsetX = (y % 2 === 1) ? hexWidth / 2 : 0;
+        const cx = offsetX + x * horizSpacing + hexWidth / 2;
+        const cy = y * vertSpacing + size;
+        const radius = size;
+        
+        // Dibujar hexágono con color base
+        this.ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 2;
+            const hx = cx + radius * Math.cos(angle);
+            const hy = cy + radius * Math.sin(angle);
+            if (i === 0) this.ctx.moveTo(hx, hy);
+            else this.ctx.lineTo(hx, hy);
+        }
+        this.ctx.closePath();
+        this.ctx.fillStyle = tile.color || '#4a7c23';
+        this.ctx.fill();
+    }
+    
+    /**
+     * Dibuja un tile mega (imagen que cubre 7 hexágonos)
+     */
+    drawMegaTile(x, y, tile) {
+        const size = this.tileSize / 2;
+        const hexWidth = Math.sqrt(3) * size;
+        const hexHeight = size * 2;
+        const horizSpacing = hexWidth;
+        const vertSpacing = hexHeight * 0.75;
+        const offsetX = (y % 2 === 1) ? hexWidth / 2 : 0;
+        
+        // Centro del hexágono central
+        const cx = offsetX + x * horizSpacing + hexWidth / 2;
+        const cy = y * vertSpacing + size;
+        
+        const img = this.tileImages[tile.id];
+        if (img) {
+            this.ctx.save();
+            
+            // Crear path que cubra los 7 hexágonos (forma de flor)
+            this.ctx.beginPath();
+            
+            // Dibujar el contorno exterior de los 7 hexágonos unidos
+            // Es más fácil dibujar cada hexágono y confiar en el fill
+            const neighbors = this.getHexNeighbors(x, y);
+            const allHexes = [{ x, y }, ...neighbors];
+            
+            // Dibujar cada hexágono del mega tile
+            allHexes.forEach(hex => {
+                const hOffsetX = (hex.y % 2 === 1) ? hexWidth / 2 : 0;
+                const hcx = hOffsetX + hex.x * horizSpacing + hexWidth / 2;
+                const hcy = hex.y * vertSpacing + size;
+                
+                this.ctx.moveTo(hcx + size * Math.cos(-Math.PI / 2), hcy + size * Math.sin(-Math.PI / 2));
+                for (let i = 1; i < 6; i++) {
+                    const angle = (Math.PI / 3) * i - Math.PI / 2;
+                    this.ctx.lineTo(hcx + size * Math.cos(angle), hcy + size * Math.sin(angle));
+                }
+                this.ctx.closePath();
+            });
+            
+            this.ctx.clip();
+            
+            // Dibujar la imagen escalada para cubrir los 7 hexágonos
+            // El radio del mega es aproximadamente 3 veces el de un hex individual
+            const megaRadius = size * 3;
+            const imgSize = megaRadius * 2.2;
+            this.ctx.drawImage(img, cx - imgSize/2, cy - imgSize/2, imgSize, imgSize);
+            
+            this.ctx.restore();
+        }
+    }
+    
     drawTilePattern(cx, cy, radius, tile) {
         this.ctx.save();
         
-        // Clipear al hexágono
+        // Clipear al hexágono (pointy-top)
         this.ctx.beginPath();
         for (let i = 0; i < 6; i++) {
-            const angle = (Math.PI / 3) * i - Math.PI / 6;
+            const angle = (Math.PI / 3) * i - Math.PI / 2; // -90° = punta arriba
             const hx = cx + radius * Math.cos(angle);
             const hy = cy + radius * Math.sin(angle);
             if (i === 0) this.ctx.moveTo(hx, hy);
@@ -1145,23 +1353,34 @@ class MapEditor {
     }
     
     drawHexGrid() {
-        const hexWidth = this.tileSize;
-        const hexHeight = hexWidth * 0.866;
+        // Hexágonos pointy-top (punta arriba) - igual que display/renderer.js
+        const size = this.tileSize / 2; // Radio del hexágono
         
-        this.ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+        // Dimensiones de un hexágono pointy-top
+        const hexWidth = Math.sqrt(3) * size;
+        const hexHeight = size * 2;
+        
+        // Espaciado entre centros
+        const horizSpacing = hexWidth;
+        const vertSpacing = hexHeight * 0.75;
+        
+        this.ctx.strokeStyle = 'rgba(255, 215, 0, 0.25)';
         this.ctx.lineWidth = 1;
         
         for (let y = 0; y < this.mapHeight; y++) {
+            // Filas impares se desplazan medio hexágono
+            const offsetX = (y % 2 === 1) ? hexWidth / 2 : 0;
+            
             for (let x = 0; x < this.mapWidth; x++) {
-                const offset = (y % 2) * (hexWidth / 2);
-                const cx = x * hexWidth + offset + hexWidth / 2;
-                const cy = y * hexHeight * 0.75 + hexHeight / 2;
+                const cx = offsetX + x * horizSpacing + hexWidth / 2;
+                const cy = y * vertSpacing + size;
                 
                 this.ctx.beginPath();
                 for (let i = 0; i < 6; i++) {
-                    const angle = (Math.PI / 3) * i - Math.PI / 6;
-                    const hx = cx + (hexWidth / 2) * Math.cos(angle);
-                    const hy = cy + (hexWidth / 2) * Math.sin(angle);
+                    // Pointy-top: empieza desde arriba (ángulo -90° = -PI/2)
+                    const angle = (Math.PI / 3) * i - Math.PI / 2;
+                    const hx = cx + size * Math.cos(angle);
+                    const hy = cy + size * Math.sin(angle);
                     if (i === 0) {
                         this.ctx.moveTo(hx, hy);
                     } else {
@@ -1693,12 +1912,17 @@ class MapEditor {
 
 // Instancia global
 let mapEditor = null;
+let pendingSystemReload = false; // Flag para indicar que hay que recargar al iniciar
 
 // Inicializar cuando se cargue la pestaña del editor
 function initMapEditor() {
     if (!mapEditor) {
         mapEditor = new MapEditor();
         loadSavedMapsList();
+    } else if (pendingSystemReload) {
+        // Si había un cambio de sistema pendiente, recargar ahora
+        pendingSystemReload = false;
+        reloadMapEditor();
     }
 }
 
@@ -1712,6 +1936,10 @@ async function reloadMapEditor() {
         mapEditor.renderTilePalette();
         mapEditor.createNewMap(mapEditor.mapWidth, mapEditor.mapHeight);
         console.log('🔄 Editor de mapas recargado');
+    } else {
+        // Si el editor no existe todavía, marcar para recargar cuando se inicie
+        pendingSystemReload = true;
+        console.log('📌 Cambio de sistema pendiente - se aplicará al abrir el editor');
     }
 }
 
