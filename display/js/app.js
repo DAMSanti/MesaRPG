@@ -135,6 +135,25 @@ class MesaRPGApp {
             // Actualizar personajes afectados
             // (El estado actualizado vendrá en otro mensaje)
         });
+
+        // Map events: when a map is projected or changed
+        ws.on('map_changed', (payload) => {
+            try {
+                const mapObj = payload?.map || payload;
+                let mapId = null;
+                if (!mapObj) return;
+                if (typeof mapObj === 'string') mapId = mapObj;
+                else if (mapObj.id) mapId = mapObj.id;
+                else mapId = mapObj.name || null;
+
+                if (mapId) {
+                    window.gameRenderer.loadMap(mapId);
+                    window.gameRenderer.addLogEntry(`🗺️ Mapa proyectado: ${mapId}`, 'system');
+                }
+            } catch (e) {
+                console.debug('Error manejando map_changed:', e);
+            }
+        });
         
         // Cambio de sistema de juego
         ws.on('game_system_changed', (payload) => {

@@ -138,6 +138,33 @@ function handleMessage(data) {
             break;
         case 'map_changed':
             logAction('Mapa', `Mapa actualizado`);
+            // If the admin currently has the same map loaded in the editor, update it
+            try {
+                const mapPayload = data.payload?.map || data.map || data.payload;
+                if (mapPayload && window.mapEditor && window.mapEditor.currentMap && window.mapEditor.currentMap.id === mapPayload.id) {
+                    window.mapEditor.currentMap = mapPayload;
+                    window.mapEditor.mapWidth = mapPayload.width || window.mapEditor.mapWidth;
+                    window.mapEditor.mapHeight = mapPayload.height || window.mapEditor.mapHeight;
+                    window.mapEditor.resizeCanvas();
+                    window.mapEditor.render();
+                    showToast('Mapa actualizado desde servidor', 'info');
+                }
+            } catch (e) {
+                console.debug('No se pudo sincronizar el mapa en editor:', e);
+            }
+            // Refresh saved maps list in case metadata changed
+            if (typeof loadSavedMapsList === 'function') loadSavedMapsList();
+            break;
+        case 'map_saved':
+            // Another admin saved a map; refresh list
+            logAction('Mapa', `Mapa guardado: ${data.payload?.name || data.name || ''}`);
+            if (typeof loadSavedMapsList === 'function') loadSavedMapsList();
+            showToast('Mapa guardado en servidor', 'success');
+            break;
+        case 'map_deleted':
+            logAction('Mapa', `Mapa eliminado: ${data.payload?.map_id || data.map_id || ''}`);
+            if (typeof loadSavedMapsList === 'function') loadSavedMapsList();
+            showToast('Mapa eliminado', 'warning');
             break;
         case 'game_system_changed':
             const sysId = data.payload?.system_id;
