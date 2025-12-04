@@ -139,17 +139,16 @@ class MesaRPGApp {
         // Map events: when a map is projected or changed
         ws.on('map_changed', (payload) => {
             try {
+                // payload may contain full map object in `map` property
                 const mapObj = payload?.map || payload;
-                let mapId = null;
                 if (!mapObj) return;
-                if (typeof mapObj === 'string') mapId = mapObj;
-                else if (mapObj.id) mapId = mapObj.id;
-                else mapId = mapObj.name || null;
 
-                if (mapId) {
-                    window.gameRenderer.loadMap(mapId);
-                    window.gameRenderer.addLogEntry(`🗺️ Mapa proyectado: ${mapId}`, 'system');
-                }
+                // Pass the whole map object to the renderer when available.
+                // Renderer will accept either a map id string or a full map object.
+                window.gameRenderer.loadMap(mapObj);
+
+                const mapId = (typeof mapObj === 'string') ? mapObj : (mapObj.id || mapObj.name || 'map');
+                window.gameRenderer.addLogEntry(`🗺️ Mapa proyectado: ${mapId}`, 'system');
             } catch (e) {
                 console.debug('Error manejando map_changed:', e);
             }

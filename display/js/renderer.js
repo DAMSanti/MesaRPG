@@ -466,21 +466,57 @@ class GameRenderer {
     
     // === Mapa ===
     
-    loadMap(mapId) {
-        console.log('🗺️ Cargando mapa:', mapId);
-        this.currentMap = mapId;
-        
-        const mapImage = new Image();
-        mapImage.onload = () => {
-            this.mapImage = mapImage;
-            this.redraw();
-        };
-        mapImage.onerror = () => {
-            console.log('No se encontró imagen del mapa, usando fondo por defecto');
-            this.mapImage = null;
-            this.redraw();
-        };
-        mapImage.src = `assets/maps/${mapId}.png`;
+    async loadMap(mapRef) {
+        // mapRef can be a string id or a full map object
+        try {
+            if (!mapRef) return;
+
+            if (typeof mapRef === 'string') {
+                console.log('🗺️ Cargando mapa por id:', mapRef);
+                this.currentMap = mapRef;
+                // Try to fetch full map JSON from server to retain tile data
+                try {
+                    const resp = await fetch(`/api/maps/${encodeURIComponent(mapRef)}`);
+                    if (resp.ok) {
+                        const mapJson = await resp.json();
+                        this.mapData = mapJson;
+                        // adopt grid type if provided
+                        if (mapJson.gridType) this.setGridType(mapJson.gridType);
+                    } else {
+                        this.mapData = null;
+                    }
+                } catch (e) {
+                    console.debug('No se pudo obtener JSON del mapa:', e);
+                    this.mapData = null;
+                }
+            } else if (typeof mapRef === 'object') {
+                console.log('🗺️ Cargando mapa objeto:', mapRef.id || mapRef.name || '<anon>');
+                this.mapData = mapRef;
+                this.currentMap = mapRef.id || mapRef.name || this.currentMap;
+                if (mapRef.gridType) this.setGridType(mapRef.gridType);
+            }
+
+            // Load image (image may still be missing)
+            const mapIdForImage = this.currentMap || (this.mapData && (this.mapData.id || this.mapData.name));
+            const mapImage = new Image();
+            mapImage.onload = () => {
+                this.mapImage = mapImage;
+                this.redraw();
+            };
+            mapImage.onerror = () => {
+                console.log('No se encontró imagen del mapa, usando fondo por defecto');
+                this.mapImage = null;
+                this.redraw();
+            };
+            if (mapIdForImage) mapImage.src = `assets/maps/${mapIdForImage}.png`;
+            else {
+                // no id available
+                this.mapImage = null;
+                this.redraw();
+            }
+        } catch (e) {
+            console.error('Error en loadMap:', e);
+        }
     }
     
     redraw() {
@@ -500,9 +536,64 @@ class GameRenderer {
             this.drawDefaultBackground(ctx, w, h);
         }
         
+        // Draw tile overlays (movement cost / blocked) before grid
+        if (this.mapData && this.mapData.tiles && Array.isArray(this.mapData.tiles)) {
+            this.drawTileOverlays(ctx, w, h);
+        }
+
         // Dibujar grid si está activo
         if (this.showGrid) {
             this.drawGrid(ctx, w, h);
+        }
+    }
+
+    drawTileOverlays(ctx, w, h) {
+        // Draw per-cell overlays using mapData.tiles info.
+        // Assumes mapData.width and mapData.height are cell counts and
+        // renderer.gridSize is pixels per cell for screen.
+        try {
+            const map = this.mapData;
+            const tiles = map.tiles || [];
+            const cell = this.gridSize;
+
+            // Optional tile properties map: {tileId: {cost, blocked, color}}
+            const tileProps = (map.metadata && map.metadata.tileProperties) || {};
+
+            ctx.save();
+            // iterate tiles
+            for (const t of tiles) {
+                const tx = t.x; const ty = t.y;
+                const px = tx * cell;
+                const py = ty * cell;
+
+                const prop = (t.tileProperties || (t.tileId && tileProps[t.tileId])) || {};
+
+                // If tile is marked blocked, draw dark overlay
+                if (prop.blocked) {
+                    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+                    ctx.fillRect(px, py, cell, cell);
+                }
+
+                // If tile has movement cost, draw a subtle color tint
+                if (prop.cost !== undefined && prop.cost !== null) {
+                    // Map cost to color intensity (higher cost -> redder)
+                    const cost = Number(prop.cost) || 0;
+                    const intensity = Math.min(1, cost / 10);
+                    const color = `rgba(${Math.round(255 * intensity)}, ${Math.round(80 * (1 - intensity))}, 0, 0.25)`;
+                    ctx.fillStyle = color;
+                    ctx.fillRect(px, py, cell, cell);
+                }
+
+                // Optional: draw small border for emphasis if tile has special flag
+                if (prop.highlight) {
+                    ctx.strokeStyle = 'rgba(255,255,0,0.8)';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(px+1, py+1, cell-2, cell-2);
+                }
+            }
+            ctx.restore();
+        } catch (e) {
+            console.debug('Error dibujando overlays de tiles:', e);
         }
     }
     
@@ -930,6 +1021,26 @@ class GameRenderer {
             
             this.setCalibration(offsetX, offsetY, scaleX, scaleY);
         }
+    }
+
+    // ===== Tile helpers =====
+    getTileByCell(cx, cy) {
+        if (!this.mapData || !Array.isArray(this.mapData.tiles)) return null;
+        return this.mapData.tiles.find(t => Number(t.x) === Number(cx) && Number(t.y) === Number(cy)) || null;
+    }
+
+    // Convert screen pixel position to cell coordinates
+    screenPosToCell(px, py) {
+        const cell = this.gridSize;
+        const cx = Math.floor(px / cell);
+        const cy = Math.floor(py / cell);
+        return { x: cx, y: cy };
+    }
+
+    // Get tile under given screen pixel position
+    getTileAtScreenPos(px, py) {
+        const cell = this.screenPosToCell(px, py);
+        return this.getTileByCell(cell.x, cell.y);
     }
     
     // Método para pantalla completa (importante para mesas táctiles)
