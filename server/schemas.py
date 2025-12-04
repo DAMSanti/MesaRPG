@@ -1,11 +1,14 @@
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any, ClassVar
+from pydantic import BaseModel, Field, ConfigDict
 
 
 class MapTile(BaseModel):
     x: int
     y: int
     tileId: str
+    
+    # Pydantic v2 config placeholder to avoid class-based `Config` deprecation
+    model_config: ClassVar[ConfigDict] = ConfigDict()
 
 
 class MapMeta(BaseModel):
@@ -17,6 +20,8 @@ class MapMeta(BaseModel):
     seed: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
+    
+    model_config: ClassVar[ConfigDict] = ConfigDict()
 
 
 class MapModel(BaseModel):
@@ -33,6 +38,8 @@ class MapModel(BaseModel):
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
+    model_config: ClassVar[ConfigDict] = ConfigDict()
+
 
 class TokenTouch(BaseModel):
     tokenId: Optional[str]
@@ -40,3 +47,5 @@ class TokenTouch(BaseModel):
     y: float
     pressure: Optional[float]
     timestamp: Optional[str]
+
+    model_config: ClassVar[ConfigDict] = ConfigDict()
