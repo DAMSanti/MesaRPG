@@ -48,6 +48,15 @@ class MesaRPGApp {
             this.updateFullState(payload);
         });
         
+        // Mapa proyectado desde el admin
+        ws.on('map_changed', (payload) => {
+            console.log('🗺️ Mapa recibido desde admin:', payload);
+            if (payload.map) {
+                window.gameRenderer.loadMapData(payload.map);
+                window.gameRenderer.addLogEntry('Mapa proyectado por el GM', 'system');
+            }
+        });
+        
         // Personajes
         ws.on('character_added', (payload) => {
             if (payload.character) {

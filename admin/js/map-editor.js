@@ -1737,24 +1737,25 @@ class MapEditor {
     }
     
     drawElevationIndicator(cx, cy, radius, elevation) {
-        // Número de elevación grande y visible en el centro del hex
-        const fontSize = Math.max(10, this.tileSize * 0.35);
+        // Número de elevación pequeño en esquina superior derecha
+        const fontSize = Math.max(8, this.tileSize * 0.18);
         
-        // Fondo semitransparente para mejor legibilidad
-        this.ctx.fillStyle = 'rgba(0,0,0,0.5)';
+        // Posición en esquina superior derecha del hex
+        const textX = cx + radius * 0.4;
+        const textY = cy - radius * 0.4;
+        
+        // Fondo circular pequeño
+        this.ctx.fillStyle = 'rgba(0,0,0,0.6)';
         this.ctx.beginPath();
-        this.ctx.arc(cx, cy, fontSize * 0.7, 0, Math.PI * 2);
+        this.ctx.arc(textX, textY, fontSize * 0.6, 0, Math.PI * 2);
         this.ctx.fill();
         
         // Texto de elevación
         this.ctx.font = `bold ${fontSize}px Arial`;
         this.ctx.textAlign = 'center';
         this.ctx.textBaseline = 'middle';
-        
-        // Color según elevación
-        const colors = ['#fff', '#90caf9', '#64b5f6', '#42a5f5', '#1e88e5'];
-        this.ctx.fillStyle = colors[Math.min(elevation, 4)] || '#fff';
-        this.ctx.fillText(elevation.toString(), cx, cy);
+        this.ctx.fillStyle = '#fff';
+        this.ctx.fillText(elevation.toString(), textX, textY);
     }
     
     drawCoverIndicator(cx, cy, radius, coverType) {
@@ -2069,7 +2070,11 @@ class MapEditor {
         // Aplicar al editor
         this.mapWidth = mapData.width;
         this.mapHeight = mapData.height;
+        this.gridType = mapData.gridType || 'hex';
         this.currentMap = mapData;
+        
+        // Asegurar que el mapa tenga gridType
+        this.currentMap.gridType = this.gridType;
         
         console.log('📊 Mapa generado:', mapData);
         
@@ -2653,19 +2658,31 @@ class MapEditor {
             return;
         }
         
+        // Asegurar que el mapa tenga toda la información necesaria
+        const mapToProject = {
+            ...this.currentMap,
+            gridType: this.gridType,
+            systemId: this.systemId
+        };
+        
         try {
+            console.log('📺 Proyectando mapa al display:', mapToProject.name || mapToProject.id);
+            
             const response = await fetch('/api/display/project-map', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ mapId: this.currentMap.id, mapData: this.currentMap })
+                body: JSON.stringify({ mapId: mapToProject.id, mapData: mapToProject })
             });
             
             if (response.ok) {
                 showToast('✓ Mapa proyectado en display', 'success');
+            } else {
+                const error = await response.json();
+                showToast('Error: ' + (error.detail || 'No se pudo proyectar'), 'error');
             }
         } catch (error) {
             console.error('Error proyectando mapa:', error);
-            showToast('Error al proyectar', 'error');
+            showToast('Error al proyectar: ' + error.message, 'error');
         }
     }
     

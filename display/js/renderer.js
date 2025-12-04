@@ -469,6 +469,7 @@ class GameRenderer {
     loadMap(mapId) {
         console.log('🗺️ Cargando mapa:', mapId);
         this.currentMap = mapId;
+        this.mapData = null; // Limpiar datos de mapa anterior
         
         const mapImage = new Image();
         mapImage.onload = () => {
@@ -483,6 +484,64 @@ class GameRenderer {
         mapImage.src = `assets/maps/${mapId}.png`;
     }
     
+    /**
+     * Carga un mapa con datos completos (tiles, elevación, etc.)
+     * Usado cuando el admin proyecta un mapa editado
+     */
+    loadMapData(mapData) {
+        console.log('🗺️ Cargando datos de mapa:', mapData.name || mapData.id);
+        
+        this.mapData = mapData;
+        this.mapImage = null; // No usar imagen, dibujar desde datos
+        this.currentMap = mapData.id;
+        
+        // Configurar tipo de grid según el mapa
+        if (mapData.gridType === 'hex') {
+            this.gridType = 'hexagonal';
+        } else {
+            this.gridType = 'square';
+        }
+        
+        // Precargar imágenes de tiles
+        this.preloadMapTiles(mapData);
+        
+        this.redraw();
+    }
+    
+    /**
+     * Precarga las imágenes de tiles del mapa
+     */
+    async preloadMapTiles(mapData) {
+        if (!mapData?.layers?.terrain) return;
+        
+        const tileIds = new Set();
+        
+        // Recopilar todos los tile IDs únicos
+        for (const row of mapData.layers.terrain) {
+            for (const cell of row) {
+                if (cell?.tileId) {
+                    tileIds.add(cell.tileId);
+                }
+            }
+        }
+        
+        // Cargar imágenes
+        if (!this.tileImages) this.tileImages = {};
+        
+        for (const tileId of tileIds) {
+            if (!this.tileImages[tileId]) {
+                const img = new Image();
+                const filename = tileId.replace('bt_', '');
+                img.src = `/assets/tiles/battletech_singles/${filename}.png`;
+                this.tileImages[tileId] = img;
+            }
+        }
+        
+        // Redibujar cuando las imágenes carguen
+        setTimeout(() => this.redraw(), 100);
+        setTimeout(() => this.redraw(), 500);
+    }
+    
     redraw() {
         const ctx = this.mapCtx;
         const w = this.mapCanvas.width;
@@ -492,17 +551,147 @@ class GameRenderer {
         ctx.fillStyle = '#1a1a2e';
         ctx.fillRect(0, 0, w, h);
         
-        // Dibujar imagen del mapa si existe
-        if (this.mapImage) {
+        // Si hay datos de mapa, dibujar desde tiles
+        if (this.mapData?.layers?.terrain) {
+            this.drawMapFromData(ctx, w, h);
+        }
+        // Si hay imagen del mapa, usarla
+        else if (this.mapImage) {
             ctx.drawImage(this.mapImage, 0, 0, w, h);
         } else {
             // Fondo por defecto con patrón
             this.drawDefaultBackground(ctx, w, h);
+            
+            // Dibujar grid si está activo
+            if (this.showGrid) {
+                this.drawGrid(ctx, w, h);
+            }
+        }
+    }
+    
+    /**
+     * Dibuja el mapa desde datos de tiles, centrado en pantalla
+     */
+    drawMapFromData(ctx, screenW, screenH) {
+        const mapData = this.mapData;
+        const terrain = mapData.layers.terrain;
+        
+        // Calcular tamaño de hex basado en gridSize (1 pulgada)
+        const hexRadius = this.gridSize / 2;
+        const hexWidth = hexRadius * 2;
+        const hexHeight = Math.sqrt(3) * hexRadius;
+        
+        // Dimensiones del mapa en píxeles
+        const horizSpacing = hexWidth * 0.75;
+        const vertSpacing = hexHeight;
+        
+        const mapPixelWidth = (mapData.width - 1) * horizSpacing + hexWidth;
+        const mapPixelHeight = (mapData.height - 1) * vertSpacing + hexHeight + hexHeight / 2;
+        
+        // Calcular offset para centrar el mapa
+        const offsetX = (screenW - mapPixelWidth) / 2;
+        const offsetY = (screenH - mapPixelHeight) / 2;
+        
+        // Dibujar cada hex
+        for (let y = 0; y < mapData.height; y++) {
+            for (let x = 0; x < mapData.width; x++) {
+                const cell = terrain[y]?.[x];
+                if (!cell) continue;
+                
+                // Calcular posición del hex (flat-top)
+                const hexOffsetY = (x % 2 === 1) ? hexHeight / 2 : 0;
+                const cx = offsetX + x * horizSpacing + hexRadius;
+                const cy = offsetY + hexOffsetY + y * vertSpacing + hexHeight / 2;
+                
+                // Dibujar el tile
+                this.drawHexTile(ctx, cx, cy, hexRadius, cell);
+            }
+        }
+    }
+    
+    /**
+     * Dibuja un tile hexagonal
+     */
+    drawHexTile(ctx, cx, cy, radius, cell) {
+        const tileId = cell.tileId;
+        const elevation = cell.elevation || 0;
+        
+        // Intentar usar imagen del tile
+        const img = this.tileImages?.[tileId];
+        
+        if (img && img.complete && img.naturalWidth > 0) {
+            // Clip hexagonal
+            ctx.save();
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i;
+                const hx = cx + radius * Math.cos(angle);
+                const hy = cy + radius * Math.sin(angle);
+                if (i === 0) ctx.moveTo(hx, hy);
+                else ctx.lineTo(hx, hy);
+            }
+            ctx.closePath();
+            ctx.clip();
+            
+            // Dibujar imagen
+            const imgSize = radius * 2.2;
+            ctx.drawImage(img, cx - imgSize/2, cy - imgSize/2, imgSize, imgSize);
+            ctx.restore();
+        } else {
+            // Fallback: color según tipo de tile
+            ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i;
+                const hx = cx + radius * Math.cos(angle);
+                const hy = cy + radius * Math.sin(angle);
+                if (i === 0) ctx.moveTo(hx, hy);
+                else ctx.lineTo(hx, hy);
+            }
+            ctx.closePath();
+            
+            // Color según tipo
+            const colors = {
+                'bt_11': '#4a7c23',      // Llanura
+                'bt_27': '#2196f3',       // Agua
+                'bt_28': '#1976d2',
+                'bt_29': '#1565c0',
+                'bt_30': '#0d47a1',
+                'default': '#3d3d3d'
+            };
+            ctx.fillStyle = colors[tileId] || colors.default;
+            ctx.fill();
         }
         
-        // Dibujar grid si está activo
-        if (this.showGrid) {
-            this.drawGrid(ctx, w, h);
+        // Borde del hex
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i;
+            const hx = cx + radius * Math.cos(angle);
+            const hy = cy + radius * Math.sin(angle);
+            if (i === 0) ctx.moveTo(hx, hy);
+            else ctx.lineTo(hx, hy);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        
+        // Mostrar elevación si es mayor a 0
+        if (elevation > 0) {
+            const fontSize = Math.max(8, radius * 0.35);
+            const textX = cx + radius * 0.4;
+            const textY = cy - radius * 0.4;
+            
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            ctx.beginPath();
+            ctx.arc(textX, textY, fontSize * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+            
+            ctx.font = `bold ${fontSize}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = '#fff';
+            ctx.fillText(elevation.toString(), textX, textY);
         }
     }
     
