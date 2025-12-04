@@ -523,6 +523,11 @@ function renderTokenGallery() {
         tokens = tokenLibrary.generic || [];
     }
     
+    // Obtener tokens ya asignados
+    const assignedTokens = approvedSheets
+        .filter(s => s.token_visual)
+        .map(s => s.token_visual);
+    
     if (tokens.length === 0) {
         container.innerHTML = '<p class="empty-state">No hay tokens disponibles</p>';
         return;
@@ -530,7 +535,19 @@ function renderTokenGallery() {
     
     container.innerHTML = tokens.map(token => {
         const isSelected = selectedTokenId === token.id;
+        const isAssigned = assignedTokens.includes(token.id);
         const weightBadge = token.tonnage ? getWeightBadge(token.tonnage) : '';
+        
+        if (isAssigned) {
+            return `
+                <div class="token-option assigned" title="${token.name} - Ya asignado">
+                    ${weightBadge}
+                    <img class="token-image" src="/assets/markers/${token.file}" alt="${token.name}">
+                    <span class="token-label">${token.name}</span>
+                    <span class="assigned-badge">✓</span>
+                </div>
+            `;
+        }
         
         return `
             <div class="token-option ${isSelected ? 'selected' : ''}" 

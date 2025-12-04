@@ -164,8 +164,38 @@ class SheetManager {
             case 'in_game':
                 document.getElementById('ingame-sheet-panel')?.classList.remove('hidden');
                 document.getElementById('ingame-char-name').textContent = charName;
-                document.getElementById('assigned-token').textContent = `#${sheet.marker_id}`;
+                
+                // Mostrar imagen del token
+                const tokenVisual = sheet.token_visual;
+                if (tokenVisual) {
+                    this.loadTokenImage(tokenVisual);
+                }
                 break;
+        }
+    }
+    
+    // Cargar imagen del token asignado
+    async loadTokenImage(tokenId) {
+        try {
+            const response = await fetch('/assets/markers/tokens.json');
+            const tokenLibrary = await response.json();
+            
+            // Buscar el token en todas las categorías
+            const allTokens = [
+                ...(tokenLibrary.dnd || []),
+                ...(tokenLibrary.battletech || []),
+                ...(tokenLibrary.generic || [])
+            ];
+            
+            const token = allTokens.find(t => t.id === tokenId);
+            if (token) {
+                const img = document.getElementById('assigned-token-image');
+                const name = document.getElementById('assigned-token-name');
+                if (img) img.src = `/assets/markers/${token.file}`;
+                if (name) name.textContent = token.name;
+            }
+        } catch (error) {
+            console.error('Error loading token image:', error);
         }
     }
     

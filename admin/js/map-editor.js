@@ -9,6 +9,7 @@ class MapEditor {
         this.ctx = null;
         this.tiles = {};
         this.categories = {};
+        this.tileImages = {}; // Cache de imágenes de tiles
         this.currentMap = null;
         this.selectedTile = null;
         this.mapWidth = 20;
@@ -43,6 +44,7 @@ class MapEditor {
     async init() {
         await this.loadGameSystemConfig();
         await this.loadTileLibrary();
+        await this.preloadTileImages();
         this.setupUI();
         this.createNewMap(this.mapWidth, this.mapHeight);
     }
@@ -88,6 +90,12 @@ class MapEditor {
                 this.currentLayer = this.layers[0] || 'terrain';
             }
             
+            // Detectar si es BattleTech y configurar grid hexagonal
+            if (data.gridType === 'hex' || this.systemId === 'battletech') {
+                this.gridType = 'hex';
+                console.log('🔷 Modo hexagonal activado');
+            }
+            
             console.log(`📦 Cargados ${Object.keys(this.tiles).length} tiles para ${this.systemId}`);
             if (this.layerSystem) {
                 console.log(`📚 Sistema de capas activo: ${this.layers.join(', ')}`);
@@ -100,6 +108,35 @@ class MapEditor {
                 wall_stone: { id: 'wall_stone', name: 'Muro', color: '#5d6d7e', icon: '🧱', movementCost: 999, blocksVision: true }
             };
         }
+    }
+    
+    async preloadTileImages() {
+        /**
+         * Precarga las imágenes de los tiles para renderizado rápido
+         */
+        console.log('🖼️ Precargando imágenes de tiles...');
+        const loadPromises = [];
+        
+        for (const [tileId, tile] of Object.entries(this.tiles)) {
+            if (tile.file) {
+                const promise = new Promise((resolve) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        this.tileImages[tileId] = img;
+                        resolve();
+                    };
+                    img.onerror = () => {
+                        console.warn(`No se pudo cargar imagen para ${tileId}: ${tile.file}`);
+                        resolve();
+                    };
+                    img.src = tile.file;
+                });
+                loadPromises.push(promise);
+            }
+        }
+        
+        await Promise.all(loadPromises);
+        console.log(`✅ ${Object.keys(this.tileImages).length} imágenes cargadas`);
     }
     
     setupUI() {
@@ -153,6 +190,7 @@ class MapEditor {
             const getTileTooltip = (tile) => {
                 let tooltip = tile.name;
                 if (tile.movementCost !== undefined) tooltip += `\nMov: ${tile.movementCost === 999 ? '∞' : tile.movementCost}`;
+                if (tile.defenseBonus) tooltip += `\nDef: +${tile.defenseBonus}`;
                 if (tile.toHitModifier) tooltip += `\n+${tile.toHitModifier} impacto`;
                 if (tile.providesCover) tooltip += `\nCobertura: ${tile.providesCover}`;
                 if (tile.elevation) tooltip += `\nElevación: +${tile.elevation}`;
@@ -162,10 +200,14 @@ class MapEditor {
                 return tooltip;
             };
             
-            // Obtener color para preview
-            const getTileColor = (tile) => {
-                if (tile.colors?.base) return tile.colors.base;
-                return tile.color || '#666';
+            // Obtener preview - usar thumbnail o imagen
+            const getTilePreview = (tile) => {
+                if (tile.thumbnail) {
+                    return `<img src="${tile.thumbnail}" alt="${tile.name}" class="tile-thumb">`;
+                } else if (tile.file) {
+                    return `<img src="${tile.file}" alt="${tile.name}" class="tile-thumb">`;
+                }
+                return `<div class="tile-color" style="background-color: ${tile.color || '#666'}">${tile.icon || ''}</div>`;
             };
             
             html += `
@@ -178,15 +220,14 @@ class MapEditor {
                     </div>
                     <div class="category-tiles" id="cat-${catId}">
                         ${filteredTiles.map(tile => `
-                            <div class="tile-item ${this.selectedTile?.id === tile.id ? 'selected' : ''} ${tile.stackable ? 'stackable' : ''}" 
+                            <div class="tile-item ${this.selectedTile?.id === tile.id ? 'selected' : ''}" 
                                  data-tile-id="${tile.id}"
                                  title="${getTileTooltip(tile)}"
                                  onclick="mapEditor.selectTile('${tile.id}')">
-                                <div class="tile-preview" style="background-color: ${getTileColor(tile)}">
-                                    ${tile.icon || ''}
+                                <div class="tile-preview">
+                                    ${getTilePreview(tile)}
                                 </div>
                                 <span class="tile-name">${tile.name}</span>
-                                ${tile.stackable ? '<span class="stackable-indicator">+</span>' : ''}
                             </div>
                         `).join('')}
                     </div>
@@ -644,7 +685,14 @@ class MapEditor {
         const px = x * this.tileSize;
         const py = y * this.tileSize;
         
-        // Fondo del tile
+        // Si hay imagen, usarla
+        const img = this.tileImages[tile.id];
+        if (img) {
+            this.ctx.drawImage(img, px, py, this.tileSize, this.tileSize);
+            return;
+        }
+        
+        // Fallback a color sólido
         this.ctx.fillStyle = tile.color || '#333';
         this.ctx.fillRect(px, py, this.tileSize, this.tileSize);
         
@@ -673,7 +721,50 @@ class MapEditor {
         const cy = y * hexHeight * 0.75 + hexHeight / 2;
         const radius = hexWidth / 2 - 1;
         
-        // Dibujar hexágono base
+        // Si hay imagen, dibujarla dentro del hexágono
+        const img = this.tileImages[tile.id];
+        if (img) {
+            this.ctx.save();
+            // Crear path hexagonal para clip
+            this.ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i - Math.PI / 6;
+                const hx = cx + radius * Math.cos(angle);
+                const hy = cy + radius * Math.sin(angle);
+                if (i === 0) {
+                    this.ctx.moveTo(hx, hy);
+                } else {
+                    this.ctx.lineTo(hx, hy);
+                }
+            }
+            this.ctx.closePath();
+            this.ctx.clip();
+            
+            // Dibujar imagen escalada al hexágono
+            const imgSize = radius * 2.2;
+            this.ctx.drawImage(img, cx - imgSize/2, cy - imgSize/2, imgSize, imgSize);
+            this.ctx.restore();
+            
+            // Borde del hexágono
+            this.ctx.beginPath();
+            for (let i = 0; i < 6; i++) {
+                const angle = (Math.PI / 3) * i - Math.PI / 6;
+                const hx = cx + radius * Math.cos(angle);
+                const hy = cy + radius * Math.sin(angle);
+                if (i === 0) {
+                    this.ctx.moveTo(hx, hy);
+                } else {
+                    this.ctx.lineTo(hx, hy);
+                }
+            }
+            this.ctx.closePath();
+            this.ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+            this.ctx.lineWidth = 1;
+            this.ctx.stroke();
+            return;
+        }
+        
+        // Fallback: dibujar hexágono con color
         this.ctx.beginPath();
         for (let i = 0; i < 6; i++) {
             const angle = (Math.PI / 3) * i - Math.PI / 6;

@@ -278,6 +278,26 @@ async def get_token_image(category: str, filename: str):
     raise HTTPException(status_code=404, detail="Token not found")
 
 
+# === Assets de Tiles para Mapas ===
+
+@app.get("/assets/tiles/{system}/{filename}")
+async def get_tile_image(system: str, filename: str):
+    """Obtiene una imagen de tile para el editor de mapas"""
+    file_path = BASE_DIR / "assets" / "tiles" / system / filename
+    if file_path.exists():
+        media_type = "image/png" if filename.endswith(".png") else "image/svg+xml"
+        return FileResponse(file_path, media_type=media_type)
+    raise HTTPException(status_code=404, detail="Tile not found")
+
+@app.get("/assets/tiles/{system}/thumbnails/{filename}")
+async def get_tile_thumbnail(system: str, filename: str):
+    """Obtiene un thumbnail de tile para la paleta del editor"""
+    file_path = BASE_DIR / "assets" / "tiles" / system / "thumbnails" / filename
+    if file_path.exists():
+        return FileResponse(file_path, media_type="image/png")
+    raise HTTPException(status_code=404, detail="Thumbnail not found")
+
+
 # === API REST ===
 
 @app.get("/api/state")

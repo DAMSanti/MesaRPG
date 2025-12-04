@@ -112,10 +112,13 @@
 
                 <!-- En juego -->
                 <div id="ingame-sheet-panel" class="status-panel hidden">
-                    <div class="status-icon ingame">🎮</div>
-                    <h3>¡En Juego!</h3>
-                    <p id="ingame-char-name" class="char-name-display"></p>
-                    <p class="status-message">Token asignado: <span id="assigned-token">#</span></p>
+                    <div class="ingame-header">
+                        <img id="assigned-token-image" class="token-display" src="" alt="Token">
+                        <div class="ingame-info">
+                            <h3 id="ingame-char-name" class="char-name-display"></h3>
+                            <p class="token-name" id="assigned-token-name">Token asignado</p>
+                        </div>
+                    </div>
                     <button id="btn-go-control" class="btn btn-primary btn-large">⚔️ Ir al Control</button>
                 </div>
             </div>
