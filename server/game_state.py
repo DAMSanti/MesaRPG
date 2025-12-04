@@ -9,6 +9,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, Optional, List, Callable, Any
 import uuid
+import subprocess
+import sys
 
 from .models import (
     GameState, Character, CharacterSheet, CharacterStatus, Player, Ability, Position,
@@ -661,6 +663,12 @@ class GameStateManager:
         # Notificar cambio
         await self._notify_change("map_saved", {"map_id": map_id, "name": model.name})
 
+        # Spawn background job to generate a PNG for the map so displays have an image
+        try:
+            self._spawn_generate_map_image(map_file)
+        except Exception as e:
+            print(f"⚠️ Failed to spawn map image generator: {e}")
+
         return {"id": map_id, "status": "saved"}
     
     async def delete_map(self, map_id: str) -> bool:
@@ -730,3 +738,24 @@ class GameStateManager:
                 "available_systems": [],
                 "recent_actions": []
             }
+
+    def _spawn_generate_map_image(self, map_file: Path) -> None:
+        """Spawn the tools/generate_map_image.py script in the background to create a PNG for a saved map.
+
+        This uses the same Python interpreter (`sys.executable`) and passes the map file path
+        to the script. It is intentionally non-blocking.
+        """
+        try:
+            repo_root = Path(__file__).resolve().parent.parent
+            script = repo_root / 'tools' / 'generate_map_image.py'
+            if not script.exists():
+                print(f"⚠️ generate_map_image.py not found at {script}")
+                return
+
+            # Use sys.executable to ensure the same Python interpreter / venv
+            cmd = [sys.executable, str(script), '--file', str(map_file)]
+            # Start detached process; do not wait
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"⏳ Spawned map image generator for {map_file}")
+        except Exception as e:
+            print(f"⚠️ Error spawning map image generator: {e}")
