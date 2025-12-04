@@ -188,8 +188,8 @@
       "icon": "🌲",
       "blocksLOS": true,
       "blocksVision": true,
-      "hexCount": 7,
-      "shape": "mega"
+      "hexCount": 9,
+      "shape": "h3v3"
     },
     "tile_22": {
       "id": "tile_22",
@@ -201,8 +201,8 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "hexCount": 2,
-      "shape": "h2"
+      "hexCount": 3,
+      "shape": "tri_down"
     },
     "tile_23": {
       "id": "tile_23",
@@ -214,8 +214,8 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "hexCount": 4,
-      "shape": "h2v2"
+      "hexCount": 3,
+      "shape": "tri_down"
     },
     "tile_24": {
       "id": "tile_24",
@@ -254,8 +254,8 @@
       "color": "#1976d2",
       "icon": "💧",
       "size": "large",
-      "hexCount": 7,
-      "shape": "mega"
+      "hexCount": 19,
+      "shape": "h5v5"
     },
     "tile_27": {
       "id": "tile_27",
