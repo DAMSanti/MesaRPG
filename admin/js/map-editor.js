@@ -43,17 +43,57 @@ class MapEditor {
     
     async init() {
         await this.loadGameSystemConfig();
+        
+        // Si no hay sistema seleccionado, mostrar mensaje y no continuar
+        if (!this.systemId || this.systemId === 'none') {
+            this.showNoSystemMessage();
+            return;
+        }
+        
         await this.loadTileLibrary();
         await this.preloadTileImages();
         this.setupUI();
         this.createNewMap(this.mapWidth, this.mapHeight);
     }
     
+    showNoSystemMessage() {
+        const container = document.querySelector('.map-canvas-container');
+        if (container) {
+            container.innerHTML = `
+                <div class="no-system-message" style="
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100%;
+                    color: #888;
+                    text-align: center;
+                    padding: 40px;
+                ">
+                    <span style="font-size: 48px; margin-bottom: 16px;">🎮</span>
+                    <h3 style="margin: 0 0 8px 0; color: #aaa;">Selecciona un Sistema de Juego</h3>
+                    <p style="margin: 0; font-size: 14px;">Usa el botón "Cambiar Juego" en la barra superior para elegir BattleTech, D&D u otro sistema.</p>
+                </div>
+            `;
+        }
+        
+        // Deshabilitar paleta de tiles
+        const palette = document.getElementById('tile-palette');
+        if (palette) {
+            palette.innerHTML = '<p class="empty-state">Selecciona un sistema de juego primero</p>';
+        }
+    }
+    
     async loadGameSystemConfig() {
         try {
             const response = await fetch('/api/state');
             const state = await response.json();
-            this.systemId = state.game_system_id || state.game_system || 'dnd5e';
+            this.systemId = state.game_system_id || state.game_system || null;
+            
+            if (!this.systemId) {
+                console.log('⚠️ No hay sistema de juego seleccionado');
+                return;
+            }
             
             const sysResponse = await fetch(`/api/systems/${this.systemId}`);
             if (sysResponse.ok) {
@@ -65,8 +105,8 @@ class MapEditor {
                 console.log(`🎮 Sistema: ${this.gameSystem.name}, Grid: ${this.gridType}, Tamaño: ${this.tileSize}px`);
             }
         } catch (error) {
-            console.warn('No se pudo cargar config del sistema, usando valores por defecto');
-            this.systemId = 'dnd5e';
+            console.warn('No se pudo cargar config del sistema');
+            this.systemId = null;
         }
     }
     
@@ -1031,7 +1071,12 @@ class MapEditor {
     // === Renderizado ===
     
     render() {
-        if (!this.ctx || !this.currentMap) return;
+        if (!this.ctx || !this.currentMap) {
+            console.warn('❌ No se puede renderizar:', { ctx: !!this.ctx, currentMap: !!this.currentMap });
+            return;
+        }
+        
+        console.log('🎨 Renderizando mapa...', this.canvas.width, 'x', this.canvas.height);
         
         // Limpiar canvas
         this.ctx.fillStyle = '#1a1a2e';
@@ -1045,6 +1090,8 @@ class MapEditor {
         
         // Dibujar grid
         this.drawGrid();
+        
+        console.log('✅ Render completo');
     }
     
     renderLayer(layerName) {
@@ -2724,25 +2771,18 @@ function generateMap() {
     const type = document.getElementById('gen-type')?.value || 'dungeon';
     
     console.log(`🎲 Generando mapa: ${width}x${height} tipo: ${type}`);
-    console.log('mapEditor existe:', !!mapEditor);
     
-    if (mapEditor) {
-        console.log('Sistema:', mapEditor.systemId);
-        console.log('Tiles cargados:', Object.keys(mapEditor.tiles).length);
-        mapEditor.generateLocalMap(width, height, type);
-        document.querySelector('.map-canvas-container')?.classList.add('has-map');
-        showToast(`🎲 Mapa ${type} generado`, 'success');
-    } else {
-        console.error('mapEditor no está inicializado!');
-        // Intentar inicializar
-        initMapEditor();
-        setTimeout(() => {
-            if (mapEditor) {
-                mapEditor.generateLocalMap(width, height, type);
-                showToast(`🎲 Mapa ${type} generado`, 'success');
-            }
-        }, 500);
+    if (!mapEditor || !mapEditor.systemId) {
+        showToast('⚠️ Selecciona un sistema de juego primero', 'error');
+        return;
     }
+    
+    console.log('Sistema:', mapEditor.systemId);
+    console.log('Tiles cargados:', Object.keys(mapEditor.tiles).length);
+    
+    mapEditor.generateLocalMap(width, height, type);
+    document.querySelector('.map-canvas-container')?.classList.add('has-map');
+    showToast(`🎲 Mapa ${type} generado`, 'success');
 }
 
 // Helper para mostrar notificaciones
