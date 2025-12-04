@@ -50,10 +50,26 @@ class MapEditor {
             return;
         }
         
+        // Restaurar el canvas si fue reemplazado por el mensaje
+        this.restoreCanvas();
+        
         await this.loadTileLibrary();
         await this.preloadTileImages();
         this.setupUI();
         this.createNewMap(this.mapWidth, this.mapHeight);
+    }
+    
+    restoreCanvas() {
+        const container = document.querySelector('.map-canvas-container');
+        if (!container) return;
+        
+        // Si no hay canvas, recrearlo
+        let canvas = container.querySelector('#map-canvas');
+        if (!canvas) {
+            container.innerHTML = '<canvas id="map-canvas"></canvas>';
+            this.canvas = null;
+            this.ctx = null;
+        }
     }
     
     showNoSystemMessage() {
@@ -2661,10 +2677,13 @@ async function reloadMapEditor() {
             return;
         }
         
+        // Restaurar canvas si fue destruido
+        mapEditor.restoreCanvas();
+        
         await mapEditor.loadTileLibrary();
         await mapEditor.preloadTileImages();
-        mapEditor.renderTilePalette();
         mapEditor.setupCanvas(); // Re-inicializar canvas
+        mapEditor.renderTilePalette();
         mapEditor.createNewMap(mapEditor.mapWidth, mapEditor.mapHeight);
         console.log('🔄 Editor de mapas recargado para:', mapEditor.systemId);
     } else {
