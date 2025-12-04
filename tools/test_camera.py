@@ -13,9 +13,7 @@ def test_camera(camera_id: int = 0):
     
     cap = cv2.VideoCapture(camera_id)
     
-    if not cap.isOpened():
-        print(f"❌ No se pudo abrir la cámara {camera_id}")
-        return False
+    assert cap.isOpened(), f"❌ No se pudo abrir la cámara {camera_id}"
     
     # Obtener propiedades
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
@@ -28,15 +26,13 @@ def test_camera(camera_id: int = 0):
     
     # Intentar capturar un frame
     ret, frame = cap.read()
-    if ret:
-        print(f"   ✅ Captura de frame exitosa")
-    else:
-        print(f"   ❌ No se pudo capturar frame")
-        cap.release()
-        return False
+    assert ret, "❌ No se pudo capturar frame"
+
+    print(f"   ✅ Captura de frame exitosa")
     
     cap.release()
-    return True
+    # Tests should not return values; use assertions instead
+    return None
 
 
 def find_cameras(max_cameras: int = 10):
