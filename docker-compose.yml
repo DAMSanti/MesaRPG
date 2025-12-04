@@ -9,8 +9,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Montar configuración para edición en caliente
-      - ./config:/app/config:ro
+      # Montar configuración para edición en caliente (lectura/escritura para permitir guardar mapas)
+      - ./config:/app/config
       # Datos persistentes
       - ./data:/app/data
       # Assets (mapas, marcadores)
