@@ -188,8 +188,8 @@
       "icon": "🌲",
       "blocksLOS": true,
       "blocksVision": true,
-      "hexCount": 6,
-      "shape": "h3v2"
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_22": {
       "id": "tile_22",
@@ -214,8 +214,8 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "hexCount": 3,
-      "shape": "tri_down"
+      "hexCount": 4,
+      "shape": "h2v2"
     },
     "tile_24": {
       "id": "tile_24",
@@ -254,8 +254,8 @@
       "color": "#1976d2",
       "icon": "💧",
       "size": "large",
-      "hexCount": 13,
-      "shape": "mega13"
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_27": {
       "id": "tile_27",
@@ -337,8 +337,8 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "hexCount": 4,
-      "shape": "h3"
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_34": {
       "id": "tile_34",
@@ -376,8 +376,8 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "hexCount": 3,
-      "shape": "tri_down"
+      "hexCount": 4,
+      "shape": "h2v2"
     },
     "tile_37": {
       "id": "tile_37",
@@ -389,8 +389,8 @@
       "defenseBonus": 0,
       "color": "#1976d2",
       "icon": "💧",
-      "hexCount": 4,
-      "shape": "h2v2"
+      "hexCount": 5,
+      "shape": "h2v3"
     },
     "tile_38": {
       "id": "tile_38",
@@ -525,8 +525,8 @@
       "icon": "🏢",
       "blocksLOS": true,
       "blocksVision": true,
-      "hexCount": 2,
-      "shape": "h2"
+      "hexCount": 4,
+      "shape": "h2v2"
     },
     "tile_48": {
       "id": "tile_48",
@@ -555,8 +555,8 @@
       "icon": "🏢",
       "blocksLOS": true,
       "blocksVision": true,
-      "hexCount": 2,
-      "shape": "h2"
+      "hexCount": 4,
+      "shape": "h2v2"
     },
     "tile_50": {
       "id": "tile_50",
@@ -585,8 +585,8 @@
       "icon": "🏢",
       "blocksLOS": true,
       "blocksVision": true,
-      "hexCount": 4,
-      "shape": "h3"
+      "hexCount": 7,
+      "shape": "mega"
     },
     "tile_52": {
       "id": "tile_52",
@@ -691,8 +691,8 @@
       "blocksLOS": true,
       "blocksVision": true,
       "size": "mega",
-      "hexCount": 10,
-      "shape": "h5"
+      "hexCount": 13,
+      "shape": "mega13"
     },
     "tile_59": {
       "id": "tile_59",
