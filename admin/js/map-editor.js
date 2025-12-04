@@ -66,10 +66,14 @@ class MapEditor {
         // Si no hay canvas, recrearlo
         let canvas = container.querySelector('#map-canvas');
         if (!canvas) {
+            console.log('🔧 Restaurando canvas...');
             container.innerHTML = '<canvas id="map-canvas"></canvas>';
-            this.canvas = null;
-            this.ctx = null;
         }
+        
+        // Forzar re-setup del canvas
+        this.canvas = null;
+        this.ctx = null;
+        this.setupCanvas();
     }
     
     showNoSystemMessage() {
@@ -376,18 +380,28 @@ class MapEditor {
     
     setupCanvas() {
         this.canvas = document.getElementById('map-canvas');
-        if (!this.canvas) return;
+        if (!this.canvas) {
+            console.warn('❌ Canvas no encontrado');
+            return;
+        }
         
         this.ctx = this.canvas.getContext('2d');
         this.resizeCanvas();
     }
     
     resizeCanvas() {
-        if (!this.canvas) return;
+        if (!this.canvas) {
+            console.warn('❌ No hay canvas para redimensionar');
+            return;
+        }
         
         const container = this.canvas.parentElement;
-        const maxWidth = container.clientWidth - 20;
-        const maxHeight = container.clientHeight - 20;
+        let maxWidth = container?.clientWidth - 20 || 600;
+        let maxHeight = container?.clientHeight - 20 || 400;
+        
+        // Asegurar tamaño mínimo
+        maxWidth = Math.max(maxWidth, 400);
+        maxHeight = Math.max(maxHeight, 300);
         
         if (this.gridType === 'hex') {
             // Para hexágonos flat-top
@@ -666,6 +680,9 @@ class MapEditor {
         
         this.resizeCanvas();
         this.render();
+        
+        // Marcar que hay mapa para ocultar mensaje
+        document.querySelector('.map-canvas-container')?.classList.add('has-map');
         
         console.log(`🗺️ Nuevo mapa creado: ${width}x${height}`);
     }
