@@ -1161,7 +1161,12 @@ class MapEditor {
     
     renderLayer(layerName) {
         const layer = this.currentMap.layers[layerName];
-        if (!layer) return;
+        if (!layer) {
+            console.log('Layer no existe:', layerName);
+            return;
+        }
+        
+        let tilesDrawn = 0;
         
         // Primer pase: tiles normales y partes de multi-tiles
         for (let y = 0; y < this.mapHeight; y++) {
@@ -1169,6 +1174,9 @@ class MapEditor {
                 const cell = layer[y][x];
                 if (cell?.tileId) {
                     const tile = this.tiles[cell.tileId];
+                    if (!tile && y === 0 && x === 0) {
+                        console.log('❌ Tile no encontrado:', cell.tileId, 'Tiles disponibles:', Object.keys(this.tiles).slice(0, 5));
+                    }
                     if (tile) {
                         // Si es parte de un multi-tile (no el centro), NO dibujar nada
                         // La imagen completa se dibujará desde el centro
