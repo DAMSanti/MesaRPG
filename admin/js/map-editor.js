@@ -57,6 +57,9 @@ class MapEditor {
         await this.preloadTileImages();
         this.setupUI();
         this.createNewMap(this.mapWidth, this.mapHeight);
+        
+        // Actualizar opciones del generador
+        updateMapTypeSelector(this.systemId);
     }
     
     restoreCanvas() {
@@ -2710,12 +2713,45 @@ async function reloadMapEditor() {
         mapEditor.setupCanvas(); // Re-inicializar canvas
         mapEditor.renderTilePalette();
         mapEditor.createNewMap(mapEditor.mapWidth, mapEditor.mapHeight);
+        
+        // Actualizar opciones del generador
+        updateMapTypeSelector(mapEditor.systemId);
+        
         console.log('🔄 Editor de mapas recargado para:', mapEditor.systemId);
     } else {
         // Si el editor no existe todavía, marcar para recargar cuando se inicie
         pendingSystemReload = true;
         console.log('📌 Cambio de sistema pendiente - se aplicará al abrir el editor');
     }
+}
+
+// Actualiza el desplegable de tipos de mapa según el sistema
+function updateMapTypeSelector(systemId) {
+    const select = document.getElementById('gen-type');
+    if (!select) return;
+    
+    const mapTypes = {
+        battletech: [
+            { value: 'bt_grasslands', label: '🌿 Llanuras' },
+            { value: 'bt_forest', label: '🌲 Bosque Denso' },
+            { value: 'bt_city', label: '🏙️ Ciudad' },
+            { value: 'bt_river', label: '🌊 Río' },
+            { value: 'bt_ruins', label: '💥 Ruinas' },
+            { value: 'bt_desert', label: '🏜️ Desierto' },
+        ],
+        default: [
+            { value: 'dungeon', label: '🏰 Mazmorra' },
+            { value: 'cave', label: '🦇 Cueva' },
+            { value: 'forest', label: '🌲 Bosque' },
+            { value: 'town', label: '🏘️ Pueblo' },
+        ]
+    };
+    
+    const types = mapTypes[systemId] || mapTypes.default;
+    
+    select.innerHTML = types.map(t => 
+        `<option value="${t.value}">${t.label}</option>`
+    ).join('');
 }
 
 // === Funciones globales para los botones del HTML ===
