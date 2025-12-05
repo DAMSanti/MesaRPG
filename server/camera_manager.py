@@ -416,7 +416,7 @@ class CameraManager:
     
     # === Detección ===
     
-    def _detect_markers(self, frame: np.ndarray) -> Tuple[List[dict], np.ndarray]:
+    def _detect_markers(self, frame: Any) -> Tuple[List[dict], Any]:
         """Detecta marcadores ArUco en el frame"""
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         corners, ids, rejected = self.aruco_detector.detectMarkers(gray)
@@ -469,7 +469,7 @@ class CameraManager:
         
         return markers, annotated
     
-    def _draw_tracking_overlay(self, frame: np.ndarray):
+    def _draw_tracking_overlay(self, frame: Any):
         """Dibuja información de overlay en el frame"""
         # Info de estado
         status_text = f"Estado: {self.state.value}"
