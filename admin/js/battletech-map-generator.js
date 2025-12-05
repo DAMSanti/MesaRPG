@@ -746,6 +746,7 @@ class BattleTechMapGenerator {
     
     /**
      * Rellena un cluster con grupos de tiles apropiados
+     * Estrategia: intentar colocar grupos grandes primero, luego más pequeños
      */
     fillClusterWithGroups(cluster) {
         if (!this.tileGroups?.groups) return;
@@ -764,35 +765,107 @@ class BattleTechMapGenerator {
         
         if (matchingGroups.length === 0) return;
         
-        // Intentar colocar grupos hasta llenar el cluster
-        let attempts = 0;
-        const maxAttempts = cluster.hexes.length * 3;
+        // Estrategia mejorada: recorrer sistemáticamente todos los hexes del cluster
+        // e intentar colocar el grupo más grande posible en cada posición
         
-        while (available.size > 0 && attempts < maxAttempts) {
-            attempts++;
+        // Ordenar hexes del cluster para procesamiento sistemático
+        const sortedHexes = [...cluster.hexes].sort((a, b) => {
+            if (a.y !== b.y) return a.y - b.y;
+            return a.x - b.x;
+        });
+        
+        for (const hex of sortedHexes) {
+            const key = `${hex.x},${hex.y}`;
+            if (!available.has(key)) continue; // Ya usado por otro grupo
             
-            // Elegir un hex disponible aleatorio como punto de partida
-            const availableArray = Array.from(available);
-            const startKey = availableArray[Math.floor(Math.random() * availableArray.length)];
-            const [startX, startY] = startKey.split(',').map(Number);
-            
-            // Intentar colocar un grupo aleatorio que encaje
+            // Intentar colocar grupos de mayor a menor tamaño
             let placed = false;
             
-            // Mezclar grupos para variedad
-            const shuffledGroups = [...matchingGroups].sort(() => Math.random() - 0.5);
-            
-            for (const [groupId, group] of shuffledGroups) {
-                if (this.canPlaceGroupInCluster(startX, startY, group, available)) {
-                    this.placeGroupFromCluster(startX, startY, group, groupId, available, hexMap);
-                    placed = true;
-                    break;
+            for (const [groupId, group] of matchingGroups) {
+                // Probar el grupo en esta posición y sus variantes rotadas
+                const rotations = this.getGroupRotations(group);
+                
+                for (const rotatedOffsets of rotations) {
+                    if (this.canPlaceGroupWithOffsets(hex.x, hex.y, rotatedOffsets, available)) {
+                        this.placeGroupWithOffsets(hex.x, hex.y, rotatedOffsets, group, groupId, available, hexMap);
+                        placed = true;
+                        break;
+                    }
                 }
+                
+                if (placed) break;
             }
+        }
+    }
+    
+    /**
+     * Genera rotaciones/variantes de offsets para un grupo
+     * Esto permite que un grupo encaje en diferentes orientaciones
+     */
+    getGroupRotations(group) {
+        if (!group.offsets) return [[]];
+        
+        const original = group.offsets;
+        const rotations = [original];
+        
+        // Para grupos pequeños (2-3 tiles), generar más variantes
+        if (original.length <= 4) {
+            // Rotación 180 grados (invertir signos)
+            const rot180 = original.map(([dx, dy]) => [-dx, -dy]);
+            rotations.push(rot180);
             
-            // Si no se pudo colocar ningún grupo, marcar este hex para tile individual
-            if (!placed) {
-                available.delete(startKey);
+            // Espejo horizontal
+            const mirrorH = original.map(([dx, dy]) => [-dx, dy]);
+            rotations.push(mirrorH);
+            
+            // Espejo vertical  
+            const mirrorV = original.map(([dx, dy]) => [dx, -dy]);
+            rotations.push(mirrorV);
+        }
+        
+        return rotations;
+    }
+    
+    /**
+     * Verifica si un grupo puede colocarse con offsets específicos
+     */
+    canPlaceGroupWithOffsets(x, y, offsets, available) {
+        if (!offsets || offsets.length === 0) return false;
+        
+        for (const [dx, dy] of offsets) {
+            const nx = x + dx;
+            const ny = y + dy;
+            const key = `${nx},${ny}`;
+            
+            if (!this.isValid(nx, ny)) return false;
+            if (!available.has(key)) return false;
+        }
+        
+        return true;
+    }
+    
+    /**
+     * Coloca un grupo con offsets específicos
+     */
+    placeGroupWithOffsets(x, y, offsets, group, groupId, available, hexMap) {
+        const baseHex = hexMap[`${x},${y}`];
+        const baseElevation = baseHex ? baseHex.elevation : 0;
+        
+        for (let i = 0; i < offsets.length; i++) {
+            const [dx, dy] = offsets[i];
+            const nx = x + dx;
+            const ny = y + dy;
+            const key = `${nx},${ny}`;
+            
+            if (this.isValid(nx, ny)) {
+                this.tileAssignments[ny][nx] = {
+                    tileId: `bt_${groupId}_${i}`,
+                    groupId: groupId,
+                    groupIndex: i,
+                    isCenter: i === 0,
+                    elevation: baseElevation
+                };
+                available.delete(key);
             }
         }
     }
@@ -818,7 +891,7 @@ class BattleTechMapGenerator {
     }
     
     /**
-     * Verifica si un grupo puede colocarse dentro del cluster
+     * Verifica si un grupo puede colocarse dentro del cluster (legacy, mantener por compatibilidad)
      */
     canPlaceGroupInCluster(x, y, group, available) {
         if (!group.offsets) return false;
