@@ -329,11 +329,50 @@ class BattleTechMapGenerator {
             
             const cx = Math.floor(Math.random() * this.width);
             const cy = Math.floor(Math.random() * this.height);
-            const size = minSize + Math.floor(Math.random() * (maxSize - minSize));
             
-            // Colocar cluster orgánico
-            placed += this.placeOrganicCluster(cx, cy, size, type);
+            // Preferir tamaños que coincidan con grupos de tiles (7, 9, 2, 3, 4)
+            const preferredSizes = [7, 9, 7, 4, 3, 2, 7];
+            const size = preferredSizes[Math.floor(Math.random() * preferredSizes.length)];
+            
+            // Colocar cluster compacto
+            placed += this.placeCompactCluster(cx, cy, size, type);
         }
+    }
+    
+    /**
+     * Coloca un cluster compacto en forma hexagonal
+     * Esto facilita que los grupos de tiles encajen mejor
+     */
+    placeCompactCluster(cx, cy, size, type) {
+        let placed = 0;
+        
+        // Patrones predefinidos que coinciden con grupos de tiles
+        const patterns = {
+            2: [[0, 0], [0, 1]],  // Vertical 2
+            3: [[0, 0], [0, 1], [1, 0]],  // Triángulo
+            4: [[0, 0], [0, 1], [-1, 0], [1, 0]],  // Cruz
+            7: [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]],  // Mega7
+            9: [[0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1], [-1, -1], [1, -1]]  // Mega9
+        };
+        
+        const pattern = patterns[size] || patterns[7];
+        
+        for (const [dx, dy] of pattern) {
+            const x = cx + dx;
+            const y = cy + dy;
+            
+            if (!this.isValid(x, y)) continue;
+            
+            // No sobrescribir water o urban
+            if (this.terrainMap[y][x] === 'water' || this.terrainMap[y][x] === 'urban') {
+                continue;
+            }
+            
+            this.terrainMap[y][x] = type;
+            placed++;
+        }
+        
+        return placed;
     }
     
     placeOrganicCluster(cx, cy, size, type) {
@@ -421,7 +460,7 @@ class BattleTechMapGenerator {
     }
     
     placeRiver(depth) {
-        // Río serpenteante de un borde a otro
+        // Río más grueso para que encajen mejor los grupos de tiles
         const vertical = Math.random() < 0.5;
         let current = vertical 
             ? { x: Math.floor(this.width / 2) + Math.floor(Math.random() * 4) - 2, y: 0 }
@@ -429,26 +468,39 @@ class BattleTechMapGenerator {
         
         const end = vertical ? this.height : this.width;
         
+        // Hacer el río más ancho (4-5 hexes) para que encajen grupos
+        const riverWidth = 2;
+        
         for (let i = 0; i < end; i++) {
-            // Colocar agua en posición actual y adyacentes
-            for (let w = -1; w <= 1; w++) {
-                const wx = vertical ? current.x + w : current.x;
-                const wy = vertical ? current.y : current.y + w;
-                if (this.isValid(wx, wy)) {
-                    this.terrainMap[wy][wx] = 'water';
-                    this.elevationMap[wy][wx] = 0;
+            // Colocar agua en un área más amplia
+            for (let w = -riverWidth; w <= riverWidth; w++) {
+                for (let h = -1; h <= 1; h++) {
+                    const wx = vertical ? current.x + w : current.x + h;
+                    const wy = vertical ? current.y + h : current.y + w;
+                    if (this.isValid(wx, wy)) {
+                        // Probabilidad de colocar agua decrece en los bordes
+                        const distFromCenter = Math.abs(w);
+                        if (distFromCenter <= 1 || Math.random() < 0.7) {
+                            this.terrainMap[wy][wx] = 'water';
+                            this.elevationMap[wy][wx] = 0;
+                        }
+                    }
                 }
             }
             
-            // Avanzar
+            // Avanzar con menos serpenteo para mantener coherencia
             if (vertical) {
                 current.y++;
-                current.x += Math.floor(Math.random() * 3) - 1;
-                current.x = Math.max(1, Math.min(this.width - 2, current.x));
+                if (Math.random() < 0.3) {
+                    current.x += Math.floor(Math.random() * 3) - 1;
+                    current.x = Math.max(2, Math.min(this.width - 3, current.x));
+                }
             } else {
                 current.x++;
-                current.y += Math.floor(Math.random() * 3) - 1;
-                current.y = Math.max(1, Math.min(this.height - 2, current.y));
+                if (Math.random() < 0.3) {
+                    current.y += Math.floor(Math.random() * 3) - 1;
+                    current.y = Math.max(2, Math.min(this.height - 3, current.y));
+                }
             }
         }
     }
@@ -557,10 +609,42 @@ class BattleTechMapGenerator {
     }
     
     placePond() {
-        const cx = 2 + Math.floor(Math.random() * (this.width - 4));
-        const cy = 2 + Math.floor(Math.random() * (this.height - 4));
+        // Crear un lago de tamaño compatible con grupos mega7 (7 hexes)
+        const cx = 3 + Math.floor(Math.random() * (this.width - 6));
+        const cy = 3 + Math.floor(Math.random() * (this.height - 6));
         
-        this.placeOrganicCluster(cx, cy, 3 + Math.floor(Math.random() * 4), 'water');
+        // Patrón mega7: centro + 6 vecinos (tamaño ideal para grupos de agua)
+        const mega7Offsets = [
+            [0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]
+        ];
+        
+        // Colocar lago con forma compatible con grupos
+        for (const [dx, dy] of mega7Offsets) {
+            const nx = cx + dx;
+            const ny = cy + dy;
+            if (this.isValid(nx, ny)) {
+                this.terrainMap[ny][nx] = 'water';
+                this.elevationMap[ny][nx] = 0;
+            }
+        }
+        
+        // Opcionalmente añadir más hexes alrededor para lagos más grandes
+        if (Math.random() < 0.5) {
+            // Segundo anillo parcial
+            const extraOffsets = [
+                [-2, 0], [-2, 1], [-1, 2], [0, 2], [1, 2], [2, 1], [2, 0]
+            ];
+            for (const [dx, dy] of extraOffsets) {
+                if (Math.random() < 0.6) {
+                    const nx = cx + dx;
+                    const ny = cy + dy;
+                    if (this.isValid(nx, ny)) {
+                        this.terrainMap[ny][nx] = 'water';
+                        this.elevationMap[ny][nx] = 0;
+                    }
+                }
+            }
+        }
         
         // Bajar elevación del agua
         for (let y = 0; y < this.height; y++) {
