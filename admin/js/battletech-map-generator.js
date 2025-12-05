@@ -831,6 +831,10 @@ class BattleTechMapGenerator {
     /**
      * Rellena un cluster con grupos de tiles apropiados
      * Estrategia: intentar colocar grupos grandes primero, luego más pequeños
+     * 
+     * IMPORTANTE: Los grupos de tiles NO se rotan porque cada tile tiene una
+     * imagen específica diseñada para su posición relativa en el grupo.
+     * Rotar los offsets rompería la correspondencia tile-imagen.
      */
     fillClusterWithGroups(cluster) {
         if (!this.tileGroups?.groups) return;
@@ -849,7 +853,7 @@ class BattleTechMapGenerator {
         
         if (matchingGroups.length === 0) return;
         
-        // Estrategia mejorada: recorrer sistemáticamente todos los hexes del cluster
+        // Estrategia: recorrer sistemáticamente todos los hexes del cluster
         // e intentar colocar el grupo más grande posible en cada posición
         
         // Ordenar hexes del cluster para procesamiento sistemático
@@ -866,59 +870,29 @@ class BattleTechMapGenerator {
             let placed = false;
             
             for (const [groupId, group] of matchingGroups) {
-                // Probar el grupo en esta posición y sus variantes rotadas
-                const rotations = this.getGroupRotations(group);
-                
-                for (const rotatedOffsets of rotations) {
-                    if (this.canPlaceGroupWithOffsets(hex.x, hex.y, rotatedOffsets, available)) {
-                        this.placeGroupWithOffsets(hex.x, hex.y, rotatedOffsets, group, groupId, available, hexMap);
-                        placed = true;
-                        break;
-                    }
+                // Usar los offsets originales del grupo (sin rotación)
+                // Los tiles compuestos están diseñados para posiciones específicas
+                if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
+                    this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
+                    placed = true;
+                    break;
                 }
-                
-                if (placed) break;
             }
         }
     }
     
     /**
-     * Genera rotaciones/variantes de offsets para un grupo
-     * Esto permite que un grupo encaje en diferentes orientaciones
+     * Verifica si un grupo puede colocarse en la posición dada
+     * Ajusta los offsets según la paridad de la columna base
      */
-    getGroupRotations(group) {
-        if (!group.offsets) return [[]];
+    canPlaceGroup(x, y, group, available) {
+        if (!group.offsets || group.offsets.length === 0) return false;
         
-        const original = group.offsets;
-        const rotations = [original];
-        
-        // Para grupos pequeños (2-3 tiles), generar más variantes
-        if (original.length <= 4) {
-            // Rotación 180 grados (invertir signos)
-            const rot180 = original.map(([dx, dy]) => [-dx, -dy]);
-            rotations.push(rot180);
-            
-            // Espejo horizontal
-            const mirrorH = original.map(([dx, dy]) => [-dx, dy]);
-            rotations.push(mirrorH);
-            
-            // Espejo vertical  
-            const mirrorV = original.map(([dx, dy]) => [dx, -dy]);
-            rotations.push(mirrorV);
-        }
-        
-        return rotations;
-    }
-    
-    /**
-     * Verifica si un grupo puede colocarse con offsets específicos
-     */
-    canPlaceGroupWithOffsets(x, y, offsets, available) {
-        if (!offsets || offsets.length === 0) return false;
-        
-        for (const [dx, dy] of offsets) {
-            const nx = x + dx;
-            const ny = y + dy;
+        for (const [dx, dy] of group.offsets) {
+            // Ajustar offset para hex grid odd-q
+            const adjusted = this.adjustOffsetForHex(x, dx, dy);
+            const nx = x + adjusted.dx;
+            const ny = y + adjusted.dy;
             const key = `${nx},${ny}`;
             
             if (!this.isValid(nx, ny)) return false;
@@ -929,21 +903,28 @@ class BattleTechMapGenerator {
     }
     
     /**
-     * Coloca un grupo con offsets específicos
+     * Coloca un grupo de tiles en la posición especificada
+     * Usa el array 'tiles' del grupo para obtener los nombres correctos
+     * Ajusta los offsets según la paridad de la columna base
      */
-    placeGroupWithOffsets(x, y, offsets, group, groupId, available, hexMap) {
+    placeGroup(x, y, group, groupId, available, hexMap) {
         const baseHex = hexMap[`${x},${y}`];
         const baseElevation = baseHex ? baseHex.elevation : 0;
         
-        for (let i = 0; i < offsets.length; i++) {
-            const [dx, dy] = offsets[i];
-            const nx = x + dx;
-            const ny = y + dy;
+        for (let i = 0; i < group.offsets.length; i++) {
+            const [dx, dy] = group.offsets[i];
+            // Ajustar offset para hex grid odd-q
+            const adjusted = this.adjustOffsetForHex(x, dx, dy);
+            const nx = x + adjusted.dx;
+            const ny = y + adjusted.dy;
             const key = `${nx},${ny}`;
             
             if (this.isValid(nx, ny)) {
+                // IMPORTANTE: Usar group.tiles[i] para obtener el nombre correcto del tile
+                const tileName = group.tiles[i];
+                
                 this.tileAssignments[ny][nx] = {
-                    tileId: `bt_${groupId}_${i}`,
+                    tileId: `bt_${tileName}`,
                     groupId: groupId,
                     groupIndex: i,
                     isCenter: i === 0,
@@ -952,6 +933,66 @@ class BattleTechMapGenerator {
                 available.delete(key);
             }
         }
+    }
+    
+    /**
+     * Ajusta un offset de grupo para el sistema de coordenadas hex odd-q
+     * Los offsets en el JSON están definidos asumiendo una columna par como base.
+     * Si la columna base es impar, los offsets diagonales necesitan ajuste.
+     * 
+     * En odd-q hex grid:
+     * - Columnas impares están desplazadas hacia abajo (+0.5 en Y visual)
+     * - Al moverse de par a impar: el target está "abajo", dy efectivo es menor
+     * - Al moverse de impar a par: el target está "arriba", dy efectivo es mayor
+     * 
+     * Los offsets del JSON asumen base en columna par:
+     * - [-1, 0] desde par(0) llega a impar(-1) en el mismo nivel visual
+     * - [-1, 1] desde par(0) llega a impar(-1) un nivel abajo visualmente
+     * 
+     * Si la base está en columna impar, necesitamos ajustar:
+     * - [-1, 0] desde impar(1) necesita llegar a par(0) en el mismo nivel visual
+     *   pero par está "arriba", así que necesitamos [-1, 0] (sin ajuste extra)
+     *   PERO el offset [-1, 1] que era "abajo-izq" ahora es [-1, 0] relativamente
+     * 
+     * @param {number} baseX - Columna base
+     * @param {number} dx - Offset X original
+     * @param {number} dy - Offset Y original
+     * @returns {{dx: number, dy: number}} - Offsets ajustados
+     */
+    adjustOffsetForHex(baseX, dx, dy) {
+        // Si no hay movimiento horizontal, no hay ajuste
+        if (dx === 0) {
+            return { dx, dy };
+        }
+        
+        const baseIsOdd = baseX % 2 === 1;
+        
+        // Si la base está en columna par, los offsets del JSON son correctos tal cual
+        if (!baseIsOdd) {
+            return { dx, dy };
+        }
+        
+        // Base está en columna impar
+        // Cada vez que cruzamos a una columna de diferente paridad, 
+        // el Y efectivo cambia
+        
+        // Para dx negativo (izquierda): vamos a par si dx es impar
+        // Para dx positivo (derecha): vamos a par si dx es impar
+        const crossings = Math.abs(dx); // Cuántas columnas cruzamos
+        
+        // Cada cruce de impar a par agrega +1 al offset Y efectivo
+        // Cada cruce de par a impar resta -1 al offset Y efectivo
+        // Desde base impar:
+        //   dx=-1: impar->par (+1 efectivo) 
+        //   dx=-2: impar->par->impar (neto 0)
+        //   dx=+1: impar->par (+1 efectivo)
+        //   dx=+2: impar->par->impar (neto 0)
+        
+        // Si cruzamos un número impar de columnas desde base impar,
+        // terminamos en par y necesitamos ajustar +1
+        const adjustedDy = (crossings % 2 === 1) ? dy + 1 : dy;
+        
+        return { dx, dy: adjustedDy };
     }
     
     /**
@@ -972,46 +1013,6 @@ class BattleTechMapGenerator {
         
         const validCategories = compatible[terrainCategory] || [];
         return validCategories.includes(groupCategory);
-    }
-    
-    /**
-     * Verifica si un grupo puede colocarse dentro del cluster (legacy, mantener por compatibilidad)
-     */
-    canPlaceGroupInCluster(x, y, group, available) {
-        if (!group.offsets) return false;
-        
-        for (const [dx, dy] of group.offsets) {
-            const key = `${x + dx},${y + dy}`;
-            if (!available.has(key)) return false;
-        }
-        
-        return true;
-    }
-    
-    /**
-     * Coloca un grupo en el cluster
-     */
-    placeGroupFromCluster(x, y, group, groupId, available, hexMap) {
-        const baseHex = hexMap[`${x},${y}`];
-        const baseElevation = baseHex ? baseHex.elevation : 0;
-        
-        for (let i = 0; i < group.offsets.length; i++) {
-            const [dx, dy] = group.offsets[i];
-            const nx = x + dx;
-            const ny = y + dy;
-            const key = `${nx},${ny}`;
-            
-            if (this.isValid(nx, ny)) {
-                this.tileAssignments[ny][nx] = {
-                    tileId: `bt_${groupId}_${i}`,
-                    groupId: groupId,
-                    groupIndex: i,
-                    isCenter: i === 0,
-                    elevation: baseElevation
-                };
-                available.delete(key);
-            }
-        }
     }
     
     assignSingleTiles() {

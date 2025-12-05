@@ -1,5 +1,5 @@
 {
-  "description": "Grupos de tiles BattleTech - tiles que van juntos",
+  "description": "Grupos de tiles BattleTech - tiles que van juntos. Los offsets están definidos para base en columna par (odd-q hex grid).",
   "groups": {
     "12": {
       "name": "Llanura Mega",
@@ -7,7 +7,7 @@
       "category": "terrain",
       "tiles": ["12_0", "12_1", "12_2", "12_3", "12_4", "12_5", "12_6"],
       "offsets": [
-        [0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]
+        [0, 0], [0, -1], [0, 1], [-1, -1], [-1, 0], [1, -1], [1, 0]
       ]
     },
     "13": {
