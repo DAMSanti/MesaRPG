@@ -883,16 +883,14 @@ class BattleTechMapGenerator {
     
     /**
      * Verifica si un grupo puede colocarse en la posición dada
-     * Ajusta los offsets según la paridad de la columna base
+     * Los offsets se aplican directamente como coordenadas de grid [x+dx, y+dy]
      */
     canPlaceGroup(x, y, group, available) {
         if (!group.offsets || group.offsets.length === 0) return false;
         
         for (const [dx, dy] of group.offsets) {
-            // Ajustar offset para hex grid odd-q
-            const adjusted = this.adjustOffsetForHex(x, dx, dy);
-            const nx = x + adjusted.dx;
-            const ny = y + adjusted.dy;
+            const nx = x + dx;
+            const ny = y + dy;
             const key = `${nx},${ny}`;
             
             if (!this.isValid(nx, ny)) return false;
@@ -905,7 +903,7 @@ class BattleTechMapGenerator {
     /**
      * Coloca un grupo de tiles en la posición especificada
      * Usa el array 'tiles' del grupo para obtener los nombres correctos
-     * Ajusta los offsets según la paridad de la columna base
+     * Los offsets se aplican directamente como coordenadas de grid
      */
     placeGroup(x, y, group, groupId, available, hexMap) {
         const baseHex = hexMap[`${x},${y}`];
@@ -913,10 +911,8 @@ class BattleTechMapGenerator {
         
         for (let i = 0; i < group.offsets.length; i++) {
             const [dx, dy] = group.offsets[i];
-            // Ajustar offset para hex grid odd-q
-            const adjusted = this.adjustOffsetForHex(x, dx, dy);
-            const nx = x + adjusted.dx;
-            const ny = y + adjusted.dy;
+            const nx = x + dx;
+            const ny = y + dy;
             const key = `${nx},${ny}`;
             
             if (this.isValid(nx, ny)) {
@@ -933,66 +929,6 @@ class BattleTechMapGenerator {
                 available.delete(key);
             }
         }
-    }
-    
-    /**
-     * Ajusta un offset de grupo para el sistema de coordenadas hex odd-q
-     * Los offsets en el JSON están definidos asumiendo una columna par como base.
-     * Si la columna base es impar, los offsets diagonales necesitan ajuste.
-     * 
-     * En odd-q hex grid:
-     * - Columnas impares están desplazadas hacia abajo (+0.5 en Y visual)
-     * - Al moverse de par a impar: el target está "abajo", dy efectivo es menor
-     * - Al moverse de impar a par: el target está "arriba", dy efectivo es mayor
-     * 
-     * Los offsets del JSON asumen base en columna par:
-     * - [-1, 0] desde par(0) llega a impar(-1) en el mismo nivel visual
-     * - [-1, 1] desde par(0) llega a impar(-1) un nivel abajo visualmente
-     * 
-     * Si la base está en columna impar, necesitamos ajustar:
-     * - [-1, 0] desde impar(1) necesita llegar a par(0) en el mismo nivel visual
-     *   pero par está "arriba", así que necesitamos [-1, 0] (sin ajuste extra)
-     *   PERO el offset [-1, 1] que era "abajo-izq" ahora es [-1, 0] relativamente
-     * 
-     * @param {number} baseX - Columna base
-     * @param {number} dx - Offset X original
-     * @param {number} dy - Offset Y original
-     * @returns {{dx: number, dy: number}} - Offsets ajustados
-     */
-    adjustOffsetForHex(baseX, dx, dy) {
-        // Si no hay movimiento horizontal, no hay ajuste
-        if (dx === 0) {
-            return { dx, dy };
-        }
-        
-        const baseIsOdd = baseX % 2 === 1;
-        
-        // Si la base está en columna par, los offsets del JSON son correctos tal cual
-        if (!baseIsOdd) {
-            return { dx, dy };
-        }
-        
-        // Base está en columna impar
-        // Cada vez que cruzamos a una columna de diferente paridad, 
-        // el Y efectivo cambia
-        
-        // Para dx negativo (izquierda): vamos a par si dx es impar
-        // Para dx positivo (derecha): vamos a par si dx es impar
-        const crossings = Math.abs(dx); // Cuántas columnas cruzamos
-        
-        // Cada cruce de impar a par agrega +1 al offset Y efectivo
-        // Cada cruce de par a impar resta -1 al offset Y efectivo
-        // Desde base impar:
-        //   dx=-1: impar->par (+1 efectivo) 
-        //   dx=-2: impar->par->impar (neto 0)
-        //   dx=+1: impar->par (+1 efectivo)
-        //   dx=+2: impar->par->impar (neto 0)
-        
-        // Si cruzamos un número impar de columnas desde base impar,
-        // terminamos en par y necesitamos ajustar +1
-        const adjustedDy = (crossings % 2 === 1) ? dy + 1 : dy;
-        
-        return { dx, dy: adjustedDy };
     }
     
     /**
