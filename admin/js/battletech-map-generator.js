@@ -652,68 +652,197 @@ class BattleTechMapGenerator {
     // ==========================================
     
     assignTiles() {
-        // Primero intentar colocar tiles agrupados
-        this.assignGroupedTiles();
+        // 1. Identificar clusters de terreno conectados
+        const clusters = this.findTerrainClusters();
         
-        // Luego rellenar con tiles individuales
+        // 2. Para cada cluster, intentar rellenarlo con grupos de tiles apropiados
+        for (const cluster of clusters) {
+            this.fillClusterWithGroups(cluster);
+        }
+        
+        // 3. Rellenar hexes restantes con tiles individuales
         this.assignSingleTiles();
     }
     
-    assignGroupedTiles() {
+    /**
+     * Encuentra clusters conectados del mismo tipo de terreno
+     */
+    findTerrainClusters() {
+        const visited = new Set();
+        const clusters = [];
+        
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                const key = `${x},${y}`;
+                if (visited.has(key)) continue;
+                
+                const terrain = this.terrainMap[y][x];
+                const cluster = this.floodFillCluster(x, y, terrain, visited);
+                
+                if (cluster.hexes.length > 0) {
+                    clusters.push(cluster);
+                }
+            }
+        }
+        
+        // Ordenar por tamaño (más grandes primero para mejor cobertura)
+        clusters.sort((a, b) => b.hexes.length - a.hexes.length);
+        
+        return clusters;
+    }
+    
+    /**
+     * Flood fill para encontrar un cluster de terreno conectado
+     */
+    floodFillCluster(startX, startY, terrain, visited) {
+        const cluster = {
+            terrain: terrain,
+            hexes: [],
+            category: this.terrainToCategory(terrain)
+        };
+        
+        const queue = [{x: startX, y: startY}];
+        
+        while (queue.length > 0) {
+            const {x, y} = queue.shift();
+            const key = `${x},${y}`;
+            
+            if (visited.has(key)) continue;
+            if (!this.isValid(x, y)) continue;
+            if (this.terrainMap[y][x] !== terrain) continue;
+            
+            visited.add(key);
+            cluster.hexes.push({x, y, elevation: this.elevationMap[y][x]});
+            
+            // Añadir vecinos
+            for (const n of this.getHexNeighbors(x, y)) {
+                const nKey = `${n.x},${n.y}`;
+                if (!visited.has(nKey)) {
+                    queue.push(n);
+                }
+            }
+        }
+        
+        return cluster;
+    }
+    
+    /**
+     * Convierte tipo de terreno a categoría de tile
+     */
+    terrainToCategory(terrain) {
+        const mapping = {
+            'clear': 'terrain',
+            'woods': 'woods',
+            'woods_heavy': 'woods_heavy',
+            'water': 'water',
+            'water_depth0': 'water',
+            'rough': 'rough',
+            'rubble': 'rubble',
+            'urban': 'urban',
+            'hazards': 'hazards'
+        };
+        return mapping[terrain] || 'terrain';
+    }
+    
+    /**
+     * Rellena un cluster con grupos de tiles apropiados
+     */
+    fillClusterWithGroups(cluster) {
         if (!this.tileGroups?.groups) return;
         
-        const used = new Set();
+        // Crear set de hexes disponibles en el cluster
+        const available = new Set(cluster.hexes.map(h => `${h.x},${h.y}`));
+        const hexMap = {};
+        for (const h of cluster.hexes) {
+            hexMap[`${h.x},${h.y}`] = h;
+        }
         
-        // Ordenar grupos por tamaño (más grandes primero)
-        const groupEntries = Object.entries(this.tileGroups.groups)
-            .sort((a, b) => b[1].tiles.length - a[1].tiles.length);
+        // Encontrar grupos que coincidan con la categoría del cluster
+        const matchingGroups = Object.entries(this.tileGroups.groups)
+            .filter(([id, group]) => this.categoryMatches(cluster.category, group.category))
+            .sort((a, b) => b[1].tiles.length - a[1].tiles.length); // Más grandes primero
         
-        for (const [groupId, group] of groupEntries) {
-            // Encontrar posiciones válidas para este grupo
-            for (let y = 0; y < this.height; y++) {
-                for (let x = 0; x < this.width; x++) {
-                    if (used.has(`${x},${y}`)) continue;
-                    
-                    // Verificar si el grupo encaja aquí
-                    if (this.canPlaceGroup(x, y, group, used)) {
-                        // Verificar si el terreno coincide
-                        const terrainHere = this.terrainMap[y][x];
-                        const groupCategory = group.category;
-                        
-                        if (this.terrainMatchesCategory(terrainHere, groupCategory)) {
-                            // Probabilidad de usar este grupo
-                            if (Math.random() < 0.3) {
-                                this.placeGroup(x, y, group, groupId, used);
-                            }
-                        }
-                    }
+        if (matchingGroups.length === 0) return;
+        
+        // Intentar colocar grupos hasta llenar el cluster
+        let attempts = 0;
+        const maxAttempts = cluster.hexes.length * 3;
+        
+        while (available.size > 0 && attempts < maxAttempts) {
+            attempts++;
+            
+            // Elegir un hex disponible aleatorio como punto de partida
+            const availableArray = Array.from(available);
+            const startKey = availableArray[Math.floor(Math.random() * availableArray.length)];
+            const [startX, startY] = startKey.split(',').map(Number);
+            
+            // Intentar colocar un grupo aleatorio que encaje
+            let placed = false;
+            
+            // Mezclar grupos para variedad
+            const shuffledGroups = [...matchingGroups].sort(() => Math.random() - 0.5);
+            
+            for (const [groupId, group] of shuffledGroups) {
+                if (this.canPlaceGroupInCluster(startX, startY, group, available)) {
+                    this.placeGroupFromCluster(startX, startY, group, groupId, available, hexMap);
+                    placed = true;
+                    break;
                 }
+            }
+            
+            // Si no se pudo colocar ningún grupo, marcar este hex para tile individual
+            if (!placed) {
+                available.delete(startKey);
             }
         }
     }
     
-    canPlaceGroup(x, y, group, used) {
+    /**
+     * Verifica si las categorías son compatibles
+     */
+    categoryMatches(terrainCategory, groupCategory) {
+        // Mapeo de compatibilidad
+        const compatible = {
+            'terrain': ['terrain'],
+            'woods': ['woods'],
+            'woods_heavy': ['woods_heavy', 'woods'],
+            'water': ['water'],
+            'rough': ['rough'],
+            'rubble': ['rubble'],
+            'urban': ['urban'],
+            'hazards': ['hazards']
+        };
+        
+        const validCategories = compatible[terrainCategory] || [];
+        return validCategories.includes(groupCategory);
+    }
+    
+    /**
+     * Verifica si un grupo puede colocarse dentro del cluster
+     */
+    canPlaceGroupInCluster(x, y, group, available) {
         if (!group.offsets) return false;
         
         for (const [dx, dy] of group.offsets) {
-            const nx = x + dx;
-            const ny = y + dy;
-            
-            if (!this.isValid(nx, ny)) return false;
-            if (used.has(`${nx},${ny}`)) return false;
+            const key = `${x + dx},${y + dy}`;
+            if (!available.has(key)) return false;
         }
         
         return true;
     }
     
-    placeGroup(x, y, group, groupId, used) {
-        const baseTerrain = this.terrainMap[y][x];
-        const baseElevation = this.elevationMap[y][x];
+    /**
+     * Coloca un grupo en el cluster
+     */
+    placeGroupFromCluster(x, y, group, groupId, available, hexMap) {
+        const baseHex = hexMap[`${x},${y}`];
+        const baseElevation = baseHex ? baseHex.elevation : 0;
         
         for (let i = 0; i < group.offsets.length; i++) {
             const [dx, dy] = group.offsets[i];
             const nx = x + dx;
             const ny = y + dy;
+            const key = `${nx},${ny}`;
             
             if (this.isValid(nx, ny)) {
                 this.tileAssignments[ny][nx] = {
@@ -723,24 +852,24 @@ class BattleTechMapGenerator {
                     isCenter: i === 0,
                     elevation: baseElevation
                 };
-                used.add(`${nx},${ny}`);
+                available.delete(key);
             }
         }
     }
     
     assignSingleTiles() {
-        // Mapeo de terreno a tiles individuales existentes
-        // Los tiles que son grupos usan _0 para el primer hex
-        const terrainToTiles = {
-            'clear': ['11'],  // Single: bt_11
-            'woods': ['13_0', '14_0'],  // Grupos: usar primer hex
-            'woods_heavy': ['15_0', '17_0', '18_0'],  // Grupos: primer hex
-            'water': ['27', '28', '29', '30'],  // Singles: bt_27, bt_28...
+        // Mapeo de terreno a tiles SOLO individuales (sin sufijo _X son singles)
+        // Los tiles con _X son partes de grupos y NO deben usarse aquí
+        const terrainToSingles = {
+            'clear': ['11'],  // Single grass hex (único tile individual de terreno)
+            'woods': ['11'],  // No hay singles de woods, usar grass (los grupos cubrirán)
+            'woods_heavy': ['11'],  // No hay singles, usar grass
+            'water': ['27', '28', '29', '30'],  // Water singles
             'water_depth0': ['27'],
-            'rough': ['59', '60', '61', '62', '63', '64', '65', '66'],  // Singles
-            'rubble': ['67', '68', '69', '70'],  // Singles
-            'urban': ['40', '41', '42', '43', '44', '45'],  // Singles
-            'hazards': ['71', '72', '73', '74']  // Singles
+            'rough': ['59', '60', '61', '62', '63', '64', '65', '66'],  // Rocky/rough singles
+            'rubble': ['67', '68', '69', '70'],  // Rubble singles
+            'urban': ['40', '41', '42', '43', '44', '45'],  // Building singles (sin sufijo)
+            'hazards': ['71', '72', '73', '74', '75']  // Hazard singles
         };
         
         for (let y = 0; y < this.height; y++) {
@@ -748,7 +877,7 @@ class BattleTechMapGenerator {
                 if (this.tileAssignments[y][x]) continue; // Ya asignado por grupo
                 
                 const terrain = this.terrainMap[y][x];
-                const tiles = terrainToTiles[terrain] || terrainToTiles['clear'];
+                const tiles = terrainToSingles[terrain] || terrainToSingles['clear'];
                 const tileNum = tiles[Math.floor(Math.random() * tiles.length)];
                 
                 this.tileAssignments[y][x] = {
@@ -757,22 +886,6 @@ class BattleTechMapGenerator {
                 };
             }
         }
-    }
-    
-    terrainMatchesCategory(terrain, category) {
-        const mapping = {
-            'clear': ['terrain'],
-            'woods': ['woods'],
-            'woods_heavy': ['woods', 'woods_heavy'],
-            'water': ['water'],
-            'rough': ['rough'],
-            'rubble': ['rubble'],
-            'urban': ['urban'],
-            'hazards': ['hazards']
-        };
-        
-        const validCategories = mapping[terrain] || [];
-        return validCategories.includes(category);
     }
     
     // ==========================================
