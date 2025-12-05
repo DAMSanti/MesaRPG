@@ -195,7 +195,13 @@
             
             // Touch Start - crear tokens para todos los dedos nuevos
             document.addEventListener('touchstart', function(e) {
-                e.preventDefault(); // Prevenir scroll y zoom
+                // Ignorar toques en controles UI (botones, inputs, modales)
+                var target = e.target;
+                if (target.closest('#display-controls, #calibration-modal, button, input, select, textarea, a')) {
+                    return; // Dejar que el evento pase normalmente a los controles
+                }
+                
+                e.preventDefault(); // Prevenir scroll y zoom solo en el área del mapa
                 for (var i = 0; i < e.changedTouches.length; i++) {
                     var touch = e.changedTouches[i];
                     createToken(touch.identifier, touch.clientX, touch.clientY);
@@ -204,10 +210,13 @@
             
             // Touch Move - mover todos los tokens
             document.addEventListener('touchmove', function(e) {
-                e.preventDefault();
-                for (var i = 0; i < e.changedTouches.length; i++) {
-                    var touch = e.changedTouches[i];
-                    moveToken(touch.identifier, touch.clientX, touch.clientY);
+                // Solo prevenir si hay tokens activos (estamos arrastrando)
+                if (Object.keys(activeTokens).length > 0) {
+                    e.preventDefault();
+                    for (var i = 0; i < e.changedTouches.length; i++) {
+                        var touch = e.changedTouches[i];
+                        moveToken(touch.identifier, touch.clientX, touch.clientY);
+                    }
                 }
             }, {passive: false, capture: true});
             
