@@ -1548,6 +1548,267 @@ body {
 
 /* ==================== END TOKEN ASSIGNMENT STYLES ==================== */
 
+
+/* ==================== CAMERA PANEL STYLES ==================== */
+
+.camera-card {
+    grid-column: span 2;
+}
+
+.camera-controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.camera-controls select,
+.camera-controls input[type="text"] {
+    padding: 8px 12px;
+    background: var(--bg-dark);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+}
+
+.camera-feed-container {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #000;
+    border-radius: 8px;
+    overflow: hidden;
+    margin-bottom: 15px;
+}
+
+.camera-feed {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: none;
+}
+
+.camera-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+}
+
+.camera-placeholder {
+    font-size: 24px;
+    color: var(--text-muted);
+}
+
+.camera-stream-controls {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+}
+
+.camera-status-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.camera-state {
+    font-weight: 600;
+}
+
+.camera-state.disconnected {
+    color: var(--danger);
+}
+
+.camera-state.connecting {
+    color: var(--warning);
+}
+
+.camera-state.connected,
+.camera-state.streaming {
+    color: var(--success);
+}
+
+.camera-state.calibrating {
+    color: var(--primary);
+}
+
+.camera-state.error {
+    color: var(--danger);
+}
+
+.calibration-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.calibration-controls .btn {
+    width: 100%;
+}
+
+/* Miniaturas */
+.miniatures-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+}
+
+.miniatures-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+.miniature-card {
+    display: flex;
+    gap: 12px;
+    padding: 15px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 2px solid var(--border);
+    transition: all 0.2s ease;
+}
+
+.miniature-card.visible {
+    border-color: var(--success);
+}
+
+.miniature-card.hidden {
+    border-color: var(--text-muted);
+    opacity: 0.6;
+}
+
+.miniature-icon {
+    font-size: 32px;
+}
+
+.miniature-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.miniature-id {
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.miniature-player {
+    color: var(--success);
+    font-weight: 500;
+}
+
+.miniature-unassigned {
+    color: var(--text-muted);
+    font-style: italic;
+}
+
+.miniature-position {
+    font-size: 12px;
+    color: var(--text-muted);
+}
+
+.miniature-visibility {
+    font-size: 12px;
+}
+
+/* Asignación de jugadores */
+.assignment-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+}
+
+.assignment-step {
+    background: var(--bg-dark);
+    padding: 15px;
+    border-radius: 8px;
+}
+
+.assignment-step h3 {
+    margin-bottom: 15px;
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+.miniatures-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.miniature-select-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 15px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border: 2px solid var(--border);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.miniature-select-card:hover {
+    border-color: var(--primary);
+    background: var(--bg-card-hover);
+}
+
+.miniature-select-card.selected {
+    border-color: var(--success);
+    background: rgba(34, 197, 94, 0.1);
+}
+
+.assignments-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.assignment-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    background: var(--bg-card);
+    border-radius: 8px;
+    border-left: 4px solid var(--success);
+}
+
+.assignment-info {
+    display: flex;
+    gap: 15px;
+    align-items: center;
+}
+
+.assignment-marker {
+    font-weight: 600;
+}
+
+.assignment-player {
+    color: var(--success);
+}
+
+.assignment-character {
+    color: var(--primary);
+}
+
+/* ==================== END CAMERA PANEL STYLES ==================== */
+
+
 /* Responsive */
 @media (max-width: 768px) {
     .grid {
@@ -1573,6 +1834,14 @@ body {
     
     .token-assignment-grid,
     .token-assignment-grid-simple {
+        grid-template-columns: 1fr;
+    }
+    
+    .camera-card {
+        grid-column: span 1;
+    }
+    
+    .assignment-grid {
         grid-template-columns: 1fr;
     }
 }

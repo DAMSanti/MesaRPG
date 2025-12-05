@@ -168,6 +168,37 @@ class ConnectionManager:
         }
         await self.broadcast_to_displays(message)
     
+    async def send_miniature_positions(self, miniatures: list):
+        """Envía posiciones de miniaturas a todos los displays y admins"""
+        message = {
+            "type": "miniature_positions",
+            "payload": {
+                "miniatures": miniatures,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        await asyncio.gather(
+            self.broadcast_to_displays(message),
+            self.broadcast_to_admins(message)
+        )
+    
+    async def send_player_action_at_position(self, player_id: str, player_name: str, 
+                                              x: float, y: float, action_type: str,
+                                              effect_data: dict = None):
+        """Envía una acción de jugador con su posición para reproducir animación"""
+        message = {
+            "type": "player_action",
+            "payload": {
+                "player_id": player_id,
+                "player_name": player_name,
+                "position": {"x": x, "y": y},
+                "action_type": action_type,
+                "effect": effect_data,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        await self.broadcast_to_displays(message)
+    
     async def send_state_update(self, state: dict):
         """Envía actualización de estado a todos"""
         message = {

@@ -187,6 +187,15 @@ class MesaRPGApp {
             }
         });
         
+        // === Tracking de miniaturas por cámara ===
+        ws.on('miniature_positions', (payload) => {
+            this.handleMiniaturePositions(payload);
+        });
+        
+        ws.on('player_action', (payload) => {
+            this.handlePlayerAction(payload);
+        });
+        
         // Conexión
         ws.on('connected', () => {
             window.gameRenderer.addLogEntry('Conectado al servidor', 'system');
@@ -464,6 +473,78 @@ class MesaRPGApp {
         } catch (e) {
             console.warn('No se pudo cargar la calibración guardada:', e);
         }
+    }
+    
+    // === Tracking de Miniaturas ===
+    
+    handleMiniaturePositions(payload) {
+        const miniatures = payload.miniatures || [];
+        
+        // Guardar posiciones de miniaturas en el estado
+        this.state.miniatures = {};
+        miniatures.forEach(m => {
+            this.state.miniatures[m.marker_id] = {
+                id: m.marker_id,
+                playerId: m.player_id,
+                playerName: m.player_name,
+                characterName: m.character_name,
+                x: m.x,
+                y: m.y,
+                rotation: m.rotation,
+                isVisible: m.is_visible
+            };
+        });
+        
+        // Actualizar visualización de miniaturas
+        if (window.gameRenderer && window.gameRenderer.updateMiniaturePositions) {
+            window.gameRenderer.updateMiniaturePositions(miniatures);
+        }
+    }
+    
+    handlePlayerAction(payload) {
+        const { player_id, player_name, position, action_type, effect } = payload;
+        
+        console.log(`🎭 Acción de ${player_name} (${action_type}) en (${position.x}, ${position.y})`);
+        
+        // Reproducir efecto en la posición del jugador
+        if (effect && window.effectsManager) {
+            // Añadir la posición al efecto
+            const effectWithPos = {
+                ...effect,
+                position: position
+            };
+            window.effectsManager.playEffect(effectWithPos);
+        }
+        
+        // Si hay un renderer con soporte de efectos en posición
+        if (window.gameRenderer && window.gameRenderer.playEffectAtPosition) {
+            window.gameRenderer.playEffectAtPosition(position.x, position.y, action_type);
+        }
+        
+        // Log de la acción
+        window.gameRenderer.addLogEntry(
+            `${player_name} realiza: ${action_type}`,
+            'ability'
+        );
+    }
+    
+    // Método para obtener la posición de un jugador por su ID
+    getPlayerPosition(playerId) {
+        if (!this.state.miniatures) return null;
+        
+        for (const miniature of Object.values(this.state.miniatures)) {
+            if (miniature.playerId === playerId && miniature.isVisible) {
+                return { x: miniature.x, y: miniature.y };
+            }
+        }
+        return null;
+    }
+    
+    // Método para obtener la miniatura de un jugador
+    getPlayerMiniature(playerId) {
+        if (!this.state.miniatures) return null;
+        
+        return Object.values(this.state.miniatures).find(m => m.playerId === playerId);
     }
 }
 

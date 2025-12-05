@@ -31,6 +31,7 @@
         <nav class="tabs">
             <button class="tab active" data-tab="game">🎲 Partida</button>
             <button class="tab" data-tab="maps">🗺️ Mapas</button>
+            <button class="tab" data-tab="camera">📷 Cámara</button>
             <button class="tab" data-tab="sheets">📋 Fichas</button>
             <button class="tab" data-tab="tokens">🎯 Tokens</button>
             <button class="tab" data-tab="combat">⚔️ Combate</button>
@@ -170,6 +171,121 @@
             </div>
         </section>
 
+        <!-- Tab: Cámara y Tracking -->
+        <section id="tab-camera" class="tab-content">
+            <div class="grid">
+                <!-- Feed de la cámara -->
+                <div class="card camera-card">
+                    <h2>📷 Feed de Cámara</h2>
+                    <div class="camera-controls">
+                        <select id="camera-select">
+                            <option value="">Seleccionar cámara...</option>
+                        </select>
+                        <input type="text" id="camera-url" placeholder="URL de cámara IP (opcional)" style="width: 200px;">
+                        <button class="btn btn-primary" id="btn-connect-camera" onclick="cameraPanel.connect()">Conectar</button>
+                        <button class="btn btn-danger" id="btn-disconnect-camera" onclick="cameraPanel.disconnect()" disabled>Desconectar</button>
+                    </div>
+                    <div class="camera-feed-container">
+                        <img id="camera-feed" class="camera-feed" alt="Feed de cámara">
+                        <div id="camera-overlay" class="camera-overlay">
+                            <span class="camera-placeholder">📷 Sin conexión</span>
+                        </div>
+                    </div>
+                    <div class="camera-stream-controls">
+                        <button class="btn btn-success" id="btn-start-stream" onclick="cameraPanel.startStream()" disabled>▶️ Iniciar Stream</button>
+                        <button class="btn btn-warning" id="btn-stop-stream" onclick="cameraPanel.stopStream()" disabled>⏹️ Detener</button>
+                        <button class="btn" id="btn-capture-frame" onclick="cameraPanel.captureFrame()" disabled>📸 Capturar</button>
+                    </div>
+                </div>
+
+                <!-- Estado de la cámara -->
+                <div class="card">
+                    <h2>📊 Estado</h2>
+                    <div class="camera-status-grid">
+                        <div class="status-item">
+                            <span class="status-label">Estado</span>
+                            <span id="camera-state" class="status-value camera-state disconnected">Desconectado</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Resolución</span>
+                            <span id="camera-resolution" class="status-value">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">FPS</span>
+                            <span id="camera-fps" class="status-value">-</span>
+                        </div>
+                        <div class="status-item">
+                            <span class="status-label">Calibrado</span>
+                            <span id="camera-calibrated" class="status-value">❌</span>
+                        </div>
+                    </div>
+                    
+                    <h3>📐 Calibración</h3>
+                    <div class="calibration-controls">
+                        <div class="property-group">
+                            <label>Ancho del área de juego:</label>
+                            <input type="number" id="game-area-width" value="1920" min="100" max="4000">
+                        </div>
+                        <div class="property-group">
+                            <label>Alto del área de juego:</label>
+                            <input type="number" id="game-area-height" value="1080" min="100" max="4000">
+                        </div>
+                        <button class="btn btn-primary" onclick="cameraPanel.simpleCalibration()">⚡ Calibración Rápida</button>
+                        <button class="btn" onclick="cameraPanel.startAdvancedCalibration()">🎯 Calibración Avanzada</button>
+                    </div>
+                </div>
+
+                <!-- Miniaturas detectadas -->
+                <div class="card full-width">
+                    <h2>🎭 Miniaturas Detectadas</h2>
+                    <div class="miniatures-toolbar">
+                        <span id="miniatures-count">0 detectadas</span>
+                        <button class="btn btn-sm" onclick="cameraPanel.refreshMiniatures()">🔄 Actualizar</button>
+                    </div>
+                    <div id="miniatures-grid" class="miniatures-grid">
+                        <p class="empty-state">No hay miniaturas detectadas</p>
+                    </div>
+                </div>
+
+                <!-- Asignación de miniaturas a jugadores -->
+                <div class="card full-width">
+                    <h2>👥 Asignación de Jugadores</h2>
+                    <p class="help-text">Asocia cada miniatura (marcador ArUco) con un jugador para tracking en tiempo real.</p>
+                    <div id="player-miniature-assignment" class="assignment-grid">
+                        <div class="assignment-step">
+                            <h3>1. Selecciona una miniatura</h3>
+                            <div id="unassigned-miniatures" class="miniatures-list">
+                                <p class="empty-state">Sin miniaturas detectadas</p>
+                            </div>
+                        </div>
+                        <div class="assignment-step">
+                            <h3>2. Asigna a un jugador</h3>
+                            <div class="property-group">
+                                <label>ID del Jugador:</label>
+                                <input type="text" id="assign-player-id" placeholder="player1">
+                            </div>
+                            <div class="property-group">
+                                <label>Nombre del Jugador:</label>
+                                <input type="text" id="assign-player-name" placeholder="Juan">
+                            </div>
+                            <div class="property-group">
+                                <label>Personaje (opcional):</label>
+                                <input type="text" id="assign-character-name" placeholder="Guerrero Dorado">
+                            </div>
+                            <button class="btn btn-success" id="btn-assign-miniature" onclick="cameraPanel.assignMiniature()" disabled>
+                                ✨ Asignar Miniatura
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <h3>📋 Asignaciones Actuales</h3>
+                    <div id="current-assignments" class="assignments-list">
+                        <p class="empty-state">Sin asignaciones</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
         <!-- Tab: Fichas de Personaje -->
         <section id="tab-sheets" class="tab-content">
             <div class="grid">
@@ -292,6 +408,7 @@
     </div>
 
     <script src="/admin/js/admin.js"></script>
+    <script src="/admin/js/camera-panel.js"></script>
     <script src="/admin/js/battletech-map-generator.js"></script>
     <script src="/admin/js/map-editor.js"></script>
 </body>

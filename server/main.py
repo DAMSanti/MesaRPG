@@ -23,6 +23,7 @@ from .models import (
 )
 from .game_state import GameStateManager
 from .websocket_manager import ConnectionManager
+from .camera_manager import camera_manager, CameraState
 
 
 # === Utilidades ===
@@ -64,6 +65,23 @@ async def on_game_state_change(change_type: str, data: dict):
         await ws_manager.send_effect(data["effect"])
 
 game_state.on_state_change(on_game_state_change)
+
+
+# Configurar callbacks del camera manager para broadcasting
+def on_markers_detected(markers: list):
+    """Callback cuando se detectan marcadores"""
+    import asyncio
+    try:
+        # Obtener miniaturas con información de jugador
+        miniatures = camera_manager.get_visible_miniatures()
+        # Programar el broadcast en el loop de eventos
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.create_task(ws_manager.send_miniature_positions(miniatures))
+    except Exception as e:
+        print(f"Error en callback de marcadores: {e}")
+
+camera_manager.set_callbacks(on_markers_detected=on_markers_detected)
 
 
 # === Lifespan ===
@@ -337,6 +355,43 @@ async def execute_action(request: ActionRequest):
         request.target_position
     )
     return result.model_dump()
+
+
+@app.post("/api/action/with-position")
+async def execute_action_with_camera_position(body: dict = Body(...)):
+    """
+    Ejecuta una acción y usa la posición de la miniatura del jugador desde la cámara.
+    Útil para reproducir animaciones en la posición correcta del tablero.
+    """
+    player_id = body.get("player_id")
+    action_type = body.get("action_type", "action")
+    effect_data = body.get("effect")
+    
+    if not player_id:
+        raise HTTPException(status_code=400, detail="player_id es requerido")
+    
+    # Obtener la posición de la miniatura del jugador
+    miniature = camera_manager.get_miniature_for_player(player_id)
+    
+    if not miniature or not miniature.is_visible:
+        raise HTTPException(status_code=404, detail="Miniatura del jugador no encontrada o no visible")
+    
+    # Enviar la acción con la posición a todos los displays
+    await ws_manager.send_player_action_at_position(
+        player_id=player_id,
+        player_name=miniature.player_name,
+        x=miniature.x,
+        y=miniature.y,
+        action_type=action_type,
+        effect_data=effect_data
+    )
+    
+    return {
+        "status": "success",
+        "player_id": player_id,
+        "position": {"x": miniature.x, "y": miniature.y},
+        "action_type": action_type
+    }
 
 @app.post("/api/combat/start")
 async def start_combat():
@@ -619,6 +674,155 @@ async def clear_characters():
     return {"status": "success", "message": "Todos los personajes eliminados"}
 
 
+# === API de Cámara ===
+
+@app.get("/api/camera/status")
+async def get_camera_status():
+    """Obtiene el estado completo de la cámara"""
+    return camera_manager.get_status()
+
+@app.get("/api/camera/devices")
+async def get_camera_devices():
+    """Lista las cámaras disponibles"""
+    cameras = camera_manager.get_available_cameras()
+    return {"cameras": cameras}
+
+@app.post("/api/camera/connect")
+async def connect_camera(body: dict = Body(...)):
+    """Conecta a una cámara"""
+    camera_id = body.get("camera_id", 0)
+    camera_url = body.get("camera_url")  # Para cámaras IP
+    
+    success = camera_manager.connect(camera_id=camera_id, camera_url=camera_url)
+    if success:
+        return {"status": "connected", "camera": camera_manager.get_status()}
+    else:
+        raise HTTPException(status_code=500, detail=camera_manager.error_message or "No se pudo conectar a la cámara")
+
+@app.post("/api/camera/disconnect")
+async def disconnect_camera():
+    """Desconecta la cámara"""
+    camera_manager.disconnect()
+    return {"status": "disconnected"}
+
+@app.post("/api/camera/stream/start")
+async def start_camera_stream():
+    """Inicia el streaming de video"""
+    if camera_manager.state not in [CameraState.CONNECTED, CameraState.STREAMING]:
+        raise HTTPException(status_code=400, detail="Cámara no conectada")
+    
+    success = camera_manager.start_streaming()
+    if success:
+        return {"status": "streaming"}
+    else:
+        raise HTTPException(status_code=500, detail="No se pudo iniciar el streaming")
+
+@app.post("/api/camera/stream/stop")
+async def stop_camera_stream():
+    """Detiene el streaming de video"""
+    camera_manager.stop_streaming()
+    return {"status": "stopped"}
+
+@app.get("/api/camera/frame")
+async def get_camera_frame():
+    """Obtiene el frame actual de la cámara (para polling)"""
+    frame = camera_manager.get_current_frame()
+    if frame:
+        return {"frame": frame}
+    else:
+        # Intentar capturar un frame si no está en streaming
+        if camera_manager.state == CameraState.CONNECTED:
+            frame = camera_manager.capture_single_frame()
+            if frame:
+                return {"frame": frame}
+        raise HTTPException(status_code=404, detail="No hay frame disponible")
+
+@app.get("/api/camera/miniatures")
+async def get_all_miniatures():
+    """Obtiene todas las miniaturas trackeadas"""
+    return {"miniatures": camera_manager.get_all_miniatures()}
+
+@app.get("/api/camera/miniatures/visible")
+async def get_visible_miniatures():
+    """Obtiene solo las miniaturas visibles"""
+    return {"miniatures": camera_manager.get_visible_miniatures()}
+
+@app.post("/api/camera/miniatures/assign")
+async def assign_player_to_miniature(body: dict = Body(...)):
+    """Asigna un jugador a una miniatura"""
+    marker_id = body.get("marker_id")
+    player_id = body.get("player_id")
+    player_name = body.get("player_name")
+    character_name = body.get("character_name")
+    
+    if marker_id is None or player_id is None or player_name is None:
+        raise HTTPException(status_code=400, detail="marker_id, player_id y player_name son requeridos")
+    
+    success = camera_manager.assign_player_to_miniature(
+        marker_id=marker_id,
+        player_id=player_id,
+        player_name=player_name,
+        character_name=character_name
+    )
+    
+    return {"status": "assigned" if success else "error"}
+
+@app.post("/api/camera/miniatures/unassign/{marker_id}")
+async def unassign_miniature(marker_id: int):
+    """Desasigna un jugador de una miniatura"""
+    success = camera_manager.unassign_miniature(marker_id)
+    return {"status": "unassigned" if success else "not_found"}
+
+@app.get("/api/camera/miniatures/player/{player_id}")
+async def get_player_miniature(player_id: str):
+    """Obtiene la miniatura asignada a un jugador"""
+    miniature = camera_manager.get_miniature_for_player(player_id)
+    if miniature:
+        return miniature.to_dict()
+    raise HTTPException(status_code=404, detail="Jugador no tiene miniatura asignada")
+
+@app.post("/api/camera/calibration/start")
+async def start_calibration():
+    """Inicia el modo de calibración"""
+    camera_manager.start_calibration()
+    return {"status": "calibrating"}
+
+@app.post("/api/camera/calibration/point")
+async def add_calibration_point(body: dict = Body(...)):
+    """Añade un punto de calibración"""
+    image_x = body.get("image_x")
+    image_y = body.get("image_y")
+    game_x = body.get("game_x")
+    game_y = body.get("game_y")
+    
+    if None in [image_x, image_y, game_x, game_y]:
+        raise HTTPException(status_code=400, detail="Se requieren image_x, image_y, game_x, game_y")
+    
+    count = camera_manager.add_calibration_point(image_x, image_y, game_x, game_y)
+    return {"status": "point_added", "total_points": count}
+
+@app.post("/api/camera/calibration/finish")
+async def finish_calibration():
+    """Finaliza la calibración"""
+    success = camera_manager.finish_calibration()
+    if success:
+        return {"status": "calibrated", "calibration": camera_manager.get_status()["calibration"]}
+    else:
+        raise HTTPException(status_code=400, detail="Se necesitan al menos 4 puntos de calibración")
+
+@app.post("/api/camera/calibration/simple")
+async def simple_calibration(body: dict = Body(...)):
+    """Calibración simple: mapeo lineal de imagen a área de juego"""
+    game_width = body.get("game_width", 1920)
+    game_height = body.get("game_height", 1080)
+    
+    success = camera_manager.set_simple_calibration(game_width, game_height)
+    if success:
+        return {"status": "calibrated", "game_size": {"width": game_width, "height": game_height}}
+    else:
+        raise HTTPException(status_code=500, detail="Error en calibración simple")
+
+
 # === WebSocket Endpoints ===
 
 @app.websocket("/ws/display")
@@ -814,6 +1018,12 @@ async def websocket_camera(websocket: WebSocket):
     await ws_manager.connect_camera(websocket)
     
     try:
+        # Enviar estado inicial de la cámara
+        await send_json_safe(websocket, {
+            "type": "camera_status",
+            "payload": camera_manager.get_status()
+        })
+        
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
@@ -827,8 +1037,58 @@ async def websocket_camera(websocket: WebSocket):
                 markers = message.get("payload", {}).get("markers", [])
                 await handle_markers_update(markers)
             
+            # Comandos de control de cámara desde el admin
+            elif message.get("type") == "camera_control":
+                action = message.get("payload", {}).get("action")
+                await handle_camera_control(websocket, action, message.get("payload", {}))
+            
+            # Solicitar frame actual
+            elif message.get("type") == "get_frame":
+                frame = camera_manager.get_current_frame()
+                await send_json_safe(websocket, {
+                    "type": "camera_frame",
+                    "payload": {"frame": frame}
+                })
+            
     except WebSocketDisconnect:
         ws_manager.disconnect_camera(websocket)
+
+async def handle_camera_control(websocket: WebSocket, action: str, payload: dict):
+    """Procesa comandos de control de cámara"""
+    result = {"action": action, "success": False}
+    
+    if action == "connect":
+        camera_id = payload.get("camera_id", 0)
+        camera_url = payload.get("camera_url")
+        result["success"] = camera_manager.connect(camera_id, camera_url)
+    
+    elif action == "disconnect":
+        camera_manager.disconnect()
+        result["success"] = True
+    
+    elif action == "start_stream":
+        result["success"] = camera_manager.start_streaming()
+    
+    elif action == "stop_stream":
+        camera_manager.stop_streaming()
+        result["success"] = True
+    
+    elif action == "get_status":
+        result["status"] = camera_manager.get_status()
+        result["success"] = True
+    
+    result["camera_status"] = camera_manager.get_status()
+    await send_json_safe(websocket, {
+        "type": "camera_control_result",
+        "payload": result
+    })
+    
+    # Broadcast estado a todos los admins
+    await ws_manager.broadcast_admins({
+        "type": "camera_status",
+        "payload": camera_manager.get_status()
+    })
+
 
 async def handle_markers_update(markers: list):
     """Procesa actualización de marcadores detectados"""
