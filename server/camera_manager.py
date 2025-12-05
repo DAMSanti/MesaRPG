@@ -4,8 +4,6 @@ Gestiona la cámara cenital para tracking de miniaturas
 """
 
 import asyncio
-import cv2
-import numpy as np
 import base64
 import json
 from datetime import datetime
@@ -14,6 +12,17 @@ from dataclasses import dataclass, field
 from enum import Enum
 import threading
 import time
+
+# OpenCV es opcional - solo necesario si se usa cámara local
+try:
+    import cv2
+    import numpy as np
+    CV2_AVAILABLE = True
+except ImportError:
+    CV2_AVAILABLE = False
+    cv2 = None
+    np = None
+    print("⚠️ OpenCV no disponible - funcionalidad de cámara deshabilitada")
 
 
 class CameraState(str, Enum):
@@ -111,7 +120,7 @@ class CalibrationData:
     # Puntos correspondientes en el tablero de juego
     game_points: List[Tuple[float, float]] = field(default_factory=list)
     # Matriz de homografía calculada
-    homography_matrix: Optional[np.ndarray] = None
+    homography_matrix: Any = None  # np.ndarray cuando cv2 está disponible
     # Tamaño del área de juego
     game_width: float = 1920.0
     game_height: float = 1080.0
@@ -120,6 +129,8 @@ class CalibrationData:
     
     def calculate_homography(self) -> bool:
         """Calcula la matriz de homografía a partir de los puntos"""
+        if not CV2_AVAILABLE:
+            return False
         if len(self.image_points) < 4 or len(self.game_points) < 4:
             return False
         
@@ -135,6 +146,8 @@ class CalibrationData:
     
     def transform_point(self, px: float, py: float) -> Tuple[float, float]:
         """Transforma un punto de imagen a coordenadas de juego"""
+        if not CV2_AVAILABLE:
+            return px, py
         if self.homography_matrix is not None:
             point = np.array([[[px, py]]], dtype=np.float32)
             transformed = cv2.perspectiveTransform(point, self.homography_matrix)
@@ -155,19 +168,27 @@ class CameraManager:
         self.state: CameraState = CameraState.DISCONNECTED
         self.error_message: Optional[str] = None
         
+        # Verificar si cv2 está disponible
+        self.cv2_available = CV2_AVAILABLE
+        
         # Configuración de cámara
         self.camera_id: int = 0
         self.camera_url: Optional[str] = None  # Para cámaras IP
-        self.cap: Optional[cv2.VideoCapture] = None
+        self.cap = None  # cv2.VideoCapture cuando está disponible
         self.frame_width: int = 1280
         self.frame_height: int = 720
         self.fps: int = 30
         
-        # Configuración de detección
+        # Configuración de detección (solo si cv2 está disponible)
         self.detection_mode: DetectionMode = DetectionMode.ARUCO
-        self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-        self.aruco_params = cv2.aruco.DetectorParameters()
-        self.aruco_detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        if CV2_AVAILABLE:
+            self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+            self.aruco_params = cv2.aruco.DetectorParameters()
+            self.aruco_detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.aruco_params)
+        else:
+            self.aruco_dict = None
+            self.aruco_params = None
+            self.aruco_detector = None
         
         # Calibración
         self.calibration = CalibrationData()
@@ -218,6 +239,10 @@ class CameraManager:
     
     def connect(self, camera_id: int = 0, camera_url: str = None) -> bool:
         """Conecta a la cámara"""
+        if not CV2_AVAILABLE:
+            self._set_state(CameraState.ERROR, "OpenCV no disponible en este servidor")
+            return False
+            
         self._set_state(CameraState.CONNECTING)
         
         try:
@@ -267,6 +292,9 @@ class CameraManager:
     
     def get_available_cameras(self) -> List[dict]:
         """Lista las cámaras disponibles"""
+        if not CV2_AVAILABLE:
+            return []
+            
         cameras = []
         
         for i in range(10):  # Probar hasta 10 índices
@@ -286,6 +314,10 @@ class CameraManager:
     
     def start_streaming(self):
         """Inicia el streaming de video con detección"""
+        if not CV2_AVAILABLE:
+            print("⚠️ OpenCV no disponible")
+            return False
+            
         if self.state != CameraState.CONNECTED:
             if not self.cap or not self.cap.isOpened():
                 print("⚠️ Cámara no conectada")
@@ -605,7 +637,8 @@ class CameraManager:
                 "visible_miniatures": sum(1 for m in self.tracked_miniatures.values() if m.is_visible),
                 "assigned_miniatures": sum(1 for m in self.tracked_miniatures.values() if m.player_id)
             },
-            "stats": self.stats
+            "stats": self.stats,
+            "cv2_available": CV2_AVAILABLE
         }
 
 
