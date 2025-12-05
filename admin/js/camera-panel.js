@@ -45,14 +45,47 @@ class CameraPanel {
     async init() {
         console.log('📷 Inicializando panel de cámara...');
         
-        // Cargar dispositivos disponibles
-        await this.loadCameraDevices();
-        
-        // Cargar estado actual
+        // Cargar estado actual primero para saber si cv2 está disponible
         await this.refreshStatus();
+        
+        // Si cv2 no está disponible, mostrar mensaje alternativo
+        if (this.status && !this.status.cv2_available) {
+            this.showRemoteCameraInstructions();
+        } else {
+            // Cargar dispositivos disponibles solo si cv2 está disponible
+            await this.loadCameraDevices();
+        }
         
         // Configurar actualización periódica
         setInterval(() => this.refreshStatus(), 5000);
+    }
+    
+    showRemoteCameraInstructions() {
+        // Mostrar instrucciones para conectar cámara remota
+        const feedContainer = document.querySelector('.camera-feed-container');
+        if (feedContainer) {
+            feedContainer.innerHTML = `
+                <div class="camera-remote-info">
+                    <div class="remote-icon">🖥️ → 📷</div>
+                    <h3>Cámara Remota</h3>
+                    <p>El servidor está en la nube y no tiene cámara física.</p>
+                    <p>Para usar el tracking de miniaturas, ejecuta el detector en tu PC local:</p>
+                    <code>python vision/detector.py --server wss://mesarpg.damsanti.app/ws/camera</code>
+                    <p class="help-text">El detector enviará las posiciones de las miniaturas al servidor.</p>
+                </div>
+            `;
+        }
+        
+        // Deshabilitar controles de cámara local
+        if (this.elements.cameraSelect) this.elements.cameraSelect.disabled = true;
+        if (this.elements.btnConnect) this.elements.btnConnect.disabled = true;
+        if (this.elements.btnStartStream) this.elements.btnStartStream.disabled = true;
+        
+        // Actualizar estado
+        if (this.elements.cameraState) {
+            this.elements.cameraState.textContent = '☁️ Modo Remoto';
+            this.elements.cameraState.className = 'status-value camera-state remote';
+        }
     }
     
     // === Gestión de dispositivos ===

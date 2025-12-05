@@ -1806,6 +1806,49 @@ body {
     color: var(--primary);
 }
 
+/* Cámara remota */
+.camera-remote-info {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 30px;
+    text-align: center;
+    color: var(--text);
+}
+
+.camera-remote-info .remote-icon {
+    font-size: 48px;
+    margin-bottom: 15px;
+}
+
+.camera-remote-info h3 {
+    margin-bottom: 10px;
+    color: var(--primary);
+}
+
+.camera-remote-info p {
+    margin-bottom: 10px;
+    color: var(--text-muted);
+}
+
+.camera-remote-info code {
+    display: block;
+    background: var(--bg-dark);
+    padding: 12px 20px;
+    border-radius: 8px;
+    font-family: 'Consolas', monospace;
+    font-size: 13px;
+    color: var(--success);
+    margin: 15px 0;
+    word-break: break-all;
+}
+
+.camera-state.remote {
+    color: var(--primary);
+}
+
 /* ==================== END CAMERA PANEL STYLES ==================== */
 
 
