@@ -200,6 +200,9 @@ class MesaRPGApp {
     updateFullState(state) {
         console.log('📊 Actualizando estado completo:', state);
         
+        // Guardar el mapa anterior antes de actualizar el estado
+        const previousMap = this.state.current_map;
+        
         this.state = {
             ...this.state,
             ...state
@@ -213,9 +216,22 @@ class MesaRPGApp {
         // Actualizar panel de combate
         window.gameRenderer.updateCombatPanel(this.state);
         
-        // Cargar mapa si cambió
-        if (state.current_map && state.current_map !== this.state.current_map) {
-            window.gameRenderer.loadMap(state.current_map);
+        // Cargar mapa si hay uno en el estado
+        // Comparar con el mapa anterior (antes del merge) o si no había mapa cargado
+        if (state.current_map) {
+            const currentMapId = typeof state.current_map === 'object' ? state.current_map.id : state.current_map;
+            const previousMapId = typeof previousMap === 'object' ? previousMap?.id : previousMap;
+            
+            if (currentMapId !== previousMapId || !window.gameRenderer.mapData) {
+                console.log('🗺️ Cargando mapa desde estado inicial:', currentMapId);
+                if (typeof state.current_map === 'object') {
+                    // Es un objeto con datos completos del mapa
+                    window.gameRenderer.loadMapData(state.current_map);
+                } else {
+                    // Es solo un ID de mapa
+                    window.gameRenderer.loadMap(state.current_map);
+                }
+            }
         }
         
         // Aplicar configuración del sistema de juego si está presente
