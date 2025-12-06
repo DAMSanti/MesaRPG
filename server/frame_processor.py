@@ -112,6 +112,13 @@ class FrameProcessor:
                 Path("yolov8n.pt"),
             ]
             
+            # Debug: mostrar rutas que se intentan
+            print(f"🔍 Buscando modelos YOLO...")
+            print(f"   Base path: {Path(__file__).parent.parent}")
+            for p in paths_to_try:
+                exists = "✅" if p.exists() else "❌"
+                print(f"   {exists} {p}")
+            
             for path in paths_to_try:
                 if path.exists():
                     self.is_pose_model = "pose" in path.name.lower()
@@ -128,6 +135,7 @@ class FrameProcessor:
                             self.using_openvino = True  # Marcar que usa OpenVINO
                             model_type = "(Pose+OpenVINO)" if self.is_pose_model else "(OpenVINO)"
                             print(f"✅ Modelo {path.name} cargado {model_type}")
+                            print(f"   📋 Clases: {self.model.names}")
                             return
                     
                     # Fallback a modelo PyTorch normal
@@ -137,6 +145,7 @@ class FrameProcessor:
                     self.using_openvino = False
                     model_type = "(Pose)" if self.is_pose_model else "(OBB)" if self.is_obb_model else ""
                     print(f"✅ Modelo {path.name} cargado {model_type}")
+                    print(f"   📋 Clases: {self.model.names}")
                     return
             
             # Descargar nano si no hay ninguno
@@ -146,6 +155,7 @@ class FrameProcessor:
             self.is_pose_model = False
             self.is_obb_model = False
             print(f"✅ YOLOv8n listo")
+            print(f"   📋 Clases: {self.model.names}")
                 
         except Exception as e:
             print(f"❌ Error cargando YOLO: {e}")
