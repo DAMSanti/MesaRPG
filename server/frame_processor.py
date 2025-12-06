@@ -130,7 +130,7 @@ class FrameProcessor:
             return frame_base64, []
     
     def _process_sync(self, frame_base64: str) -> Tuple[str, List[Dict]]:
-        """Procesamiento síncrono del frame - soporta OBB y detección normal"""
+        """Procesamiento síncrono del frame - optimizado para velocidad"""
         if not CV2_AVAILABLE:
             return frame_base64, []
         
@@ -146,23 +146,24 @@ class FrameProcessor:
         detections = []
         
         if self.is_ready and self.model:
-            # Reducir tamaño para procesamiento rápido
-            max_size = 416  # Un poco más grande para OBB
+            # Reducir tamaño para procesamiento rápido (320 es más rápido que 416)
+            max_size = 320
             scale = min(max_size / w, max_size / h, 1.0)
             
             if scale < 1:
-                small = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+                small = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
             else:
                 small = frame
                 scale = 1.0
             
-            # Inferencia
+            # Inferencia optimizada
             results = self.model(
                 small,
                 conf=self.confidence,
                 verbose=False,
-                imgsz=416,
-                max_det=20
+                imgsz=320,
+                max_det=10,      # Menos detecciones = más rápido
+                half=False,      # True si tienes GPU con FP16
             )
             
             for result in results:
@@ -286,8 +287,8 @@ class FrameProcessor:
         info = f"Tracks: {len(tracked_objects)} | YOLO: {self._fps:.1f} fps"
         cv2.putText(frame, info, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
-        # Codificar
-        _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+        # Codificar (calidad reducida para velocidad)
+        _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
         return base64.b64encode(buf).decode('utf-8'), self.last_tracks
     
     def get_tracks(self) -> List[Dict]:
