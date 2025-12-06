@@ -238,10 +238,8 @@ class BattleTechMapGenerator {
      */
     generateRiver() {
         // Parámetros aleatorios
-        const riverWidth = 1 + Math.floor(Math.random() * 2);    // 1-2 hexes
+        const riverWidth = 1;    // Río de 1 hex de ancho para mejor visualización
         const forestDensity = 0.15 + Math.random() * 0.15;
-        const hasIsland = Math.random() < 0.25;
-        const hasBridge = Math.random() < 0.3;
         const meanders = Math.random() < 0.5;
         
         // 1. Base: llanura
@@ -253,29 +251,17 @@ class BattleTechMapGenerator {
         // 3. Río principal atravesando el mapa
         this.placeRiver(2, riverWidth, meanders);
         
-        // 4. Isla en el río (si aplica)
-        if (hasIsland) {
-            this.placeIslandInWater();
-        }
-        
-        // 5. Vados o puente
-        if (hasBridge) {
-            this.placeBridge();
-        } else {
-            this.placeFordsOnRiver();
-        }
-        
-        // 6. Bosques ribereños densos (cerca del agua)
+        // 4. Bosques ribereños densos (cerca del agua)
         this.placeTerrainNear('water', 'woods', 2, forestDensity * 2);
         this.placeTerrainNear('water', 'woods_heavy', 1, forestDensity);
         
-        // 7. Bosques adicionales en zonas altas
+        // 5. Bosques adicionales en zonas altas
         this.placeTerrainClusters('woods', forestDensity, 3, 6);
         
-        // 8. Colinas lejos del río
+        // 6. Colinas lejos del río
         this.increaseElevationAwayFrom('water', 1);
         
-        // 9. Algo de rough en las orillas
+        // 7. Algo de rough en las orillas
         this.placeTerrainNear('water', 'rough', 1, 0.1);
         
         this.assignTiles();
@@ -635,23 +621,16 @@ class BattleTechMapGenerator {
         // Generar path del río con meandros suaves
         let current = { x: startX, y: startY };
         const end = vertical ? this.height : this.width;
-        const meanderChance = meanders ? 0.25 : 0.1;
+        const meanderChance = meanders ? 0.2 : 0.1;
         
         for (let i = 0; i < end; i++) {
             // Guardar posición en el path
             this.riverPath.push({ x: current.x, y: current.y });
             
-            // Marcar este hex y adyacentes como río
-            for (let w = -1; w <= 1; w++) {
-                const wx = vertical ? current.x + w : current.x;
-                const wy = vertical ? current.y : current.y + w;
-                if (this.isValid(wx, wy)) {
-                    // Centro siempre agua, bordes con probabilidad
-                    if (w === 0 || Math.random() < 0.6) {
-                        this.terrainMap[wy][wx] = 'water_river';
-                        this.elevationMap[wy][wx] = 0;
-                    }
-                }
+            // Marcar solo este hex como río (1 hex de ancho)
+            if (this.isValid(current.x, current.y)) {
+                this.terrainMap[current.y][current.x] = 'water_river';
+                this.elevationMap[current.y][current.x] = 0;
             }
             
             // Avanzar
@@ -1447,61 +1426,28 @@ class BattleTechMapGenerator {
     }
     
     /**
-     * Rellena río con grupos v4 (4 tiles verticales) siguiendo el path
+     * Rellena río: NO usar grupos de río (tienen formas fijas que no conectan)
+     * En su lugar, marcar para usar tiles singles de agua que se mezclan mejor
      */
     fillRiverWithGroups(cluster, available, hexMap, matchingGroups) {
-        // Preferir grupos v4 para ríos (38, 39)
-        const v4Groups = matchingGroups.filter(([id, g]) => g.shape === 'v4');
-        const otherGroups = matchingGroups.filter(([id, g]) => g.shape !== 'v4');
-        
-        // Ordenar hexes por posición (siguiendo flujo del río)
-        const isVertical = this.riverDirection === 'vertical';
-        const sortedHexes = [...cluster.hexes].sort((a, b) => {
-            return isVertical ? (a.y - b.y) || (a.x - b.x) : (a.x - b.x) || (a.y - b.y);
-        });
-        
-        // Colocar grupos v4 cada 4 hexes a lo largo del río
-        if (v4Groups.length > 0) {
-            for (let i = 0; i < sortedHexes.length; i += 4) {
-                const hex = sortedHexes[i];
-                const key = `${hex.x},${hex.y}`;
-                if (!available.has(key)) continue;
-                
-                // Elegir un grupo v4 aleatorio
-                const [groupId, group] = v4Groups[Math.floor(Math.random() * v4Groups.length)];
-                
-                if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
-                    this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
-                }
-            }
-        }
-        
-        // Rellenar resto con otros grupos o tiles individuales
-        for (const hex of sortedHexes) {
-            const key = `${hex.x},${hex.y}`;
-            if (!available.has(key)) continue;
-            
-            let placed = false;
-            for (const [groupId, group] of otherGroups) {
-                if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
-                    this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
-                    placed = true;
-                    break;
-                }
-            }
-        }
+        // Para ríos, NO colocar grupos - dejar que assignSingleTiles use tiles 27-30
+        // Estos son agua genérica sin bordes que se mezcla mejor
+        // Simplemente no hacer nada aquí - los hexes se llenarán con singles
     }
     
     /**
      * Rellena lago con grupos autocontenidos, prefiriendo mega7
      */
     fillLakeWithGroups(cluster, available, hexMap, matchingGroups) {
-        // Para lagos, preferir grupos mega7 que son autocontenidos
-        const mega7Groups = matchingGroups.filter(([id, g]) => g.shape === 'mega7');
-        const otherGroups = matchingGroups.filter(([id, g]) => g.shape !== 'mega7');
+        // Solo usar grupos mega7 que son realmente autocontenidos (24, 25)
+        const mega7Groups = matchingGroups.filter(([id, g]) => 
+            g.shape === 'mega7' && g.tiles.length === 7
+        );
         
-        // Ordenar grupos: mega7 primero, luego por tamaño
-        const sortedGroups = [...mega7Groups, ...otherGroups];
+        if (mega7Groups.length === 0) {
+            // Sin grupos mega7, no colocar grupos - usar singles
+            return;
+        }
         
         // Encontrar centro del cluster
         let sumX = 0, sumY = 0;
@@ -1512,23 +1458,25 @@ class BattleTechMapGenerator {
         const centerX = Math.round(sumX / cluster.hexes.length);
         const centerY = Math.round(sumY / cluster.hexes.length);
         
-        // Ordenar hexes por distancia al centro (colocar grupos en el centro primero)
+        // Intentar colocar UN grupo mega7 en el centro del lago
+        // Ordenar hexes por distancia al centro
         const sortedHexes = [...cluster.hexes].sort((a, b) => {
             const distA = Math.abs(a.x - centerX) + Math.abs(a.y - centerY);
             const distB = Math.abs(b.x - centerX) + Math.abs(b.y - centerY);
             return distA - distB;
         });
         
-        // Intentar colocar mega7 en el centro
+        // Solo colocar un grupo mega7 por lago
         for (const hex of sortedHexes) {
             const key = `${hex.x},${hex.y}`;
             if (!available.has(key)) continue;
             
-            for (const [groupId, group] of sortedGroups) {
-                if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
-                    this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
-                    break;
-                }
+            // Elegir un grupo mega7 aleatorio
+            const [groupId, group] = mega7Groups[Math.floor(Math.random() * mega7Groups.length)];
+            
+            if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
+                this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
+                return; // Solo un grupo por lago
             }
         }
     }
@@ -1695,14 +1643,14 @@ class BattleTechMapGenerator {
             'clear': ['11'],  // Single grass hex (único tile individual de terreno)
             'woods': ['11'],  // No hay singles de woods, usar grass (los grupos cubrirán)
             'woods_heavy': ['11'],  // No hay singles, usar grass
-            'water': ['27', '28', '29', '30'],  // Water singles para compatibilidad
-            'water_lake': ['27', '28', '29', '30'],  // Water singles para lagos sin grupo
-            'water_river': ['27', '28', '29', '30'],  // Water singles para ríos sin grupo
+            'water': ['27'],  // Solo un tipo de agua para consistencia
+            'water_lake': ['27'],  // Solo un tipo para lagos (grupos mega7 lo cubrirán)
+            'water_river': ['27'],  // Solo un tipo para uniformidad visual
             'water_depth0': ['27'],
             'rough': ['59', '60', '61', '62', '63', '64', '65', '66'],  // Rocky/rough singles
             'rubble': ['67', '68', '69', '70'],  // Rubble singles
             'urban': ['40', '41', '42', '43', '44', '45'],  // Building singles (sin sufijo)
-            'hazards': ['71', '72', '73', '74', '75']  // Hazard singles
+            'hazards': ['71', '72', '73', '74']  // Hazard singles (sin 75)
         };
         
         for (let y = 0; y < this.height; y++) {
