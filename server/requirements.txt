@@ -16,8 +16,8 @@ numpy==1.26.2
 opencv-python-headless==4.8.1.78
 opencv-contrib-python-headless==4.8.1.78
 
-# Detección de objetos con YOLO (versión ligera sin PyTorch)
-# ultralytics se carga solo si hay modelo, ONNX runtime es más ligero
+# Detección de objetos con YOLO
+ultralytics>=8.0.0
 onnxruntime>=1.16.0
 
 # Base de datos

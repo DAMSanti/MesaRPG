@@ -1,5 +1,5 @@
 # MesaRPG Dockerfile
-# Imagen para ejecutar el servidor web (sin cámara/OpenCV)
+# Imagen para ejecutar el servidor web con YOLO
 
 FROM python:3.11-slim
 
@@ -13,9 +13,15 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Solo curl para healthcheck
+# Dependencias del sistema para OpenCV y YOLO
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Crear directorio de trabajo
