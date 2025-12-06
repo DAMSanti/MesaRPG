@@ -635,11 +635,25 @@ class BattleTechMapGenerator {
                     next.x = Math.max(2, Math.min(this.width - 3, next.x));
                 }
             } else {
+                // Río horizontal: avanzar en diagonal para usar tiles 1-4 (NE-SW)
+                // En hex flat-top, para ir "horizontal" real hay que:
+                // - Desde columna par: ir a (x+1, y) sale por SE(2), no es lo que queremos
+                // - Para usar siempre NE(1)-SW(4), ir a (x+1, y-1) desde par, (x+1, y) desde impar
+                const isCurrentOdd = current.x % 2 === 1;
                 next.x++;
+                if (isCurrentOdd) {
+                    // Desde impar: vecino NE es (x+1, y)
+                    // next.y = current.y; // ya está
+                } else {
+                    // Desde par: vecino NE es (x+1, y-1)
+                    next.y--;
+                }
+                
+                // Meandros: desviación vertical adicional
                 if (Math.random() < meanderChance) {
                     next.y += Math.random() < 0.5 ? 1 : -1;
-                    next.y = Math.max(2, Math.min(this.height - 3, next.y));
                 }
+                next.y = Math.max(2, Math.min(this.height - 3, next.y));
             }
             
             // Guardar posición y dirección
@@ -657,7 +671,7 @@ class BattleTechMapGenerator {
                 const entryDir = this.getDirection(prev, current);
                 fromSide = this.oppositeDir(entryDir);
             } else {
-                fromSide = vertical ? 'N' : 'NW';
+                fromSide = vertical ? 'N' : 'SW';  // Río horizontal entra por SW
             }
             
             toSide = this.getDirection(current, next);
@@ -1835,22 +1849,23 @@ class BattleTechMapGenerator {
         // - 31_1: 3-5 (S-NW)
         // - 32_0: 2-5 (SE-NW)
         // - 32_1: 1-5 (NE-NW)
-        // - 36_0: 1-4 (NE-SW)
+        // - 36_0: 1-4 (NE-SW) diagonal horizontal
         // - 36_1: 2-4 (SE-SW)
         // - 36_2: 1-3 (NE-S) con puente
+        // - 39_3: 0-4 (N-SW) curva
         const sideToTile = {
             // Tiles exactos para cada combinación
             '0-3': 'bt_27',    // N a S - recto vertical
-            '1-3': 'bt_28',    // NE a S - curva (o bt_36_2 con puente)
+            '1-3': 'bt_28',    // NE a S - curva
             '0-2': 'bt_29',    // N a SE - curva
             '2-5': 'bt_32_0',  // SE a NW (o bt_30 con puente)
             '2-4': 'bt_31_0',  // SE a SW (o bt_36_1)
             '3-5': 'bt_31_1',  // S a NW
             '1-5': 'bt_32_1',  // NE a NW
-            '1-4': 'bt_36_0',  // NE a SW
+            '1-4': 'bt_36_0',  // NE a SW - diagonal horizontal
+            '0-4': 'bt_39_3',  // N a SW - curva
             
             // Combinaciones aproximadas (espejadas o similares)
-            '0-4': 'bt_29',    // N a SW ≈ espejo de N a SE (29)
             '0-5': 'bt_29',    // N a NW ≈ espejo de N a SE (29)
             '0-1': 'bt_29',    // N a NE ≈ curva suave hacia 0-2
             '1-2': 'bt_28',    // NE a SE ≈ curva NE-S
