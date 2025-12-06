@@ -623,55 +623,58 @@ class BattleTechMapGenerator {
         let current = { x: startX, y: startY };
         let prev = null;
         const end = vertical ? this.height : this.width;
-        const meanderChance = meanders ? 0.25 : 0.1;
+        const meanderChance = meanders ? 0.2 : 0.05;
         
         for (let i = 0; i < end; i++) {
-            // Calcular siguiente posición
-            let next = { x: current.x, y: current.y };
+            // Obtener vecinos válidos en la dirección principal
+            const neighbors = this.getHexNeighbors(current.x, current.y);
+            let next;
+            
             if (vertical) {
-                next.y++;
-                if (Math.random() < meanderChance) {
-                    next.x += Math.random() < 0.5 ? 1 : -1;
-                    next.x = Math.max(2, Math.min(this.width - 3, next.x));
+                // Río vertical: avanzar hacia abajo (S, SE, SW)
+                // neighbors: [NW, SW, N, S, NE, SE] para par, [NW, SW, N, S, NE, SE] para impar
+                // Índice 3 = S, índice 1 = SW, índice 5 = SE
+                const southNeighbor = neighbors[3]; // S
+                const seNeighbor = neighbors[5];    // SE  
+                const swNeighbor = neighbors[1];    // SW
+                
+                if (Math.random() < meanderChance && this.isValid(seNeighbor.x, seNeighbor.y)) {
+                    next = seNeighbor;
+                } else if (Math.random() < meanderChance && this.isValid(swNeighbor.x, swNeighbor.y)) {
+                    next = swNeighbor;
+                } else {
+                    next = southNeighbor;
                 }
             } else {
-                // Río horizontal: avanzar en diagonal para usar tiles 1-4 (NE-SW)
-                // En hex flat-top, para ir "horizontal" real hay que:
-                // - Desde columna par: ir a (x+1, y) sale por SE(2), no es lo que queremos
-                // - Para usar siempre NE(1)-SW(4), ir a (x+1, y-1) desde par, (x+1, y) desde impar
-                const isCurrentOdd = current.x % 2 === 1;
-                next.x++;
-                if (isCurrentOdd) {
-                    // Desde impar: vecino NE es (x+1, y)
-                    // next.y = current.y; // ya está
-                } else {
-                    // Desde par: vecino NE es (x+1, y-1)
-                    next.y--;
-                }
+                // Río horizontal: avanzar hacia la derecha (NE, SE)
+                // Preferir NE para usar tiles 1-4, con meandros ocasionales a SE
+                const neNeighbor = neighbors[4];    // NE
+                const seNeighbor = neighbors[5];    // SE
                 
-                // Meandros: desviación vertical adicional
-                if (Math.random() < meanderChance) {
-                    next.y += Math.random() < 0.5 ? 1 : -1;
+                if (Math.random() < meanderChance && this.isValid(seNeighbor.x, seNeighbor.y)) {
+                    next = seNeighbor;
+                } else {
+                    next = neNeighbor;
                 }
-                next.y = Math.max(2, Math.min(this.height - 3, next.y));
+            }
+            
+            // Validar que next está dentro del mapa
+            if (!this.isValid(next.x, next.y)) {
+                next = { x: current.x + (vertical ? 0 : 1), y: current.y + (vertical ? 1 : 0) };
             }
             
             // Guardar posición y dirección
             this.riverPath.push({ x: current.x, y: current.y });
             const key = `${current.x},${current.y}`;
             
-            // Calcular lado de entrada (desde dónde viene el agua) y lado de salida (hacia dónde va)
-            // fromDir: el lado por donde ENTRA el agua (opuesto de la dirección desde prev)
-            // toDir: el lado por donde SALE el agua (dirección hacia next)
+            // Calcular lado de entrada y salida
             let fromSide, toSide;
             
             if (prev) {
-                // getDirection(prev, current) nos da la dirección de prev a current
-                // pero queremos el lado del hex current por donde entra, que es el opuesto
                 const entryDir = this.getDirection(prev, current);
                 fromSide = this.oppositeDir(entryDir);
             } else {
-                fromSide = vertical ? 'N' : 'SW';  // Río horizontal entra por SW
+                fromSide = vertical ? 'N' : 'SW';
             }
             
             toSide = this.getDirection(current, next);
