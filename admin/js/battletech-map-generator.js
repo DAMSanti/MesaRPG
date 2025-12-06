@@ -920,9 +920,10 @@ class BattleTechMapGenerator {
         const cx = 3 + Math.floor(Math.random() * (this.width - 6));
         const cy = 3 + Math.floor(Math.random() * (this.height - 6));
         
-        // Patrón mega7: centro + 6 vecinos (tamaño ideal para grupos de agua)
+        // Patrón mega7: debe coincidir con offsets del config
+        // Config grupos 24/25: [[0,0], [0,-1], [0,1], [-1,-1], [-1,0], [1,-1], [1,0]]
         const mega7Offsets = [
-            [0, 0], [-1, 0], [-1, 1], [0, 1], [1, 1], [1, 0], [0, -1]
+            [0, 0], [0, -1], [0, 1], [-1, -1], [-1, 0], [1, -1], [1, 0]
         ];
         
         // Colocar lago con forma compatible con grupos
@@ -937,12 +938,13 @@ class BattleTechMapGenerator {
         
         // Opcionalmente añadir más hexes alrededor para lagos más grandes
         if (Math.random() < 0.5) {
-            // Segundo anillo parcial
+            // Segundo anillo: posiciones adicionales alrededor del mega7
             const extraOffsets = [
-                [-2, 0], [-2, 1], [-1, 2], [0, 2], [1, 2], [2, 1], [2, 0]
+                [-2, -1], [-2, 0], [-1, -2], [-1, 1], [0, -2], [0, 2], 
+                [1, -2], [1, 1], [2, -1], [2, 0]
             ];
             for (const [dx, dy] of extraOffsets) {
-                if (Math.random() < 0.6) {
+                if (Math.random() < 0.5) {
                     const nx = cx + dx;
                     const ny = cy + dy;
                     if (this.isValid(nx, ny)) {
@@ -1574,15 +1576,25 @@ class BattleTechMapGenerator {
      * Rellena lago con grupos autocontenidos, prefiriendo mega7
      */
     fillLakeWithGroups(cluster, available, hexMap, matchingGroups) {
-        // Solo usar grupos mega7 que son realmente autocontenidos (24, 25)
-        const mega7Groups = matchingGroups.filter(([id, g]) => 
-            g.shape === 'mega7' && g.tiles.length === 7
+        console.log(`fillLakeWithGroups: cluster tiene ${cluster.hexes.length} hexes, matchingGroups: ${matchingGroups.length}`);
+        
+        // Usar grupos de lago (mega7 preferido: grupos 22, 23, 24, 25)
+        const lakeGroups = matchingGroups.filter(([id, g]) => 
+            g.shape === 'mega7' || g.tiles.length >= 4
         );
         
-        if (mega7Groups.length === 0) {
-            // Sin grupos mega7, no colocar grupos - usar singles
-            return;
+        console.log(`  lakeGroups (mega7 o >=4 tiles): ${lakeGroups.length}`);
+        
+        // Si no hay grupos de lago, buscar cualquier grupo de agua
+        const groupsToUse = lakeGroups.length > 0 ? lakeGroups : matchingGroups;
+        
+        if (groupsToUse.length === 0) {
+            console.log(`  Sin grupos disponibles para lago`);
+            return; // Sin grupos, usar singles
         }
+        
+        // Ordenar por tamaño (más grandes primero)
+        groupsToUse.sort((a, b) => b[1].tiles.length - a[1].tiles.length);
         
         // Encontrar centro del cluster
         let sumX = 0, sumY = 0;
@@ -1593,25 +1605,30 @@ class BattleTechMapGenerator {
         const centerX = Math.round(sumX / cluster.hexes.length);
         const centerY = Math.round(sumY / cluster.hexes.length);
         
-        // Intentar colocar UN grupo mega7 en el centro del lago
-        // Ordenar hexes por distancia al centro
+        // Ordenar hexes por distancia al centro (colocar grupos desde el centro)
         const sortedHexes = [...cluster.hexes].sort((a, b) => {
             const distA = Math.abs(a.x - centerX) + Math.abs(a.y - centerY);
             const distB = Math.abs(b.x - centerX) + Math.abs(b.y - centerY);
             return distA - distB;
         });
         
-        // Solo colocar un grupo mega7 por lago
+        // Colocar tantos grupos como quepan
+        let groupsPlaced = 0;
+        const maxGroups = Math.max(1, Math.floor(cluster.hexes.length / 5)); // ~1 grupo por cada 5 hexes
+        
         for (const hex of sortedHexes) {
+            if (groupsPlaced >= maxGroups) break;
+            
             const key = `${hex.x},${hex.y}`;
             if (!available.has(key)) continue;
             
-            // Elegir un grupo mega7 aleatorio
-            const [groupId, group] = mega7Groups[Math.floor(Math.random() * mega7Groups.length)];
-            
-            if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
-                this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
-                return; // Solo un grupo por lago
+            // Probar cada grupo en orden de tamaño
+            for (const [groupId, group] of groupsToUse) {
+                if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
+                    this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
+                    groupsPlaced++;
+                    break;
+                }
             }
         }
     }
