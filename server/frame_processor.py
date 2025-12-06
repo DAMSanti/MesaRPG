@@ -10,11 +10,11 @@ from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import time
 
-# Importar tracker local
+# Importar tracker simple
 try:
-    from .tracker import SORTTracker, OrientationDetector, TrackedObject
+    from .simple_tracker import SimpleTracker
 except ImportError:
-    from tracker import SORTTracker, OrientationDetector, TrackedObject
+    from simple_tracker import SimpleTracker
 
 # Intentar importar dependencias opcionales
 try:
@@ -45,18 +45,11 @@ class FrameProcessor:
         self.last_processed_frame: Optional[str] = None
         self.last_tracks: List[Dict] = []
         
-        # Tracker SORT para seguimiento continuo - configurado para OBB
-        self.tracker = SORTTracker(
-            max_age=30,           # Mantener track 30 frames sin detección
-            min_hits=1,           # Confirmar track inmediatamente
-            iou_threshold=0.15,   # IoU bajo porque OBB cambia mucho
-            distance_threshold=150 # Match por distancia de centro
+        # Tracker simple para seguimiento - solo por distancia de centros
+        self.tracker = SimpleTracker(
+            max_distance=150,    # 150px de tolerancia para match
+            max_missing=30       # 30 frames sin ver = eliminar
         )
-        self.orientation_detector = OrientationDetector()
-        
-        # Configurar marcador rojo como indicador frontal
-        # HSV para rojo: (0-10, 100-255, 100-255) y (170-180, 100-255, 100-255)
-        self.orientation_detector.set_front_marker_color((0, 100, 100), (10, 255, 255))
         
         # Para estadísticas
         self._frame_count = 0
@@ -200,7 +193,7 @@ class FrameProcessor:
                             "is_obb": True
                         })
                 
-                # Fallback: detección normal (boxes)
+                # Fallback: detección normal (boxes) - sin orientación
                 elif hasattr(result, 'boxes') and result.boxes is not None:
                     for box in result.boxes:
                         x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
@@ -209,16 +202,13 @@ class FrameProcessor:
                         cls = int(box.cls[0])
                         name = result.names[cls]
                         
-                        orientation = self.orientation_detector.detect_orientation(
-                            frame, (x1, y1, x2, y2)
-                        )
-                        
+                        # Sin OBB, orientación es 0
                         detections.append({
                             "class": name,
                             "confidence": round(conf, 2),
                             "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
                             "center": {"x": (x1+x2)//2, "y": (y1+y2)//2},
-                            "orientation": round(orientation, 1),
+                            "orientation": 0.0,
                             "is_obb": False
                         })
         
@@ -234,17 +224,22 @@ class FrameProcessor:
             # Bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
-            # ID y clase
-            label = f"#{track.id} {track.class_name}"
+            # ID 
+            label = f"#{track.id}"
             cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
-            # Flecha de orientación
+            # Flecha de orientación - OBB usa ángulo directo del modelo
             cx, cy = track.center
-            angle_rad = np.radians(90 - track.orientation)  # Convertir a coordenadas de imagen
-            arrow_len = min(x2-x1, y2-y1) // 2
+            # El ángulo OBB viene en radianes convertido a grados, 0 = horizontal derecha
+            angle_rad = np.radians(track.orientation)
+            arrow_len = max(30, min(x2-x1, y2-y1) // 2)
             end_x = int(cx + arrow_len * np.cos(angle_rad))
-            end_y = int(cy - arrow_len * np.sin(angle_rad))
+            end_y = int(cy + arrow_len * np.sin(angle_rad))
             cv2.arrowedLine(frame, (cx, cy), (end_x, end_y), (0, 255, 255), 2, tipLength=0.3)
+            
+            # Mostrar ángulo
+            angle_text = f"{track.orientation:.0f}°"
+            cv2.putText(frame, angle_text, (x2+5, y1+15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
         
         if not self.is_ready:
             cv2.putText(frame, "YOLO no disponible", (10, 30), 
