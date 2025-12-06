@@ -1779,9 +1779,13 @@ class BattleTechMapGenerator {
     canPlaceGroup(x, y, group, available) {
         if (!group.offsets || group.offsets.length === 0) return false;
         
+        const isOddCol = x % 2 === 1;
+        
         for (const [dx, dy] of group.offsets) {
-            const nx = x + dx;
-            const ny = y + dy;
+            // Ajustar offset según paridad de columna base
+            const adjustedOffset = this.adjustOffsetForParity(x, dx, dy);
+            const nx = x + adjustedOffset.dx;
+            const ny = y + adjustedOffset.dy;
             const key = `${nx},${ny}`;
             
             if (!this.isValid(nx, ny)) return false;
@@ -1789,6 +1793,37 @@ class BattleTechMapGenerator {
         }
         
         return true;
+    }
+    
+    /**
+     * Ajusta un offset para la paridad de la columna
+     * Los offsets del config asumen columna par como base
+     */
+    adjustOffsetForParity(baseX, dx, dy) {
+        // Si dx es 0, no hay ajuste necesario (movimiento vertical puro)
+        if (dx === 0) {
+            return { dx, dy };
+        }
+        
+        const isBaseOdd = baseX % 2 === 1;
+        const targetX = baseX + dx;
+        const isTargetOdd = targetX % 2 === 1;
+        
+        // En hex flat-top con columnas impares desplazadas hacia abajo:
+        // - Si vamos de par a impar, el hex destino está "más abajo" visualmente
+        // - Si vamos de impar a par, el hex destino está "más arriba" visualmente
+        
+        let adjustedDy = dy;
+        
+        if (isBaseOdd && !isTargetOdd) {
+            // De impar a par: ajustar -1 en Y
+            adjustedDy = dy - 1;
+        } else if (!isBaseOdd && isTargetOdd) {
+            // De par a impar: no ajustar (los offsets del config ya asumen esto)
+            adjustedDy = dy;
+        }
+        
+        return { dx, dy: adjustedDy };
     }
     
     /**
@@ -1802,8 +1837,9 @@ class BattleTechMapGenerator {
         
         for (let i = 0; i < group.offsets.length; i++) {
             const [dx, dy] = group.offsets[i];
-            const nx = x + dx;
-            const ny = y + dy;
+            const adjustedOffset = this.adjustOffsetForParity(x, dx, dy);
+            const nx = x + adjustedOffset.dx;
+            const ny = y + adjustedOffset.dy;
             const key = `${nx},${ny}`;
             
             if (this.isValid(nx, ny)) {
