@@ -508,8 +508,8 @@ class BattleTechMapGenerator {
             
             if (!this.isValid(x, y)) continue;
             
-            // No sobrescribir water o urban
-            if (this.terrainMap[y][x] === 'water' || this.terrainMap[y][x] === 'urban') {
+            // No sobrescribir agua o urban
+            if (this.isWater(x, y) || this.terrainMap[y][x] === 'urban') {
                 continue;
             }
             
@@ -533,8 +533,8 @@ class BattleTechMapGenerator {
             if (!this.isValid(x, y)) continue;
             visited.add(key);
             
-            // No sobrescribir water o urban
-            if (this.terrainMap[y][x] === 'water' || this.terrainMap[y][x] === 'urban') {
+            // No sobrescribir agua o urban
+            if (this.isWater(x, y) || this.terrainMap[y][x] === 'urban') {
                 continue;
             }
             
@@ -592,11 +592,16 @@ class BattleTechMapGenerator {
     }
     
     isNearTerrain(x, y, type, distance) {
+        // Soporta 'water' como alias para water_river + water_lake
+        const types = type === 'water' 
+            ? ['water', 'water_river', 'water_lake'] 
+            : [type];
+            
         for (let dy = -distance; dy <= distance; dy++) {
             for (let dx = -distance; dx <= distance; dx++) {
                 const nx = x + dx;
                 const ny = y + dy;
-                if (this.isValid(nx, ny) && this.terrainMap[ny][nx] === type) {
+                if (this.isValid(nx, ny) && types.includes(this.terrainMap[ny][nx])) {
                     return true;
                 }
             }
@@ -604,59 +609,103 @@ class BattleTechMapGenerator {
         return false;
     }
     
+    /**
+     * Verifica si un hex es de tipo agua (cualquier variante)
+     */
+    isWater(x, y) {
+        if (!this.isValid(x, y)) return false;
+        const t = this.terrainMap[y][x];
+        return t === 'water' || t === 'water_river' || t === 'water_lake';
+    }
+    
     placeRiver(depth, width = 2, meanders = true) {
-        // Río con ancho y serpenteo configurables
+        // Río usando grupos de tiles v4 (verticales) que conectan correctamente
         const vertical = Math.random() < 0.5;
-        let current = vertical 
-            ? { x: Math.floor(this.width / 2) + Math.floor(Math.random() * 4) - 2, y: 0 }
-            : { x: 0, y: Math.floor(this.height / 2) + Math.floor(Math.random() * 4) - 2 };
+        this.riverDirection = vertical ? 'vertical' : 'horizontal';
+        this.riverPath = [];
         
+        // Calcular posición inicial centrada
+        let startX = vertical 
+            ? Math.floor(this.width / 2) + Math.floor(Math.random() * 4) - 2
+            : 0;
+        let startY = vertical 
+            ? 0 
+            : Math.floor(this.height / 2) + Math.floor(Math.random() * 4) - 2;
+        
+        // Generar path del río con meandros suaves
+        let current = { x: startX, y: startY };
         const end = vertical ? this.height : this.width;
-        const riverWidth = width;
-        const meanderChance = meanders ? 0.35 : 0.15;
+        const meanderChance = meanders ? 0.25 : 0.1;
         
         for (let i = 0; i < end; i++) {
-            // Colocar agua en un área según ancho
-            for (let w = -riverWidth; w <= riverWidth; w++) {
-                for (let h = -1; h <= 1; h++) {
-                    const wx = vertical ? current.x + w : current.x + h;
-                    const wy = vertical ? current.y + h : current.y + w;
-                    if (this.isValid(wx, wy)) {
-                        // Probabilidad de colocar agua decrece en los bordes
-                        const distFromCenter = Math.abs(w);
-                        if (distFromCenter <= 1 || Math.random() < 0.7) {
-                            this.terrainMap[wy][wx] = 'water';
-                            this.elevationMap[wy][wx] = 0;
-                        }
+            // Guardar posición en el path
+            this.riverPath.push({ x: current.x, y: current.y });
+            
+            // Marcar este hex y adyacentes como río
+            for (let w = -1; w <= 1; w++) {
+                const wx = vertical ? current.x + w : current.x;
+                const wy = vertical ? current.y : current.y + w;
+                if (this.isValid(wx, wy)) {
+                    // Centro siempre agua, bordes con probabilidad
+                    if (w === 0 || Math.random() < 0.6) {
+                        this.terrainMap[wy][wx] = 'water_river';
+                        this.elevationMap[wy][wx] = 0;
                     }
                 }
             }
             
-            // Avanzar con serpenteo configurable
+            // Avanzar
             if (vertical) {
                 current.y++;
                 if (Math.random() < meanderChance) {
-                    current.x += Math.floor(Math.random() * 3) - 1;
+                    current.x += Math.random() < 0.5 ? 1 : -1;
                     current.x = Math.max(2, Math.min(this.width - 3, current.x));
                 }
             } else {
                 current.x++;
                 if (Math.random() < meanderChance) {
-                    current.y += Math.floor(Math.random() * 3) - 1;
+                    current.y += Math.random() < 0.5 ? 1 : -1;
                     current.y = Math.max(2, Math.min(this.height - 3, current.y));
                 }
             }
         }
     }
     
+    /**
+     * Coloca un lago usando grupos autocontenidos
+     */
+    placeLake(centerX, centerY, size = 'medium') {
+        const sizes = {
+            'small': 3,
+            'medium': 5,
+            'large': 7
+        };
+        const radius = sizes[size] || 5;
+        
+        // Rellenar área circular con agua de lago
+        for (let dy = -radius; dy <= radius; dy++) {
+            for (let dx = -radius; dx <= radius; dx++) {
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist <= radius * 0.8 + Math.random() * radius * 0.3) {
+                    const x = centerX + dx;
+                    const y = centerY + dy;
+                    if (this.isValid(x, y)) {
+                        this.terrainMap[y][x] = 'water_lake';
+                        this.elevationMap[y][x] = 0;
+                    }
+                }
+            }
+        }
+    }
+    
     placeFordsOnRiver() {
-        // Encontrar hexes de agua y convertir algunos a depth 0 (vados)
+        // Encontrar hexes de agua de río y convertir algunos a depth 0 (vados)
         let fords = 0;
         const maxFords = 2;
         
         for (let y = 0; y < this.height && fords < maxFords; y++) {
             for (let x = 0; x < this.width && fords < maxFords; x++) {
-                if (this.terrainMap[y][x] === 'water' && Math.random() < 0.05) {
+                if (this.terrainMap[y][x] === 'water_river' && Math.random() < 0.05) {
                     // Marcar como vado (se representará distinto)
                     this.terrainMap[y][x] = 'water_depth0';
                     fords++;
@@ -767,7 +816,7 @@ class BattleTechMapGenerator {
             const nx = cx + dx;
             const ny = cy + dy;
             if (this.isValid(nx, ny)) {
-                this.terrainMap[ny][nx] = 'water';
+                this.terrainMap[ny][nx] = 'water_lake';
                 this.elevationMap[ny][nx] = 0;
             }
         }
@@ -783,7 +832,7 @@ class BattleTechMapGenerator {
                     const nx = cx + dx;
                     const ny = cy + dy;
                     if (this.isValid(nx, ny)) {
-                        this.terrainMap[ny][nx] = 'water';
+                        this.terrainMap[ny][nx] = 'water_lake';
                         this.elevationMap[ny][nx] = 0;
                     }
                 }
@@ -793,7 +842,7 @@ class BattleTechMapGenerator {
         // Bajar elevación del agua
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
-                if (this.terrainMap[y][x] === 'water') {
+                if (this.isWater(x, y)) {
                     this.elevationMap[y][x] = 0;
                 }
             }
@@ -829,7 +878,7 @@ class BattleTechMapGenerator {
             for (let x = 0; x < this.width; x++) {
                 if (this.elevationMap[y][x] === 0 && this.terrainMap[y][x] === 'clear') {
                     if (Math.random() < 0.3) {
-                        this.terrainMap[y][x] = 'water';
+                        this.terrainMap[y][x] = 'water_river';
                     }
                 }
             }
@@ -841,10 +890,15 @@ class BattleTechMapGenerator {
         const distances = this.createEmptyGrid(999);
         const queue = [];
         
+        // Soporta 'water' como alias para todos los tipos de agua
+        const types = type === 'water' 
+            ? ['water', 'water_river', 'water_lake'] 
+            : [type];
+        
         // Inicializar con hexes del tipo
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
-                if (this.terrainMap[y][x] === type) {
+                if (types.includes(this.terrainMap[y][x])) {
                     distances[y][x] = 0;
                     queue.push({x, y, dist: 0});
                 }
@@ -918,7 +972,7 @@ class BattleTechMapGenerator {
         
         for (let i = 0; i < end; i++) {
             if (this.isValid(current.x, current.y)) {
-                this.terrainMap[current.y][current.x] = 'water';
+                this.terrainMap[current.y][current.x] = 'water_river';
                 this.elevationMap[current.y][current.x] = 0;
             }
             
@@ -1010,7 +1064,7 @@ class BattleTechMapGenerator {
         let waterHexes = [];
         for (let y = 0; y < this.height; y++) {
             for (let x = 0; x < this.width; x++) {
-                if (this.terrainMap[y][x] === 'water') {
+                if (this.isWater(x, y)) {
                     waterHexes.push({x, y});
                 }
             }
@@ -1040,12 +1094,12 @@ class BattleTechMapGenerator {
         // Encontrar hexes de agua y colocar un par como vado/puente
         for (let y = 2; y < this.height - 2; y++) {
             for (let x = 2; x < this.width - 2; x++) {
-                if (this.terrainMap[y][x] === 'water') {
+                if (this.isWater(x, y)) {
                     // Convertir este y vecino a clear (puente)
                     this.terrainMap[y][x] = 'clear';
                     const neighbors = this.getHexNeighbors(x, y);
                     for (const n of neighbors) {
-                        if (this.isValid(n.x, n.y) && this.terrainMap[n.y][n.x] === 'water') {
+                        if (this.isValid(n.x, n.y) && this.isWater(n.x, n.y)) {
                             this.terrainMap[n.y][n.x] = 'clear';
                             return; // Solo un puente
                         }
@@ -1083,9 +1137,9 @@ class BattleTechMapGenerator {
         const cx = 3 + Math.floor(Math.random() * (this.width - 6));
         const cy = 3 + Math.floor(Math.random() * (this.height - 6));
         
-        // Centro: agua
+        // Centro: agua (lago pequeño)
         if (this.isValid(cx, cy)) {
-            this.terrainMap[cy][cx] = 'water';
+            this.terrainMap[cy][cx] = 'water_lake';
             this.elevationMap[cy][cx] = 0;
         }
         
@@ -1233,13 +1287,13 @@ class BattleTechMapGenerator {
         }
         
         // Colocar lago pequeño
-        this.terrainMap[bestY][bestX] = 'water';
+        this.terrainMap[bestY][bestX] = 'water_lake';
         this.elevationMap[bestY][bestX] = 0;
         
         const neighbors = this.getHexNeighbors(bestX, bestY);
         for (const n of neighbors) {
             if (this.isValid(n.x, n.y) && Math.random() < 0.5) {
-                this.terrainMap[n.y][n.x] = 'water';
+                this.terrainMap[n.y][n.x] = 'water_lake';
                 this.elevationMap[n.y][n.x] = 0;
             }
         }
@@ -1332,8 +1386,10 @@ class BattleTechMapGenerator {
             'clear': 'terrain',
             'woods': 'woods',
             'woods_heavy': 'woods_heavy',
-            'water': 'water',
-            'water_depth0': 'water',
+            'water': 'water_lake',  // Por defecto lagos
+            'water_lake': 'water_lake',
+            'water_river': 'water_river',
+            'water_depth0': 'water_lake',
             'rough': 'rough',
             'rubble': 'rubble',
             'urban': 'urban',
@@ -1374,8 +1430,107 @@ class BattleTechMapGenerator {
             return;
         }
         
+        // Para ríos, usar grupos v4 a lo largo del path
+        if (cluster.category === 'water_river') {
+            this.fillRiverWithGroups(cluster, available, hexMap, matchingGroups);
+            return;
+        }
+        
+        // Para lagos, usar grupos autocontenidos (mega7 preferido)
+        if (cluster.category === 'water_lake') {
+            this.fillLakeWithGroups(cluster, available, hexMap, matchingGroups);
+            return;
+        }
+        
         // Estrategia estándar para otros tipos de terreno
         this.fillClusterStandard(cluster, available, hexMap, matchingGroups);
+    }
+    
+    /**
+     * Rellena río con grupos v4 (4 tiles verticales) siguiendo el path
+     */
+    fillRiverWithGroups(cluster, available, hexMap, matchingGroups) {
+        // Preferir grupos v4 para ríos (38, 39)
+        const v4Groups = matchingGroups.filter(([id, g]) => g.shape === 'v4');
+        const otherGroups = matchingGroups.filter(([id, g]) => g.shape !== 'v4');
+        
+        // Ordenar hexes por posición (siguiendo flujo del río)
+        const isVertical = this.riverDirection === 'vertical';
+        const sortedHexes = [...cluster.hexes].sort((a, b) => {
+            return isVertical ? (a.y - b.y) || (a.x - b.x) : (a.x - b.x) || (a.y - b.y);
+        });
+        
+        // Colocar grupos v4 cada 4 hexes a lo largo del río
+        if (v4Groups.length > 0) {
+            for (let i = 0; i < sortedHexes.length; i += 4) {
+                const hex = sortedHexes[i];
+                const key = `${hex.x},${hex.y}`;
+                if (!available.has(key)) continue;
+                
+                // Elegir un grupo v4 aleatorio
+                const [groupId, group] = v4Groups[Math.floor(Math.random() * v4Groups.length)];
+                
+                if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
+                    this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
+                }
+            }
+        }
+        
+        // Rellenar resto con otros grupos o tiles individuales
+        for (const hex of sortedHexes) {
+            const key = `${hex.x},${hex.y}`;
+            if (!available.has(key)) continue;
+            
+            let placed = false;
+            for (const [groupId, group] of otherGroups) {
+                if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
+                    this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
+                    placed = true;
+                    break;
+                }
+            }
+        }
+    }
+    
+    /**
+     * Rellena lago con grupos autocontenidos, prefiriendo mega7
+     */
+    fillLakeWithGroups(cluster, available, hexMap, matchingGroups) {
+        // Para lagos, preferir grupos mega7 que son autocontenidos
+        const mega7Groups = matchingGroups.filter(([id, g]) => g.shape === 'mega7');
+        const otherGroups = matchingGroups.filter(([id, g]) => g.shape !== 'mega7');
+        
+        // Ordenar grupos: mega7 primero, luego por tamaño
+        const sortedGroups = [...mega7Groups, ...otherGroups];
+        
+        // Encontrar centro del cluster
+        let sumX = 0, sumY = 0;
+        for (const hex of cluster.hexes) {
+            sumX += hex.x;
+            sumY += hex.y;
+        }
+        const centerX = Math.round(sumX / cluster.hexes.length);
+        const centerY = Math.round(sumY / cluster.hexes.length);
+        
+        // Ordenar hexes por distancia al centro (colocar grupos en el centro primero)
+        const sortedHexes = [...cluster.hexes].sort((a, b) => {
+            const distA = Math.abs(a.x - centerX) + Math.abs(a.y - centerY);
+            const distB = Math.abs(b.x - centerX) + Math.abs(b.y - centerY);
+            return distA - distB;
+        });
+        
+        // Intentar colocar mega7 en el centro
+        for (const hex of sortedHexes) {
+            const key = `${hex.x},${hex.y}`;
+            if (!available.has(key)) continue;
+            
+            for (const [groupId, group] of sortedGroups) {
+                if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
+                    this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
+                    break;
+                }
+            }
+        }
     }
     
     /**
@@ -1520,7 +1675,9 @@ class BattleTechMapGenerator {
             'terrain': ['terrain'],
             'woods': ['woods'],
             'woods_heavy': ['woods_heavy', 'woods'],
-            'water': ['water'],
+            'water_lake': ['water_lake'],
+            'water_river': ['water_river'],
+            'water': ['water', 'water_lake', 'water_river'],
             'rough': ['rough'],
             'rubble': ['rubble'],
             'urban': ['urban'],
@@ -1538,7 +1695,9 @@ class BattleTechMapGenerator {
             'clear': ['11'],  // Single grass hex (único tile individual de terreno)
             'woods': ['11'],  // No hay singles de woods, usar grass (los grupos cubrirán)
             'woods_heavy': ['11'],  // No hay singles, usar grass
-            'water': ['27', '28', '29', '30'],  // Water singles
+            'water': ['27', '28', '29', '30'],  // Water singles para compatibilidad
+            'water_lake': ['27', '28', '29', '30'],  // Water singles para lagos sin grupo
+            'water_river': ['27', '28', '29', '30'],  // Water singles para ríos sin grupo
             'water_depth0': ['27'],
             'rough': ['59', '60', '61', '62', '63', '64', '65', '66'],  // Rocky/rough singles
             'rubble': ['67', '68', '69', '70'],  // Rubble singles

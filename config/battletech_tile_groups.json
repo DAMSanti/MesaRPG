@@ -76,91 +76,91 @@
     "22": {
       "name": "Lago 1",
       "shape": "diag_br",
-      "category": "water",
+      "category": "water_lake",
       "tiles": ["22_0", "22_1"],
       "offsets": [[0, 0], [1, 0]]
     },
     "23": {
       "name": "Lago 2",
       "shape": "right2",
-      "category": "water",
+      "category": "water_lake",
       "tiles": ["23_0", "23_1", "23_2"],
       "offsets": [[0, 0], [1, -1], [1, 0]]
     },
     "24": {
       "name": "Lago 3",
       "shape": "mega7",
-      "category": "water",
+      "category": "water_lake",
       "tiles": ["24_0", "24_1", "24_2", "24_3", "24_4", "24_5", "24_6"],
       "offsets": [[0, 0], [0, -1], [0, 1], [-1, -1], [-1, 0], [1, -1], [1, 0]]
     },
     "25": {
       "name": "Lago 4",
       "shape": "mega7",
-      "category": "water",
+      "category": "water_lake",
       "tiles": ["25_0", "25_1", "25_2", "25_3", "25_4", "25_5", "25_6"],
       "offsets": [[0, 0], [0, -1], [0, 1], [-1, -1], [-1, 0], [1, -1], [1, 0]]
     },
     "31": {
       "name": "Río 5",
       "shape": "diag_br",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["31_0", "31_1"],
       "offsets": [[0, 0], [1, 0]]
     },
     "32": {
       "name": "Río 6",
       "shape": "diag_br",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["32_0", "32_1"],
       "offsets": [[0, 0], [1, 0]]
     },
     "33": {
       "name": "Río 7",
       "shape": "diag3",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["33_0", "33_1", "33_2"],
       "offsets": [[0, 0], [1, 0], [2, 1]]
     },
     "34": {
       "name": "Río 8",
       "shape": "v2_topright",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["34_0", "34_1", "34_2"],
       "offsets": [[0, 0], [0, 1], [1, -1]]
     },
     "35": {
       "name": "Río 9",
       "shape": "left2",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["35_0", "35_1", "35_2"],
       "offsets": [[0, 0], [-1, -1], [-1, 0]]
     },
     "36": {
       "name": "Río 10",
       "shape": "right2",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["36_0", "36_1", "36_2"],
       "offsets": [[0, 0], [1, -1], [1, 0]]
     },
     "37": {
       "name": "Río 11",
       "shape": "h2v2",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["37_0", "37_1", "37_2", "37_3"],
       "offsets": [[0, 0], [0, 1], [1, 0], [1, 1]]
     },
     "38": {
       "name": "Río Largo 1",
       "shape": "v4",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["38_0", "38_1", "38_2", "38_3"],
       "offsets": [[0, 0], [0, 1], [0, 2], [0, 3]]
     },
     "39": {
       "name": "Río Largo 2",
       "shape": "v4",
-      "category": "water",
+      "category": "water_river",
       "tiles": ["39_0", "39_1", "39_2", "39_3"],
       "offsets": [[0, 0], [0, 1], [0, 2], [0, 3]]
     },
