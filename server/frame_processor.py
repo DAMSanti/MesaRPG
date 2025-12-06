@@ -130,7 +130,9 @@ class FrameProcessor:
                         openvino_path = self._get_openvino_model_path(path)
                         if openvino_path:
                             print(f"📦 Cargando modelo OpenVINO: {openvino_path}")
-                            self.model = YOLO(str(openvino_path))
+                            # Especificar task explícitamente para OpenVINO
+                            task = "pose" if self.is_pose_model else "detect"
+                            self.model = YOLO(str(openvino_path), task=task)
                             self.is_ready = True
                             self.using_openvino = True  # Marcar que usa OpenVINO
                             model_type = "(Pose+OpenVINO)" if self.is_pose_model else "(OpenVINO)"
