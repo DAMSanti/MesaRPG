@@ -55,6 +55,7 @@ class FrameProcessor:
         self.is_pose_model = False
         self.is_obb_model = False
         self.use_openvino = use_openvino and OPENVINO_AVAILABLE
+        self.using_openvino = False  # Se pone a True si realmente carga modelo OpenVINO
         self.last_detections: List[Dict] = []
         self.last_processed_frame: Optional[str] = None
         self.last_tracks: List[Dict] = []
@@ -124,6 +125,7 @@ class FrameProcessor:
                             print(f"📦 Cargando modelo OpenVINO: {openvino_path}")
                             self.model = YOLO(str(openvino_path))
                             self.is_ready = True
+                            self.using_openvino = True  # Marcar que usa OpenVINO
                             model_type = "(Pose+OpenVINO)" if self.is_pose_model else "(OpenVINO)"
                             print(f"✅ Modelo {path.name} cargado {model_type}")
                             return
@@ -132,6 +134,7 @@ class FrameProcessor:
                     print(f"📦 Cargando modelo YOLO: {path.name}")
                     self.model = YOLO(str(path))
                     self.is_ready = True
+                    self.using_openvino = False
                     model_type = "(Pose)" if self.is_pose_model else "(OBB)" if self.is_obb_model else ""
                     print(f"✅ Modelo {path.name} cargado {model_type}")
                     return
@@ -203,10 +206,13 @@ class FrameProcessor:
         # Info de debug en frame
         model_status = "LISTO" if self.is_ready else "NO CARGADO"
         model_type = "Pose" if self.is_pose_model else "OBB" if self.is_obb_model else "Normal"
+        if self.using_openvino:
+            model_type += "+OV"
         
         if self.is_ready and self.model:
-            # Reducir tamaño para procesamiento rápido (320 es más rápido que 416)
-            max_size = 320
+            # OpenVINO requiere 640, PyTorch puede usar 320 para más velocidad
+            infer_size = 640 if self.using_openvino else 320
+            max_size = infer_size
             scale = min(max_size / w, max_size / h, 1.0)
             
             if scale < 1:
@@ -220,7 +226,7 @@ class FrameProcessor:
                 small,
                 conf=self.confidence,
                 verbose=False,
-                imgsz=320,
+                imgsz=infer_size,
                 max_det=10,      # Menos detecciones = más rápido
                 half=False,      # True si tienes GPU con FP16
             )
