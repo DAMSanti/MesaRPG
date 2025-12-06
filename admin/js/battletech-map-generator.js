@@ -97,22 +97,46 @@ class BattleTechMapGenerator {
      * Ideal para combates de largo alcance
      */
     generateGrasslands() {
+        // Parámetros aleatorios para variedad
+        const forestDensity = 0.12 + Math.random() * 0.12; // 12-24%
+        const hilliness = 0.2 + Math.random() * 0.25;      // 20-45%
+        const hasStream = Math.random() < 0.4;
+        const hasRuins = Math.random() < 0.2;
+        const hasPond = Math.random() < 0.3;
+        
         // 1. Base: todo llanura nivel 0
         this.fillTerrain('clear', 0);
         
-        // 2. Generar elevación con Perlin-like noise
-        this.generateSmoothElevation(0, 2, 0.3);
+        // 2. Generar elevación con variación
+        this.generateSmoothElevation(0, 2, hilliness);
         
-        // 3. Añadir clusters de bosques (15-20% del mapa)
-        this.placeTerrainClusters('woods', 0.15, 3, 7);
+        // 3. Múltiples clusters de bosques de diferentes tamaños
+        const numForestClusters = 3 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < numForestClusters; i++) {
+            const size = 2 + Math.floor(Math.random() * 6);
+            this.placeTerrainClusters('woods', forestDensity / numForestClusters, size, size + 4);
+        }
         
-        // 4. Algunos bosques densos en zonas altas
-        this.placeTerrainOnElevation('woods_heavy', 2, 0.3);
+        // 4. Bosques densos en zonas altas o como núcleo de bosques
+        this.placeTerrainOnElevation('woods_heavy', 2, 0.25);
+        this.addDenseWoodsCores(0.3);
         
-        // 5. Terreno rocoso disperso
-        this.scatterTerrain('rough', 0.05);
+        // 5. Características especiales
+        if (hasStream) {
+            this.placeNarrowStream();
+        }
+        if (hasPond) {
+            this.placePond();
+        }
+        if (hasRuins) {
+            this.placeRuinedStructure();
+        }
         
-        // 6. Asignar tiles visuales
+        // 6. Terreno rocoso disperso y en colinas
+        this.scatterTerrain('rough', 0.04);
+        this.placeTerrainOnElevation('rough', 2, 0.15);
+        
+        // 7. Asignar tiles visuales
         this.assignTiles();
     }
     
@@ -121,25 +145,47 @@ class BattleTechMapGenerator {
      * Combate cercano, emboscadas
      */
     generateForest() {
+        // Parámetros aleatorios
+        const clearingDensity = 0.08 + Math.random() * 0.12;
+        const heavyWoodsDensity = 0.35 + Math.random() * 0.15;
+        const hasStream = Math.random() < 0.6;
+        const hasRuins = Math.random() < 0.25;
+        const hasCamp = Math.random() < 0.15;
+        
         // 1. Base: bosque ligero
         this.fillTerrain('woods', 0);
         
-        // 2. Elevación moderada
-        this.generateSmoothElevation(0, 2, 0.2);
+        // 2. Elevación moderada con colinas
+        this.generateSmoothElevation(0, 2, 0.25);
         
-        // 3. Bosque denso en 40% del mapa
-        this.placeTerrainClusters('woods_heavy', 0.4, 5, 12);
-        
-        // 4. Claros (llanura) - importantes para maniobra
-        this.placeTerrainClusters('clear', 0.15, 4, 8);
-        
-        // 5. Un arroyo atravesando
-        if (Math.random() < 0.6) {
-            this.placeRiver(1); // Profundidad 1
+        // 3. Bosque denso en clusters variados
+        const numHeavyClusters = 4 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < numHeavyClusters; i++) {
+            this.placeTerrainClusters('woods_heavy', heavyWoodsDensity / numHeavyClusters, 4, 10);
         }
         
-        // 6. Rocas dispersas
+        // 4. Claros estratégicos - importantes para maniobra
+        const numClearings = 2 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < numClearings; i++) {
+            this.placeTerrainClusters('clear', clearingDensity, 3, 7);
+        }
+        
+        // 5. Características especiales
+        if (hasStream) {
+            this.placeNarrowStream();
+        }
+        if (hasRuins) {
+            this.placeRuinedStructure();
+        }
+        if (hasCamp) {
+            this.placeSmallCamp();
+        }
+        
+        // 6. Rocas y terreno difícil disperso
         this.scatterTerrain('rough', 0.03);
+        
+        // 7. Añadir bordes de bosque denso en zonas altas
+        this.placeTerrainOnElevation('woods_heavy', 2, 0.4);
         
         this.assignTiles();
     }
@@ -149,20 +195,39 @@ class BattleTechMapGenerator {
      * Combate urbano, líneas de fuego cortas
      */
     generateCity() {
+        // Parámetros aleatorios
+        const density = 0.6 + Math.random() * 0.2;     // 60-80% edificios
+        const destruction = Math.random() * 0.3;       // 0-30% destrucción
+        const hasParks = Math.random() < 0.5;
+        const hasPlaza = Math.random() < 0.4;
+        
         // 1. Base: llanura (calles)
         this.fillTerrain('clear', 0);
         
-        // 2. Elevación baja
-        this.generateSmoothElevation(0, 1, 0.1);
+        // 2. Elevación muy baja (ciudad en llanura)
+        this.generateSmoothElevation(0, 1, 0.08);
         
-        // 3. Colocar bloques de edificios
-        this.placeBuildingBlocks();
+        // 3. Colocar bloques de edificios con densidad variable
+        this.placeBuildingBlocks(density);
         
-        // 4. Añadir escombros alrededor de edificios
-        this.placeRubbleNearBuildings(0.3);
+        // 4. Añadir escombros según nivel de destrucción
+        this.placeRubbleNearBuildings(0.2 + destruction);
+        if (destruction > 0.15) {
+            this.scatterTerrain('rubble', destruction * 0.3);
+        }
         
-        // 5. Algunos parques (bosques pequeños)
-        this.placeTerrainClusters('woods', 0.05, 2, 4);
+        // 5. Parques (bosques pequeños) 
+        if (hasParks) {
+            const numParks = 1 + Math.floor(Math.random() * 2);
+            for (let i = 0; i < numParks; i++) {
+                this.placeTerrainClusters('woods', 0.04, 2, 5);
+            }
+        }
+        
+        // 6. Plaza central (área despejada grande)
+        if (hasPlaza) {
+            this.placePlaza();
+        }
         
         this.assignTiles();
     }
@@ -172,6 +237,13 @@ class BattleTechMapGenerator {
      * Control del vado/puente es clave
      */
     generateRiver() {
+        // Parámetros aleatorios
+        const riverWidth = 1 + Math.floor(Math.random() * 2);    // 1-2 hexes
+        const forestDensity = 0.15 + Math.random() * 0.15;
+        const hasIsland = Math.random() < 0.25;
+        const hasBridge = Math.random() < 0.3;
+        const meanders = Math.random() < 0.5;
+        
         // 1. Base: llanura
         this.fillTerrain('clear', 0);
         
@@ -179,16 +251,32 @@ class BattleTechMapGenerator {
         this.generateSmoothElevation(0, 2, 0.25);
         
         // 3. Río principal atravesando el mapa
-        this.placeRiver(2); // Profundidad 2
+        this.placeRiver(2, riverWidth, meanders);
         
-        // 4. Posibles vados (depth 0)
-        this.placeFordsOnRiver();
+        // 4. Isla en el río (si aplica)
+        if (hasIsland) {
+            this.placeIslandInWater();
+        }
         
-        // 5. Bosques ribereños (cerca del agua)
-        this.placeTerrainNear('water', 'woods', 2, 0.5);
+        // 5. Vados o puente
+        if (hasBridge) {
+            this.placeBridge();
+        } else {
+            this.placeFordsOnRiver();
+        }
         
-        // 6. Colinas lejos del río
+        // 6. Bosques ribereños densos (cerca del agua)
+        this.placeTerrainNear('water', 'woods', 2, forestDensity * 2);
+        this.placeTerrainNear('water', 'woods_heavy', 1, forestDensity);
+        
+        // 7. Bosques adicionales en zonas altas
+        this.placeTerrainClusters('woods', forestDensity, 3, 6);
+        
+        // 8. Colinas lejos del río
         this.increaseElevationAwayFrom('water', 1);
+        
+        // 9. Algo de rough en las orillas
+        this.placeTerrainNear('water', 'rough', 1, 0.1);
         
         this.assignTiles();
     }
@@ -198,23 +286,40 @@ class BattleTechMapGenerator {
      * Combate caótico, peligros ambientales
      */
     generateRuins() {
+        // Parámetros aleatorios
+        const destruction = 0.5 + Math.random() * 0.4;    // 50-90%
+        const hasFires = Math.random() < 0.3;
+        const hasHazards = Math.random() < 0.4;
+        const survivingBuildings = 0.1 + Math.random() * 0.15;
+        
         // 1. Base: mezcla de clear y rubble
         this.fillTerrain('clear', 0);
         
         // 2. Elevación irregular (cráteres y montículos)
         this.generateChaoticElevation(0, 3);
         
-        // 3. Escombros abundantes (40%)
-        this.placeTerrainClusters('rubble', 0.4, 3, 8);
+        // 3. Escombros abundantes según destrucción
+        this.placeTerrainClusters('rubble', destruction * 0.5, 3, 8);
+        this.scatterTerrain('rubble', destruction * 0.15);
         
-        // 4. Edificios parcialmente destruidos
-        this.placeScatteredBuildings(0.15);
+        // 4. Edificios supervivientes
+        this.placeScatteredBuildings(survivingBuildings);
         
-        // 5. Cráteres (rough con elevación -1)
-        this.placeCraters(5);
+        // 5. Cráteres múltiples
+        const numCraters = 3 + Math.floor(Math.random() * 5);
+        this.placeCraters(numCraters);
         
-        // 6. Zonas de humo
-        this.scatterTerrain('hazards', 0.05);
+        // 6. Zonas de peligro (humo, fuego, minas)
+        if (hasHazards) {
+            this.scatterTerrain('hazards', 0.05 + destruction * 0.05);
+        }
+        if (hasFires) {
+            // Humo cerca de edificios
+            this.placeHazardsNearBuildings(0.15);
+        }
+        
+        // 7. Vegetación recuperando terreno
+        this.scatterTerrain('woods', 0.03);
         
         this.assignTiles();
     }
@@ -224,21 +329,42 @@ class BattleTechMapGenerator {
      * Largo alcance, calor es factor
      */
     generateDesert() {
+        // Parámetros aleatorios
+        const rockDensity = 0.2 + Math.random() * 0.15;
+        const hasOasis = Math.random() < 0.4;
+        const hasWadi = Math.random() < 0.3;  // Río seco
+        const hasRuins = Math.random() < 0.2;
+        const elevationVariety = 0.3 + Math.random() * 0.2;
+        
         // 1. Base: clear (arena)
         this.fillTerrain('clear', 0);
         
         // 2. Elevación variable (dunas y mesetas)
-        this.generateSmoothElevation(0, 3, 0.4);
+        this.generateSmoothElevation(0, 3, elevationVariety);
         
-        // 3. Formaciones rocosas
-        this.placeTerrainClusters('rough', 0.25, 3, 8);
+        // 3. Formaciones rocosas en clusters variados
+        const numRockFormations = 3 + Math.floor(Math.random() * 4);
+        for (let i = 0; i < numRockFormations; i++) {
+            this.placeTerrainClusters('rough', rockDensity / numRockFormations, 2, 6);
+        }
         
-        // 4. Muy pocos bosques (oasis)
-        this.placeTerrainClusters('woods', 0.02, 2, 4);
+        // 4. Mesetas (rough en elevación alta)
+        this.placeTerrainOnElevation('rough', 3, 0.6);
+        this.placeTerrainOnElevation('rough', 2, 0.3);
         
-        // 5. Posible pequeña fuente de agua
-        if (Math.random() < 0.3) {
-            this.placePond();
+        // 5. Oasis (agua + vegetación)
+        if (hasOasis) {
+            this.placeOasis();
+        }
+        
+        // 6. Wadi (cauce seco - rough en línea)
+        if (hasWadi) {
+            this.placeWadi();
+        }
+        
+        // 7. Ruinas antiguas
+        if (hasRuins) {
+            this.placeAncientRuins();
         }
         
         this.assignTiles();
@@ -249,24 +375,43 @@ class BattleTechMapGenerator {
      * Choke points, saltos importantes
      */
     generateMountains() {
+        // Parámetros aleatorios
+        const peakCount = 2 + Math.floor(Math.random() * 3);
+        const valleyWidth = 1 + Math.floor(Math.random() * 2);
+        const hasLake = Math.random() < 0.3;
+        const hasPass = Math.random() < 0.5;
+        const forestDensity = 0.1 + Math.random() * 0.15;
+        
         // 1. Base: rough (terreno montañoso)
         this.fillTerrain('rough', 1);
         
-        // 2. Elevación alta y variada
-        this.generateSmoothElevation(1, 4, 0.5);
+        // 2. Elevación alta y variada con múltiples picos
+        this.generateMountainousElevation(peakCount);
         
-        // 3. Picos (nivel 4)
-        this.placeTerrainOnElevation('rough', 4, 0.8);
+        // 3. Picos marcados (nivel 4)
+        this.placeTerrainOnElevation('rough', 4, 0.9);
+        this.placeTerrainOnElevation('rough', 3, 0.7);
         
         // 4. Valles (clear nivel 0-1)
-        this.carveValleys();
+        this.carveValleys(valleyWidth);
         
-        // 5. Bosques en laderas medias
-        this.placeTerrainOnElevation('woods', 1, 0.3);
-        this.placeTerrainOnElevation('woods', 2, 0.2);
+        // 5. Paso de montaña (si aplica)
+        if (hasPass) {
+            this.carveMountainPass();
+        }
         
-        // 6. Posible río en valle
-        if (Math.random() < 0.4) {
+        // 6. Bosques en laderas medias
+        this.placeTerrainOnElevation('woods', 1, forestDensity * 2);
+        this.placeTerrainOnElevation('woods', 2, forestDensity);
+        this.placeTerrainOnElevation('woods_heavy', 1, forestDensity * 0.5);
+        
+        // 7. Lago de montaña
+        if (hasLake) {
+            this.placeMountainLake();
+        }
+        
+        // 8. Posible río en valle
+        if (Math.random() < 0.35) {
             this.placeRiverInValley();
         }
         
@@ -459,20 +604,19 @@ class BattleTechMapGenerator {
         return false;
     }
     
-    placeRiver(depth) {
-        // Río más grueso para que encajen mejor los grupos de tiles
+    placeRiver(depth, width = 2, meanders = true) {
+        // Río con ancho y serpenteo configurables
         const vertical = Math.random() < 0.5;
         let current = vertical 
             ? { x: Math.floor(this.width / 2) + Math.floor(Math.random() * 4) - 2, y: 0 }
             : { x: 0, y: Math.floor(this.height / 2) + Math.floor(Math.random() * 4) - 2 };
         
         const end = vertical ? this.height : this.width;
-        
-        // Hacer el río más ancho (4-5 hexes) para que encajen grupos
-        const riverWidth = 2;
+        const riverWidth = width;
+        const meanderChance = meanders ? 0.35 : 0.15;
         
         for (let i = 0; i < end; i++) {
-            // Colocar agua en un área más amplia
+            // Colocar agua en un área según ancho
             for (let w = -riverWidth; w <= riverWidth; w++) {
                 for (let h = -1; h <= 1; h++) {
                     const wx = vertical ? current.x + w : current.x + h;
@@ -488,16 +632,16 @@ class BattleTechMapGenerator {
                 }
             }
             
-            // Avanzar con menos serpenteo para mantener coherencia
+            // Avanzar con serpenteo configurable
             if (vertical) {
                 current.y++;
-                if (Math.random() < 0.3) {
+                if (Math.random() < meanderChance) {
                     current.x += Math.floor(Math.random() * 3) - 1;
                     current.x = Math.max(2, Math.min(this.width - 3, current.x));
                 }
             } else {
                 current.x++;
-                if (Math.random() < 0.3) {
+                if (Math.random() < meanderChance) {
                     current.y += Math.floor(Math.random() * 3) - 1;
                     current.y = Math.max(2, Math.min(this.height - 3, current.y));
                 }
@@ -521,14 +665,14 @@ class BattleTechMapGenerator {
         }
     }
     
-    placeBuildingBlocks() {
+    placeBuildingBlocks(density = 0.7) {
         const blockSize = 3;
         const streetWidth = 2;
         
         for (let by = 1; by < this.height - blockSize; by += blockSize + streetWidth) {
             for (let bx = 1; bx < this.width - blockSize; bx += blockSize + streetWidth) {
-                // 70% de probabilidad de edificio
-                if (Math.random() < 0.7) {
+                // Probabilidad basada en densidad
+                if (Math.random() < density) {
                     this.placeBuilding(bx, by, blockSize);
                 }
             }
@@ -656,18 +800,18 @@ class BattleTechMapGenerator {
         }
     }
     
-    carveValleys() {
+    carveValleys(valleyWidth = 1) {
         // Crear un valle atravesando el mapa
         const startX = Math.floor(Math.random() * 3);
         let currentY = Math.floor(this.height / 2);
         
         for (let x = startX; x < this.width; x++) {
-            // Ancho del valle
-            for (let dy = -1; dy <= 1; dy++) {
+            // Ancho del valle configurable
+            for (let dy = -valleyWidth; dy <= valleyWidth; dy++) {
                 const y = currentY + dy;
                 if (this.isValid(x, y)) {
                     this.elevationMap[y][x] = Math.max(0, this.elevationMap[y][x] - 2);
-                    if (dy === 0) {
+                    if (Math.abs(dy) <= 1) {
                         this.terrainMap[y][x] = 'clear';
                     }
                 }
@@ -675,7 +819,7 @@ class BattleTechMapGenerator {
             
             // Serpentear
             currentY += Math.floor(Math.random() * 3) - 1;
-            currentY = Math.max(1, Math.min(this.height - 2, currentY));
+            currentY = Math.max(valleyWidth + 1, Math.min(this.height - valleyWidth - 2, currentY));
         }
     }
     
@@ -727,6 +871,376 @@ class BattleTechMapGenerator {
                         this.elevationMap[y][x] + Math.floor(distances[y][x] / 3)
                     );
                 }
+            }
+        }
+    }
+    
+    // ==========================================
+    // CARACTERÍSTICAS ESPECIALES
+    // ==========================================
+    
+    /**
+     * Añade núcleos de bosque denso dentro de bosques existentes
+     */
+    addDenseWoodsCores(probability) {
+        for (let y = 1; y < this.height - 1; y++) {
+            for (let x = 1; x < this.width - 1; x++) {
+                if (this.terrainMap[y][x] === 'woods') {
+                    // Contar vecinos que también son bosque
+                    const neighbors = this.getHexNeighbors(x, y);
+                    const woodsNeighbors = neighbors.filter(n => 
+                        this.isValid(n.x, n.y) && 
+                        (this.terrainMap[n.y][n.x] === 'woods' || this.terrainMap[n.y][n.x] === 'woods_heavy')
+                    ).length;
+                    
+                    // Si está rodeado de bosque, hacerlo denso
+                    if (woodsNeighbors >= 4 && Math.random() < probability) {
+                        this.terrainMap[y][x] = 'woods_heavy';
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Coloca un arroyo estrecho (1-2 hexes de ancho)
+     */
+    placeNarrowStream() {
+        const vertical = Math.random() < 0.5;
+        const startOffset = Math.floor(Math.random() * (vertical ? this.width : this.height) * 0.6) + 
+                           Math.floor((vertical ? this.width : this.height) * 0.2);
+        
+        let current = vertical 
+            ? { x: startOffset, y: 0 }
+            : { x: 0, y: startOffset };
+        
+        const end = vertical ? this.height : this.width;
+        
+        for (let i = 0; i < end; i++) {
+            if (this.isValid(current.x, current.y)) {
+                this.terrainMap[current.y][current.x] = 'water';
+                this.elevationMap[current.y][current.x] = 0;
+            }
+            
+            // Avanzar con serpenteo suave
+            if (vertical) {
+                current.y++;
+                if (Math.random() < 0.35) {
+                    current.x += Math.floor(Math.random() * 3) - 1;
+                    current.x = Math.max(0, Math.min(this.width - 1, current.x));
+                }
+            } else {
+                current.x++;
+                if (Math.random() < 0.35) {
+                    current.y += Math.floor(Math.random() * 3) - 1;
+                    current.y = Math.max(0, Math.min(this.height - 1, current.y));
+                }
+            }
+        }
+    }
+    
+    /**
+     * Coloca una estructura en ruinas
+     */
+    placeRuinedStructure() {
+        const cx = 2 + Math.floor(Math.random() * (this.width - 4));
+        const cy = 2 + Math.floor(Math.random() * (this.height - 4));
+        const size = 1 + Math.floor(Math.random() * 2);
+        
+        // Mezcla de urban (edificio) y rubble (escombros)
+        for (let dy = -size; dy <= size; dy++) {
+            for (let dx = -size; dx <= size; dx++) {
+                if (this.isValid(cx + dx, cy + dy) && this.terrainMap[cy + dy][cx + dx] === 'clear') {
+                    if (Math.random() < 0.4) {
+                        this.terrainMap[cy + dy][cx + dx] = 'urban';
+                        this.elevationMap[cy + dy][cx + dx] = 1;
+                    } else if (Math.random() < 0.6) {
+                        this.terrainMap[cy + dy][cx + dx] = 'rubble';
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Coloca un pequeño campamento
+     */
+    placeSmallCamp() {
+        const cx = 2 + Math.floor(Math.random() * (this.width - 4));
+        const cy = 2 + Math.floor(Math.random() * (this.height - 4));
+        
+        // Centro despejado
+        if (this.isValid(cx, cy)) {
+            this.terrainMap[cy][cx] = 'clear';
+        }
+        
+        // Algunas estructuras pequeñas alrededor
+        const neighbors = this.getHexNeighbors(cx, cy);
+        for (const n of neighbors) {
+            if (this.isValid(n.x, n.y) && Math.random() < 0.3) {
+                this.terrainMap[n.y][n.x] = 'urban';
+                this.elevationMap[n.y][n.x] = 1;
+            }
+        }
+    }
+    
+    /**
+     * Coloca una plaza central
+     */
+    placePlaza() {
+        const cx = Math.floor(this.width / 2);
+        const cy = Math.floor(this.height / 2);
+        const size = 2;
+        
+        for (let dy = -size; dy <= size; dy++) {
+            for (let dx = -size; dx <= size; dx++) {
+                if (this.isValid(cx + dx, cy + dy)) {
+                    this.terrainMap[cy + dy][cx + dx] = 'clear';
+                    this.elevationMap[cy + dy][cx + dx] = 0;
+                }
+            }
+        }
+    }
+    
+    /**
+     * Coloca una isla en medio del agua
+     */
+    placeIslandInWater() {
+        // Encontrar centro de masa del agua
+        let waterHexes = [];
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                if (this.terrainMap[y][x] === 'water') {
+                    waterHexes.push({x, y});
+                }
+            }
+        }
+        
+        if (waterHexes.length < 10) return;
+        
+        // Elegir un hex de agua aleatorio para la isla
+        const island = waterHexes[Math.floor(Math.random() * waterHexes.length)];
+        
+        // Convertir a clear con algo de vegetación
+        if (this.isValid(island.x, island.y)) {
+            this.terrainMap[island.y][island.x] = 'clear';
+            this.elevationMap[island.y][island.x] = 1;
+            
+            // Posible árbol en la isla
+            if (Math.random() < 0.5) {
+                this.terrainMap[island.y][island.x] = 'woods';
+            }
+        }
+    }
+    
+    /**
+     * Coloca un puente sobre el río
+     */
+    placeBridge() {
+        // Encontrar hexes de agua y colocar un par como vado/puente
+        for (let y = 2; y < this.height - 2; y++) {
+            for (let x = 2; x < this.width - 2; x++) {
+                if (this.terrainMap[y][x] === 'water') {
+                    // Convertir este y vecino a clear (puente)
+                    this.terrainMap[y][x] = 'clear';
+                    const neighbors = this.getHexNeighbors(x, y);
+                    for (const n of neighbors) {
+                        if (this.isValid(n.x, n.y) && this.terrainMap[n.y][n.x] === 'water') {
+                            this.terrainMap[n.y][n.x] = 'clear';
+                            return; // Solo un puente
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+    }
+    
+    /**
+     * Coloca hazards cerca de edificios (para ruinas con fuego)
+     */
+    placeHazardsNearBuildings(probability) {
+        for (let y = 0; y < this.height; y++) {
+            for (let x = 0; x < this.width; x++) {
+                if (this.terrainMap[y][x] === 'clear' || this.terrainMap[y][x] === 'rubble') {
+                    const neighbors = this.getHexNeighbors(x, y);
+                    const nearBuilding = neighbors.some(n => 
+                        this.isValid(n.x, n.y) && this.terrainMap[n.y][n.x] === 'urban'
+                    );
+                    
+                    if (nearBuilding && Math.random() < probability) {
+                        this.terrainMap[y][x] = 'hazards';
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Coloca un oasis (agua + vegetación)
+     */
+    placeOasis() {
+        const cx = 3 + Math.floor(Math.random() * (this.width - 6));
+        const cy = 3 + Math.floor(Math.random() * (this.height - 6));
+        
+        // Centro: agua
+        if (this.isValid(cx, cy)) {
+            this.terrainMap[cy][cx] = 'water';
+            this.elevationMap[cy][cx] = 0;
+        }
+        
+        // Anillo de vegetación
+        const neighbors = this.getHexNeighbors(cx, cy);
+        for (const n of neighbors) {
+            if (this.isValid(n.x, n.y)) {
+                this.terrainMap[n.y][n.x] = 'woods';
+            }
+        }
+        
+        // Segundo anillo: más vegetación dispersa
+        for (const n of neighbors) {
+            const outer = this.getHexNeighbors(n.x, n.y);
+            for (const o of outer) {
+                if (this.isValid(o.x, o.y) && Math.random() < 0.4) {
+                    if (this.terrainMap[o.y][o.x] === 'clear') {
+                        this.terrainMap[o.y][o.x] = 'woods';
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Coloca un wadi (cauce seco)
+     */
+    placeWadi() {
+        const vertical = Math.random() < 0.5;
+        let current = vertical 
+            ? { x: Math.floor(this.width / 2), y: 0 }
+            : { x: 0, y: Math.floor(this.height / 2) };
+        
+        const end = vertical ? this.height : this.width;
+        
+        for (let i = 0; i < end; i++) {
+            if (this.isValid(current.x, current.y)) {
+                this.terrainMap[current.y][current.x] = 'rough';
+                this.elevationMap[current.y][current.x] = Math.max(0, this.elevationMap[current.y][current.x] - 1);
+            }
+            
+            if (vertical) {
+                current.y++;
+                if (Math.random() < 0.4) current.x += Math.floor(Math.random() * 3) - 1;
+                current.x = Math.max(0, Math.min(this.width - 1, current.x));
+            } else {
+                current.x++;
+                if (Math.random() < 0.4) current.y += Math.floor(Math.random() * 3) - 1;
+                current.y = Math.max(0, Math.min(this.height - 1, current.y));
+            }
+        }
+    }
+    
+    /**
+     * Coloca ruinas antiguas
+     */
+    placeAncientRuins() {
+        const cx = 2 + Math.floor(Math.random() * (this.width - 4));
+        const cy = 2 + Math.floor(Math.random() * (this.height - 4));
+        
+        // Patrón de ruinas dispersas
+        for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+                if (this.isValid(cx + dx, cy + dy) && Math.random() < 0.3) {
+                    this.terrainMap[cy + dy][cx + dx] = 'rubble';
+                    this.elevationMap[cy + dy][cx + dx] = 1;
+                }
+            }
+        }
+    }
+    
+    /**
+     * Genera elevación con múltiples picos de montaña
+     */
+    generateMountainousElevation(peakCount) {
+        // Primero generar base suave
+        this.generateSmoothElevation(1, 3, 0.4);
+        
+        // Añadir picos
+        for (let p = 0; p < peakCount; p++) {
+            const px = 2 + Math.floor(Math.random() * (this.width - 4));
+            const py = 2 + Math.floor(Math.random() * (this.height - 4));
+            const peakSize = 2 + Math.floor(Math.random() * 3);
+            
+            for (let dy = -peakSize; dy <= peakSize; dy++) {
+                for (let dx = -peakSize; dx <= peakSize; dx++) {
+                    const dist = Math.abs(dx) + Math.abs(dy);
+                    if (dist <= peakSize && this.isValid(px + dx, py + dy)) {
+                        const elevation = 4 - Math.floor(dist / 2);
+                        this.elevationMap[py + dy][px + dx] = Math.max(
+                            this.elevationMap[py + dy][px + dx],
+                            elevation
+                        );
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Talla un paso de montaña
+     */
+    carveMountainPass() {
+        // Crear un paso de este a oeste o norte a sur
+        const horizontal = Math.random() < 0.5;
+        const passY = Math.floor(this.height / 2) + Math.floor(Math.random() * 4) - 2;
+        const passX = Math.floor(this.width / 2) + Math.floor(Math.random() * 4) - 2;
+        
+        if (horizontal) {
+            for (let x = 0; x < this.width; x++) {
+                const y = passY + Math.floor(Math.random() * 3) - 1;
+                if (this.isValid(x, y)) {
+                    this.elevationMap[y][x] = Math.min(1, this.elevationMap[y][x]);
+                    this.terrainMap[y][x] = 'clear';
+                }
+            }
+        } else {
+            for (let y = 0; y < this.height; y++) {
+                const x = passX + Math.floor(Math.random() * 3) - 1;
+                if (this.isValid(x, y)) {
+                    this.elevationMap[y][x] = Math.min(1, this.elevationMap[y][x]);
+                    this.terrainMap[y][x] = 'clear';
+                }
+            }
+        }
+    }
+    
+    /**
+     * Coloca un lago de montaña
+     */
+    placeMountainLake() {
+        // Buscar zona de baja elevación
+        let bestX = Math.floor(this.width / 2);
+        let bestY = Math.floor(this.height / 2);
+        let lowestElevation = 999;
+        
+        for (let y = 2; y < this.height - 2; y++) {
+            for (let x = 2; x < this.width - 2; x++) {
+                if (this.elevationMap[y][x] < lowestElevation) {
+                    lowestElevation = this.elevationMap[y][x];
+                    bestX = x;
+                    bestY = y;
+                }
+            }
+        }
+        
+        // Colocar lago pequeño
+        this.terrainMap[bestY][bestX] = 'water';
+        this.elevationMap[bestY][bestX] = 0;
+        
+        const neighbors = this.getHexNeighbors(bestX, bestY);
+        for (const n of neighbors) {
+            if (this.isValid(n.x, n.y) && Math.random() < 0.5) {
+                this.terrainMap[n.y][n.x] = 'water';
+                this.elevationMap[n.y][n.x] = 0;
             }
         }
     }
