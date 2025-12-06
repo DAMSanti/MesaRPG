@@ -592,21 +592,79 @@ class GameRenderer {
         const offsetX = (screenW - mapPixelWidth) / 2;
         const offsetY = (screenH - mapPixelHeight) / 2;
         
-        // Dibujar cada hex
+        // PASADA 1: Dibujar todas las tiles (sin bordes)
         for (let y = 0; y < mapData.height; y++) {
             for (let x = 0; x < mapData.width; x++) {
                 const cell = terrain[y]?.[x];
                 if (!cell) continue;
                 
-                // Calcular posición del hex (flat-top)
                 const hexOffsetY = (x % 2 === 1) ? hexHeight / 2 : 0;
                 const cx = offsetX + x * horizSpacing + hexRadius;
                 const cy = offsetY + hexOffsetY + y * vertSpacing + hexHeight / 2;
                 
-                // Dibujar el tile
                 this.drawHexTile(ctx, cx, cy, hexRadius, cell);
             }
         }
+        
+        // PASADA 2: Dibujar grid encima de todas las tiles
+        ctx.strokeStyle = 'rgba(60,60,60,0.4)';
+        ctx.lineWidth = 1;
+        for (let y = 0; y < mapData.height; y++) {
+            for (let x = 0; x < mapData.width; x++) {
+                const cell = terrain[y]?.[x];
+                if (!cell) continue;
+                
+                const hexOffsetY = (x % 2 === 1) ? hexHeight / 2 : 0;
+                const cx = offsetX + x * horizSpacing + hexRadius;
+                const cy = offsetY + hexOffsetY + y * vertSpacing + hexHeight / 2;
+                
+                // Dibujar borde hexagonal
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = (Math.PI / 3) * i;
+                    const hx = cx + hexRadius * Math.cos(angle);
+                    const hy = cy + hexRadius * Math.sin(angle);
+                    if (i === 0) ctx.moveTo(hx, hy);
+                    else ctx.lineTo(hx, hy);
+                }
+                ctx.closePath();
+                ctx.stroke();
+            }
+        }
+        
+        // PASADA 3: Dibujar elevaciones encima
+        for (let y = 0; y < mapData.height; y++) {
+            for (let x = 0; x < mapData.width; x++) {
+                const cell = terrain[y]?.[x];
+                if (!cell || !cell.elevation || cell.elevation <= 0) continue;
+                
+                const hexOffsetY = (x % 2 === 1) ? hexHeight / 2 : 0;
+                const cx = offsetX + x * horizSpacing + hexRadius;
+                const cy = offsetY + hexOffsetY + y * vertSpacing + hexHeight / 2;
+                
+                this.drawElevationBadge(ctx, cx, cy, hexRadius, cell.elevation);
+            }
+        }
+    }
+    
+    /**
+     * Dibuja indicador de elevación
+     */
+    drawElevationBadge(ctx, cx, cy, radius, elevation) {
+        const fontSize = Math.max(10, radius * 0.4);
+        const textX = cx + radius * 0.45;
+        const textY = cy - radius * 0.45;
+        
+        ctx.fillStyle = 'rgba(0,0,0,0.7)';
+        ctx.beginPath();
+        ctx.arc(textX, textY, fontSize * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+        
+        ctx.font = `bold ${fontSize}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#fff';
+        ctx.fillText(elevation.toString(), textX, textY);
     }
     
     /**
@@ -661,40 +719,6 @@ class GameRenderer {
             };
             ctx.fillStyle = colors[tileId] || colors.default;
             ctx.fill();
-        }
-        
-        // Sin bordes para integración seamless (las tiles se superponen ligeramente)
-        
-        // Grid sutil para referencia táctica
-        ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-            const angle = (Math.PI / 3) * i;
-            const hx = cx + radius * Math.cos(angle);
-            const hy = cy + radius * Math.sin(angle);
-            if (i === 0) ctx.moveTo(hx, hy);
-            else ctx.lineTo(hx, hy);
-        }
-        ctx.closePath();
-        ctx.strokeStyle = 'rgba(128,128,128,0.25)';
-        ctx.lineWidth = 0.5;
-        ctx.stroke();
-        
-        // Mostrar elevación si es mayor a 0
-        if (elevation > 0) {
-            const fontSize = Math.max(8, radius * 0.35);
-            const textX = cx + radius * 0.4;
-            const textY = cy - radius * 0.4;
-            
-            ctx.fillStyle = 'rgba(0,0,0,0.6)';
-            ctx.beginPath();
-            ctx.arc(textX, textY, fontSize * 0.6, 0, Math.PI * 2);
-            ctx.fill();
-            
-            ctx.font = `bold ${fontSize}px Arial`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillStyle = '#fff';
-            ctx.fillText(elevation.toString(), textX, textY);
         }
     }
     
