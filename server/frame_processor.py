@@ -246,6 +246,9 @@ class FrameProcessor:
                             "is_obb": False
                         })
         
+        # Eliminar detecciones duplicadas (NMS manual)
+        detections = self._remove_duplicates(detections)
+        
         # Actualizar tracker con detecciones
         tracked_objects = self.tracker.update(detections)
         self.last_tracks = [t.to_dict() for t in tracked_objects]
@@ -290,6 +293,47 @@ class FrameProcessor:
     def get_tracks(self) -> List[Dict]:
         """Retorna los tracks actuales"""
         return self.last_tracks
+    
+    def _remove_duplicates(self, detections: List[Dict], iou_threshold: float = 0.5) -> List[Dict]:
+        """
+        Elimina detecciones duplicadas usando IoU.
+        Mantiene la de mayor confianza.
+        """
+        if len(detections) <= 1:
+            return detections
+        
+        # Ordenar por confianza descendente
+        detections = sorted(detections, key=lambda x: x.get("confidence", 0), reverse=True)
+        
+        keep = []
+        for det in detections:
+            is_duplicate = False
+            b1 = det["bbox"]
+            
+            for kept in keep:
+                b2 = kept["bbox"]
+                
+                # Calcular IoU
+                x1 = max(b1["x1"], b2["x1"])
+                y1 = max(b1["y1"], b2["y1"])
+                x2 = min(b1["x2"], b2["x2"])
+                y2 = min(b1["y2"], b2["y2"])
+                
+                inter = max(0, x2 - x1) * max(0, y2 - y1)
+                area1 = (b1["x2"] - b1["x1"]) * (b1["y2"] - b1["y1"])
+                area2 = (b2["x2"] - b2["x1"]) * (b2["y2"] - b2["y1"])
+                union = area1 + area2 - inter
+                
+                iou = inter / union if union > 0 else 0
+                
+                if iou > iou_threshold:
+                    is_duplicate = True
+                    break
+            
+            if not is_duplicate:
+                keep.append(det)
+        
+        return keep
     
     def _get_color(self, id_or_cls: int) -> Tuple[int, int, int]:
         colors = [(0,255,0), (255,0,0), (0,0,255), (255,255,0), 
