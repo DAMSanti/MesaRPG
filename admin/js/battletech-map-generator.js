@@ -1345,6 +1345,7 @@ class BattleTechMapGenerator {
     /**
      * Rellena un cluster con grupos de tiles apropiados
      * Estrategia: intentar colocar grupos grandes primero, luego más pequeños
+     * Para terrain (clear), colocar múltiples grupos mega7 espaciados
      * 
      * IMPORTANTE: Los grupos de tiles NO se rotan porque cada tile tiene una
      * imagen específica diseñada para su posición relativa en el grupo.
@@ -1367,9 +1368,79 @@ class BattleTechMapGenerator {
         
         if (matchingGroups.length === 0) return;
         
-        // Estrategia: recorrer sistemáticamente todos los hexes del cluster
-        // e intentar colocar el grupo más grande posible en cada posición
+        // Para terrain (clear), usar estrategia especial: colocar mega7 en patrón de cuadrícula
+        if (cluster.category === 'terrain' && cluster.hexes.length > 20) {
+            this.fillTerrainWithMegaGroups(cluster, available, hexMap, matchingGroups);
+            return;
+        }
         
+        // Estrategia estándar para otros tipos de terreno
+        this.fillClusterStandard(cluster, available, hexMap, matchingGroups);
+    }
+    
+    /**
+     * Rellena terreno (clear) con grupos mega7 espaciados uniformemente
+     */
+    fillTerrainWithMegaGroups(cluster, available, hexMap, matchingGroups) {
+        // El grupo mega7 tiene 7 tiles en patrón hexagonal
+        // Queremos colocarlos espaciados cada ~4 hexes para cubrir más área
+        
+        const mega7Group = matchingGroups.find(([id, g]) => g.tiles.length === 7);
+        if (!mega7Group) {
+            this.fillClusterStandard(cluster, available, hexMap, matchingGroups);
+            return;
+        }
+        
+        const [groupId, group] = mega7Group;
+        
+        // Calcular posiciones de inicio para grid de grupos mega7
+        // Espaciado de 4 hexes en X y 3 en Y para que no se superpongan
+        const spacingX = 4;
+        const spacingY = 3;
+        
+        // Encontrar bounds del cluster
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const hex of cluster.hexes) {
+            minX = Math.min(minX, hex.x);
+            maxX = Math.max(maxX, hex.x);
+            minY = Math.min(minY, hex.y);
+            maxY = Math.max(maxY, hex.y);
+        }
+        
+        // Colocar grupos en patrón de cuadrícula con algo de variación
+        for (let y = minY; y <= maxY; y += spacingY) {
+            for (let x = minX; x <= maxX; x += spacingX) {
+                // Añadir variación para que no sea perfectamente regular
+                const varX = x + Math.floor(Math.random() * 2);
+                const varY = y + Math.floor(Math.random() * 2);
+                
+                if (this.canPlaceGroup(varX, varY, group, available)) {
+                    this.placeGroup(varX, varY, group, groupId, available, hexMap);
+                }
+            }
+        }
+        
+        // Intentar colocar más grupos en espacios que quedaron
+        // (segunda pasada para llenar huecos)
+        const sortedHexes = [...cluster.hexes].sort((a, b) => {
+            if (a.y !== b.y) return a.y - b.y;
+            return a.x - b.x;
+        });
+        
+        for (const hex of sortedHexes) {
+            const key = `${hex.x},${hex.y}`;
+            if (!available.has(key)) continue;
+            
+            if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
+                this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
+            }
+        }
+    }
+    
+    /**
+     * Relleno estándar para clusters (usado por bosques, agua, etc.)
+     */
+    fillClusterStandard(cluster, available, hexMap, matchingGroups) {
         // Ordenar hexes del cluster para procesamiento sistemático
         const sortedHexes = [...cluster.hexes].sort((a, b) => {
             if (a.y !== b.y) return a.y - b.y;
@@ -1381,14 +1452,9 @@ class BattleTechMapGenerator {
             if (!available.has(key)) continue; // Ya usado por otro grupo
             
             // Intentar colocar grupos de mayor a menor tamaño
-            let placed = false;
-            
             for (const [groupId, group] of matchingGroups) {
-                // Usar los offsets originales del grupo (sin rotación)
-                // Los tiles compuestos están diseñados para posiciones específicas
                 if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
                     this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
-                    placed = true;
                     break;
                 }
             }
