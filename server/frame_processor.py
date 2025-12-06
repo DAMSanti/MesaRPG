@@ -178,7 +178,9 @@ class FrameProcessor:
             return result
             
         except Exception as e:
-            print(f"Error procesando frame: {e}")
+            import traceback
+            print(f"❌ Error procesando frame: {type(e).__name__}: {e}")
+            traceback.print_exc()
             return frame_base64, []
     
     def _process_sync(self, frame_base64: str) -> Tuple[str, List[Dict]]:
