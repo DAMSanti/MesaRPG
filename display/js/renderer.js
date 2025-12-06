@@ -1139,6 +1139,141 @@ class GameRenderer {
         }
     }
     
+    // === Sistema de Miniaturas (desde cámara YOLO) ===
+    
+    updateMiniaturePositions(miniatures) {
+        /**
+         * Actualiza las posiciones de las miniaturas detectadas por la cámara.
+         * Cada miniatura tiene: id, center.x, center.y, orientation, confidence
+         * Las coordenadas vienen normalizadas respecto al tamaño del frame de la cámara.
+         */
+        
+        if (!this.miniatureTokens) {
+            this.miniatureTokens = {};
+        }
+        
+        const currentIds = new Set();
+        
+        miniatures.forEach(m => {
+            const id = m.id || m.marker_id;
+            currentIds.add(id);
+            
+            // Convertir coordenadas de cámara a coordenadas de pantalla
+            const screenPos = this.cameraToScreen(m.center || m);
+            
+            if (this.miniatureTokens[id]) {
+                // Actualizar posición existente con animación suave
+                this.updateMiniatureToken(id, screenPos, m.orientation);
+            } else {
+                // Crear nuevo token de miniatura
+                this.createMiniatureToken(id, screenPos, m.orientation);
+            }
+        });
+        
+        // Eliminar tokens que ya no están visibles
+        Object.keys(this.miniatureTokens).forEach(id => {
+            if (!currentIds.has(parseInt(id)) && !currentIds.has(id)) {
+                this.removeMiniatureToken(id);
+            }
+        });
+    }
+    
+    cameraToScreen(pos) {
+        /**
+         * Convierte coordenadas de la cámara a coordenadas de pantalla.
+         * Asume que la cámara cubre todo el display.
+         */
+        const canvasWidth = this.mapCanvas.width;
+        const canvasHeight = this.mapCanvas.height;
+        
+        // Las coordenadas vienen en píxeles del frame de la cámara
+        // Asumimos resolución de cámara de 1280x720 (ajustar si es diferente)
+        const cameraWidth = 1280;
+        const cameraHeight = 720;
+        
+        return {
+            x: (pos.x / cameraWidth) * canvasWidth,
+            y: (pos.y / cameraHeight) * canvasHeight
+        };
+    }
+    
+    createMiniatureToken(id, pos, orientation = 0) {
+        const token = document.createElement('div');
+        token.className = 'miniature-token';
+        token.id = `miniature-${id}`;
+        token.dataset.miniatureId = id;
+        
+        token.style.cssText = `
+            position: absolute;
+            left: ${pos.x}px;
+            top: ${pos.y}px;
+            width: 60px;
+            height: 60px;
+            transform: translate(-50%, -50%) rotate(${orientation}deg);
+            transition: left 0.1s ease-out, top 0.1s ease-out, transform 0.1s ease-out;
+            pointer-events: none;
+            z-index: 100;
+        `;
+        
+        token.innerHTML = `
+            <div class="mini-token-inner" style="
+                width: 100%;
+                height: 100%;
+                border-radius: 50%;
+                background: radial-gradient(circle at 30% 30%, #4a90d9, #1e3a5f);
+                border: 3px solid #ffd700;
+                box-shadow: 0 0 15px rgba(74, 144, 217, 0.6), 0 4px 8px rgba(0,0,0,0.4);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                font-size: 20px;
+                font-weight: bold;
+                color: white;
+                text-shadow: 1px 1px 2px black;
+            ">#${id}</div>
+            <div class="mini-direction" style="
+                position: absolute;
+                top: -15px;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 0;
+                height: 0;
+                border-left: 8px solid transparent;
+                border-right: 8px solid transparent;
+                border-bottom: 15px solid #ffd700;
+            "></div>
+        `;
+        
+        this.tokensContainer.appendChild(token);
+        this.miniatureTokens[id] = token;
+        
+        // Animación de entrada
+        token.style.animation = 'tokenAppear 0.3s ease-out';
+        
+        console.log(`🎯 Miniatura #${id} creada en (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)})`);
+    }
+    
+    updateMiniatureToken(id, pos, orientation = 0) {
+        const token = this.miniatureTokens[id];
+        if (!token) return;
+        
+        token.style.left = `${pos.x}px`;
+        token.style.top = `${pos.y}px`;
+        token.style.transform = `translate(-50%, -50%) rotate(${orientation}deg)`;
+    }
+    
+    removeMiniatureToken(id) {
+        const token = this.miniatureTokens[id];
+        if (token) {
+            token.style.animation = 'tokenDisappear 0.3s ease-out';
+            setTimeout(() => {
+                token.remove();
+            }, 300);
+            delete this.miniatureTokens[id];
+            console.log(`👋 Miniatura #${id} eliminada`);
+        }
+    }
+    
     toggleFullscreen() {
         if (document.fullscreenElement) {
             this.exitFullscreen();

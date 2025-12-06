@@ -490,15 +490,23 @@ class MesaRPGApp {
         // Guardar posiciones de miniaturas en el estado
         this.state.miniatures = {};
         miniatures.forEach(m => {
-            this.state.miniatures[m.marker_id] = {
-                id: m.marker_id,
+            // Soportar ambos formatos: tracks YOLO (id, center) y sistema anterior (marker_id, x, y)
+            const id = m.id || m.marker_id;
+            const x = m.center?.x ?? m.x;
+            const y = m.center?.y ?? m.y;
+            const rotation = m.orientation ?? m.rotation ?? 0;
+            
+            this.state.miniatures[id] = {
+                id: id,
                 playerId: m.player_id,
                 playerName: m.player_name,
                 characterName: m.character_name,
-                x: m.x,
-                y: m.y,
-                rotation: m.rotation,
-                isVisible: m.is_visible
+                x: x,
+                y: y,
+                center: { x, y },
+                rotation: rotation,
+                orientation: rotation,
+                isVisible: m.is_visible !== false
             };
         });
         

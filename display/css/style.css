@@ -134,6 +134,37 @@ html, body {
     }
 }
 
+@keyframes tokenDisappear {
+    from {
+        opacity: 1;
+        transform: translate(-50%, -50%) scale(1);
+    }
+    to {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.5);
+    }
+}
+
+/* === Tokens de Miniaturas (desde cámara) === */
+.miniature-token {
+    position: absolute;
+    pointer-events: none;
+    z-index: 100;
+}
+
+.miniature-token .mini-token-inner {
+    animation: miniPulse 2s ease-in-out infinite;
+}
+
+@keyframes miniPulse {
+    0%, 100% {
+        box-shadow: 0 0 15px rgba(74, 144, 217, 0.6), 0 4px 8px rgba(0,0,0,0.4);
+    }
+    50% {
+        box-shadow: 0 0 25px rgba(74, 144, 217, 0.9), 0 4px 12px rgba(0,0,0,0.5);
+    }
+}
+
 @keyframes touchPulse {
     0% {
         transform: translate(-50%, -50%) scale(0);
