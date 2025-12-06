@@ -646,10 +646,22 @@ class BattleTechMapGenerator {
             this.riverPath.push({ x: current.x, y: current.y });
             const key = `${current.x},${current.y}`;
             
-            // Calcular dirección de entrada y salida
-            const fromDir = prev ? this.getDirection(prev, current) : (vertical ? 'N' : 'W');
-            const toDir = this.getDirection(current, next);
-            this.riverDirections[key] = { from: fromDir, to: toDir };
+            // Calcular lado de entrada (desde dónde viene el agua) y lado de salida (hacia dónde va)
+            // fromDir: el lado por donde ENTRA el agua (opuesto de la dirección desde prev)
+            // toDir: el lado por donde SALE el agua (dirección hacia next)
+            let fromSide, toSide;
+            
+            if (prev) {
+                // getDirection(prev, current) nos da la dirección de prev a current
+                // pero queremos el lado del hex current por donde entra, que es el opuesto
+                const entryDir = this.getDirection(prev, current);
+                fromSide = this.oppositeDir(entryDir);
+            } else {
+                fromSide = vertical ? 'N' : 'NW';
+            }
+            
+            toSide = this.getDirection(current, next);
+            this.riverDirections[key] = { from: fromSide, to: toSide };
             
             // Marcar como río
             if (this.isValid(current.x, current.y)) {
@@ -664,20 +676,74 @@ class BattleTechMapGenerator {
     }
     
     /**
-     * Calcula la dirección entre dos hexes adyacentes
-     * Retorna: N, S, NE, SE, NW, SW
+     * Calcula el lado del hexágono por donde se conectan dos hexes adyacentes
+     * 
+     * Lados del hexágono (flat-top, sentido horario desde arriba):
+     *   0 = N (arriba)
+     *   1 = NE (arriba-derecha)
+     *   2 = SE (abajo-derecha)
+     *   3 = S (abajo)
+     *   4 = SW (abajo-izquierda)
+     *   5 = NW (arriba-izquierda)
+     * 
+     * En hex grid flat-top con offset en columnas impares:
+     * - Columna par:  vecinos son (-1,-1), (+1,-1), (-1,0), (+1,0), (-1,+1)NO, (+1,+1)NO... 
+     *   Corrección: los vecinos dependen de la paridad de x
      */
     getDirection(from, to) {
         const dx = to.x - from.x;
         const dy = to.y - from.y;
+        const isFromOdd = from.x % 2 === 1;
         
-        if (dx === 0 && dy < 0) return 'N';
-        if (dx === 0 && dy > 0) return 'S';
-        if (dx > 0 && dy <= 0) return 'NE';
-        if (dx > 0 && dy > 0) return 'SE';
-        if (dx < 0 && dy <= 0) return 'NW';
-        if (dx < 0 && dy > 0) return 'SW';
+        // Para hex flat-top con columnas impares desplazadas hacia abajo:
+        // Movimiento puro vertical (misma columna)
+        if (dx === 0) {
+            if (dy < 0) return 'N';  // Lado 0
+            if (dy > 0) return 'S';  // Lado 3
+        }
+        
+        // Movimiento hacia la derecha (dx > 0)
+        if (dx > 0) {
+            if (isFromOdd) {
+                // Desde columna impar: vecino derecho-arriba es (x+1, y), derecho-abajo es (x+1, y+1)
+                if (dy <= 0) return 'NE';  // Lado 1
+                if (dy > 0) return 'SE';   // Lado 2
+            } else {
+                // Desde columna par: vecino derecho-arriba es (x+1, y-1), derecho-abajo es (x+1, y)
+                if (dy < 0) return 'NE';   // Lado 1
+                if (dy >= 0) return 'SE';  // Lado 2
+            }
+        }
+        
+        // Movimiento hacia la izquierda (dx < 0)
+        if (dx < 0) {
+            if (isFromOdd) {
+                // Desde columna impar: vecino izq-arriba es (x-1, y), izq-abajo es (x-1, y+1)
+                if (dy <= 0) return 'NW';  // Lado 5
+                if (dy > 0) return 'SW';   // Lado 4
+            } else {
+                // Desde columna par: vecino izq-arriba es (x-1, y-1), izq-abajo es (x-1, y)
+                if (dy < 0) return 'NW';   // Lado 5
+                if (dy >= 0) return 'SW';  // Lado 4
+            }
+        }
+        
         return 'S'; // Default
+    }
+    
+    /**
+     * Devuelve la dirección opuesta (lado opuesto del hexágono)
+     */
+    oppositeDir(dir) {
+        const opposites = {
+            'N': 'S',
+            'S': 'N',
+            'NE': 'SW',
+            'SW': 'NE',
+            'SE': 'NW',
+            'NW': 'SE'
+        };
+        return opposites[dir] || 'N';
     }
     
     /**
