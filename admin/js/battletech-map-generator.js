@@ -1799,7 +1799,10 @@ class BattleTechMapGenerator {
         const key = `${x},${y}`;
         const dirs = this.riverDirections?.[key];
         
+        console.log(`getRiverTileForDirection(${x},${y}): riverDirections exists=${!!this.riverDirections}, dirs=${JSON.stringify(dirs)}`);
+        
         if (!dirs) {
+            console.log(`  -> No dirs found, returning bt_27`);
             return 'bt_27'; // Default: río vertical
         }
         
