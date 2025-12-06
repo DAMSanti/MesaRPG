@@ -855,7 +855,12 @@ function updateGameState(state) {
 function updateConnectionCounts(counts) {
     document.getElementById('display-count').textContent = counts.displays || counts.display || 0;
     document.getElementById('mobile-count').textContent = counts.mobiles || counts.mobile || 0;
-    document.getElementById('camera-status').textContent = counts.camera ? '✓' : '❌';
+    
+    // Estado de cámara con colores
+    const cameraStatus = document.getElementById('camera-status');
+    const cameraConnected = counts.camera || counts.cameras > 0;
+    cameraStatus.textContent = cameraConnected ? '✓' : '❌';
+    cameraStatus.style.color = cameraConnected ? '#4caf50' : '#f44336';
     
     // Update player list
     const playerList = document.getElementById('player-list');

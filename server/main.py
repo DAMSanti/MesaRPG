@@ -327,7 +327,12 @@ async def get_state():
 @app.get("/api/connections")
 async def get_connections():
     """Obtiene estadísticas de conexiones"""
-    return ws_manager.get_stats()
+    stats = ws_manager.get_stats()
+    # Añadir estado de cámara real (no solo conexiones WS)
+    cam_status = camera_manager.get_status()
+    stats["camera"] = cam_status.get("state") in ["connected", "streaming"]
+    stats["camera_state"] = cam_status.get("state", "disconnected")
+    return stats
 
 @app.get("/api/characters")
 async def get_characters():

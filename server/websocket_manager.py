@@ -219,6 +219,7 @@ class ConnectionManager:
             "displays": len(self.display_connections),
             "mobiles": len(self.mobile_connections),
             "cameras": len(self._camera_connections),
+            "camera": len(self._camera_connections) > 0,  # Boolean para compatibilidad
             "admins": len(self.admin_connections),
             "mobile_players": list(self.mobile_connections.keys())
         }
