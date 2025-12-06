@@ -314,35 +314,49 @@ class CameraPanel {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws/camera`;
             
+            console.log('🔌 Conectando a:', wsUrl);
             this.cameraWs = new WebSocket(wsUrl);
             
+            let resolved = false;
+            
             this.cameraWs.onopen = () => {
-                console.log('✅ WebSocket conectado');
+                console.log('✅ WebSocket cámara conectado');
+                resolved = true;
                 resolve();
             };
             
             this.cameraWs.onmessage = (event) => {
-                this.handleServerMessage(JSON.parse(event.data));
+                try {
+                    this.handleServerMessage(JSON.parse(event.data));
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                }
             };
             
             this.cameraWs.onerror = (error) => {
                 console.error('WebSocket error:', error);
-                reject(new Error('Error conectando al servidor'));
+                if (!resolved) {
+                    reject(new Error('Error conectando al servidor'));
+                }
             };
             
-            this.cameraWs.onclose = () => {
-                console.log('WebSocket cerrado');
+            this.cameraWs.onclose = (event) => {
+                console.log('WebSocket cerrado:', event.code, event.reason);
                 if (this.isConnected) {
                     this.handleDisconnect();
                 }
+                if (!resolved) {
+                    reject(new Error(`WebSocket cerrado: ${event.code}`));
+                }
             };
             
-            // Timeout
+            // Timeout más largo (15 segundos)
             setTimeout(() => {
-                if (this.cameraWs && this.cameraWs.readyState !== WebSocket.OPEN) {
-                    reject(new Error('Timeout conectando'));
+                if (!resolved && this.cameraWs && this.cameraWs.readyState !== WebSocket.OPEN) {
+                    this.cameraWs.close();
+                    reject(new Error('Timeout conectando (15s)'));
                 }
-            }, 5000);
+            }, 15000);
         });
     }
     

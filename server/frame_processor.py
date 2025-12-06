@@ -1,6 +1,7 @@
 """
 MesaRPG - Procesador de Frames con YOLO (Optimizado)
 Procesa frames de forma no bloqueante con skip de frames
+Incluye tracking SORT y detección de orientación
 """
 
 import base64
@@ -9,6 +10,12 @@ from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import threading
 import time
+
+# Importar tracker local
+try:
+    from .tracker import SORTTracker, OrientationDetector, TrackedObject
+except ImportError:
+    from tracker import SORTTracker, OrientationDetector, TrackedObject
 
 # Intentar importar dependencias opcionales
 try:
@@ -27,7 +34,7 @@ except ImportError:
 
 
 class FrameProcessor:
-    """Procesa frames de video con YOLO de forma optimizada"""
+    """Procesa frames de video con YOLO + SORT tracking + orientación"""
     
     def __init__(self, model_path: str = "yolov8n.pt", confidence: float = 0.4):
         self.model = None
@@ -36,6 +43,15 @@ class FrameProcessor:
         self.is_ready = False
         self.last_detections: List[Dict] = []
         self.last_processed_frame: Optional[str] = None
+        self.last_tracks: List[Dict] = []
+        
+        # Tracker SORT para seguimiento continuo
+        self.tracker = SORTTracker(max_age=15, min_hits=2, iou_threshold=0.3)
+        self.orientation_detector = OrientationDetector()
+        
+        # Configurar marcador rojo como indicador frontal
+        # HSV para rojo: (0-10, 100-255, 100-255) y (170-180, 100-255, 100-255)
+        self.orientation_detector.set_front_marker_color((0, 100, 100), (10, 255, 255))
         
         # Para procesamiento no bloqueante
         self._processing = False
@@ -45,6 +61,7 @@ class FrameProcessor:
         self._skip_count = 0
         self._last_fps_time = time.time()
         self._fps = 0
+        self._last_frame = None  # Guardar último frame para tracking sin YOLO
         
         # Cargar modelo si está disponible
         if YOLO_AVAILABLE:
@@ -160,7 +177,7 @@ class FrameProcessor:
                 conf=self.confidence,
                 verbose=False,
                 imgsz=320,
-                max_det=10  # Limitar detecciones
+                max_det=20  # Limitar detecciones
             )
             
             for result in results:
@@ -174,34 +191,64 @@ class FrameProcessor:
                     cls = int(box.cls[0])
                     name = result.names[cls]
                     
+                    # Detectar orientación
+                    orientation = self.orientation_detector.detect_orientation(
+                        frame, (x1, y1, x2, y2)
+                    )
+                    
                     detections.append({
                         "class": name,
                         "confidence": round(conf, 2),
                         "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-                        "center": {"x": (x1+x2)//2, "y": (y1+y2)//2}
+                        "center": {"x": (x1+x2)//2, "y": (y1+y2)//2},
+                        "orientation": round(orientation, 1)
                     })
-                    
-                    # Dibujar
-                    color = self._get_color(cls)
-                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                    label = f"{name} {conf:.0%}"
-                    cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
-        else:
+        
+        # Actualizar tracker con detecciones
+        tracked_objects = self.tracker.update(detections)
+        self.last_tracks = [t.to_dict() for t in tracked_objects]
+        
+        # Dibujar tracks en el frame
+        for track in tracked_objects:
+            x1, y1, x2, y2 = track.bbox
+            color = self._get_color(track.id)
+            
+            # Bounding box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            
+            # ID y clase
+            label = f"#{track.id} {track.class_name}"
+            cv2.putText(frame, label, (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+            
+            # Flecha de orientación
+            cx, cy = track.center
+            angle_rad = np.radians(90 - track.orientation)  # Convertir a coordenadas de imagen
+            arrow_len = min(x2-x1, y2-y1) // 2
+            end_x = int(cx + arrow_len * np.cos(angle_rad))
+            end_y = int(cy - arrow_len * np.sin(angle_rad))
+            cv2.arrowedLine(frame, (cx, cy), (end_x, end_y), (0, 255, 255), 2, tipLength=0.3)
+        
+        if not self.is_ready:
             cv2.putText(frame, "YOLO no disponible", (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         
         # Overlay info
-        info = f"Det: {len(detections)} | YOLO: {self._fps:.1f} fps"
+        info = f"Tracks: {len(tracked_objects)} | YOLO: {self._fps:.1f} fps"
         cv2.putText(frame, info, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
         
         # Codificar
         _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
-        return base64.b64encode(buf).decode('utf-8'), detections
+        return base64.b64encode(buf).decode('utf-8'), self.last_tracks
     
-    def _get_color(self, cls: int) -> Tuple[int, int, int]:
+    def get_tracks(self) -> List[Dict]:
+        """Retorna los tracks actuales"""
+        return self.last_tracks
+    
+    def _get_color(self, id_or_cls: int) -> Tuple[int, int, int]:
         colors = [(0,255,0), (255,0,0), (0,0,255), (255,255,0), 
-                  (255,0,255), (0,255,255), (128,0,255), (255,128,0)]
-        return colors[cls % len(colors)]
+                  (255,0,255), (0,255,255), (128,0,255), (255,128,0),
+                  (0,128,255), (255,0,128), (128,255,0), (0,255,128)]
+        return colors[id_or_cls % len(colors)]
     
     def get_status(self) -> Dict:
         return {
@@ -210,6 +257,7 @@ class FrameProcessor:
             "model_ready": self.is_ready,
             "fps": round(self._fps, 1),
             "frames_received": self._frame_count,
+            "active_tracks": len(self.last_tracks),
             "last_detection_count": len(self.last_detections)
         }
 

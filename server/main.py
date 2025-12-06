@@ -1048,16 +1048,16 @@ async def websocket_camera(websocket: WebSocket):
                 frame_base64 = payload.get("frame")
                 
                 if frame_base64:
-                    # Procesar frame con YOLO
-                    processed_frame, detections = frame_processor.process_frame(frame_base64)
+                    # Procesar frame con YOLO + tracking
+                    processed_frame, tracks = frame_processor.process_frame(frame_base64)
                     
-                    # Devolver frame procesado con bounding boxes
+                    # Devolver frame procesado con tracks
                     await send_json_safe(websocket, {
                         "type": "processed_frame",
                         "payload": {
                             "frame": processed_frame,
-                            "detections": len(detections),
-                            "objects": detections,
+                            "detections": len(tracks),
+                            "tracks": tracks,  # Objetos trackeados con ID persistente
                             "timestamp": payload.get("timestamp")
                         }
                     })
@@ -1180,8 +1180,8 @@ async def stream_ip_camera(websocket: WebSocket, ip_url: str):
             _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
             frame_base64 = base64.b64encode(buffer).decode('utf-8')
             
-            # Procesar con YOLO
-            processed_frame, detections = frame_processor.process_frame(frame_base64)
+            # Procesar con YOLO + tracking
+            processed_frame, tracks = frame_processor.process_frame(frame_base64)
             
             # Enviar al admin
             try:
@@ -1189,8 +1189,8 @@ async def stream_ip_camera(websocket: WebSocket, ip_url: str):
                     "type": "processed_frame",
                     "payload": {
                         "frame": processed_frame,
-                        "detections": len(detections),
-                        "objects": detections,
+                        "detections": len(tracks),
+                        "tracks": tracks,
                         "timestamp": int(time.time() * 1000)
                     }
                 })
