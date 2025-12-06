@@ -247,7 +247,7 @@ class FrameProcessor:
                         
                         conf = float(box.conf[0])
                         cls = int(box.cls[0])
-                        name = result.names[cls]
+                        name = result.names.get(cls, "miniature")
                         
                         # Centro del bbox
                         cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
@@ -284,7 +284,7 @@ class FrameProcessor:
                         
                         conf = float(result.obb.conf[i])
                         cls = int(result.obb.cls[i])
-                        name = result.names[cls]
+                        name = result.names.get(cls, "miniature")
                         
                         x1 = int(cx - bw/2)
                         y1 = int(cy - bh/2)
@@ -307,7 +307,7 @@ class FrameProcessor:
                         x1, y1, x2, y2 = int(x1/scale), int(y1/scale), int(x2/scale), int(y2/scale)
                         conf = float(box.conf[0])
                         cls = int(box.cls[0])
-                        name = result.names[cls]
+                        name = result.names.get(cls, "miniature")
                         
                         # Sin OBB, orientación es 0
                         detections.append({
