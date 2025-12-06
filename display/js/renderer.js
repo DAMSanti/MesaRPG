@@ -620,13 +620,14 @@ class GameRenderer {
         const img = this.tileImages?.[tileId];
         
         if (img && img.complete && img.naturalWidth > 0) {
-            // Clip hexagonal
+            // Clip hexagonal con overlap para seamless
             ctx.save();
+            const clipRadius = radius * 1.03; // 3% más grande para overlap
             ctx.beginPath();
             for (let i = 0; i < 6; i++) {
                 const angle = (Math.PI / 3) * i;
-                const hx = cx + radius * Math.cos(angle);
-                const hy = cy + radius * Math.sin(angle);
+                const hx = cx + clipRadius * Math.cos(angle);
+                const hy = cy + clipRadius * Math.sin(angle);
                 if (i === 0) ctx.moveTo(hx, hy);
                 else ctx.lineTo(hx, hy);
             }
@@ -662,19 +663,7 @@ class GameRenderer {
             ctx.fill();
         }
         
-        // Borde del hex
-        ctx.beginPath();
-        for (let i = 0; i < 6; i++) {
-            const angle = (Math.PI / 3) * i;
-            const hx = cx + radius * Math.cos(angle);
-            const hy = cy + radius * Math.sin(angle);
-            if (i === 0) ctx.moveTo(hx, hy);
-            else ctx.lineTo(hx, hy);
-        }
-        ctx.closePath();
-        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-        ctx.lineWidth = 1;
-        ctx.stroke();
+        // Sin bordes para integración seamless (las tiles se superponen ligeramente)
         
         // Mostrar elevación si es mayor a 0
         if (elevation > 0) {
