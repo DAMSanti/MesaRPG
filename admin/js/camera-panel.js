@@ -1,439 +1,395 @@
 /**
- * MesaRPG - Camera Panel Controller
- * Gestiona la interfaz del panel de cámara en el admin
- * Recibe streaming de video del detector local vía WebSocket
+ * MesaRPG - Camera Panel (Simplificado)
+ * 
+ * Flujo:
+ * 1. Usuario selecciona cámara del navegador
+ * 2. Se envía el video al servidor via WebSocket
+ * 3. Servidor procesa con YOLO y devuelve frames con detecciones
+ * 4. Se muestra el feed procesado con bounding boxes
  */
 
 class CameraPanel {
     constructor() {
-        this.status = null;
-        this.selectedMiniature = null;
-        this.isStreaming = false;
+        this.localStream = null;
         this.cameraWs = null;
-        this.reconnectInterval = null;
-        this.lastFrameTime = 0;
-        this.frameCount = 0;
-        this.detectedMarkers = [];
-        this.detectorConnected = false;
+        this.isConnected = false;
+        this.isStreaming = false;
+        this.frameInterval = null;
+        this.fps = 10; // Frames por segundo a enviar
+        this.quality = 0.7; // Calidad JPEG
         
-        // Referencias a elementos DOM
-        this.elements = {
-            cameraFeed: document.getElementById('camera-feed'),
-            cameraOverlay: document.getElementById('camera-overlay'),
-            cameraState: document.getElementById('camera-state'),
-            cameraResolution: document.getElementById('camera-resolution'),
-            cameraFps: document.getElementById('camera-fps'),
-            cameraCalibrated: document.getElementById('camera-calibrated'),
-            miniaturesCount: document.getElementById('miniatures-count'),
-            miniaturesGrid: document.getElementById('miniatures-grid'),
-            unassignedMiniatures: document.getElementById('unassigned-miniatures'),
-            currentAssignments: document.getElementById('current-assignments'),
-            gameAreaWidth: document.getElementById('game-area-width'),
-            gameAreaHeight: document.getElementById('game-area-height'),
-            assignPlayerId: document.getElementById('assign-player-id'),
-            assignPlayerName: document.getElementById('assign-player-name'),
-            assignCharacterName: document.getElementById('assign-character-name'),
-            
-            // Botones
-            btnStartStream: document.getElementById('btn-start-stream'),
-            btnStopStream: document.getElementById('btn-stop-stream'),
-            btnAssignMiniature: document.getElementById('btn-assign-miniature')
-        };
+        // Elementos DOM
+        this.elements = {};
         
         this.init();
     }
     
     async init() {
+        // Esperar a que el DOM esté listo
+        await this.waitForElements();
+        
         console.log('📷 Inicializando panel de cámara...');
         
-        // Mostrar instrucciones iniciales
-        this.showDetectorDisconnected();
+        // Cargar cámaras disponibles
+        await this.loadCameras();
         
-        // Conectar al WebSocket de cámara para recibir stream
-        this.connectCameraWebSocket();
-        
-        // Configurar actualización periódica de FPS
-        setInterval(() => this.updateFpsDisplay(), 1000);
+        // Configurar eventos
+        this.setupEvents();
     }
     
-    // === WebSocket para recibir frames del detector ===
+    async waitForElements() {
+        // Esperar a que existan los elementos
+        return new Promise(resolve => {
+            const check = () => {
+                this.elements = {
+                    cameraSelect: document.getElementById('camera-select'),
+                    cameraFeed: document.getElementById('camera-feed'),
+                    cameraOverlay: document.getElementById('camera-overlay'),
+                    localVideo: document.getElementById('local-video'),
+                    cameraState: document.getElementById('camera-state'),
+                    cameraFps: document.getElementById('camera-fps'),
+                    detectionsCount: document.getElementById('detections-count'),
+                    btnConnect: document.getElementById('btn-connect-camera'),
+                    btnDisconnect: document.getElementById('btn-disconnect-camera'),
+                    qualitySlider: document.getElementById('stream-quality'),
+                    fpsSlider: document.getElementById('stream-fps')
+                };
+                
+                if (this.elements.cameraSelect) {
+                    resolve();
+                } else {
+                    setTimeout(check, 100);
+                }
+            };
+            check();
+        });
+    }
     
-    connectCameraWebSocket() {
-        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/camera`;
+    setupEvents() {
+        // Botón conectar
+        if (this.elements.btnConnect) {
+            this.elements.btnConnect.onclick = () => this.connect();
+        }
         
-        console.log(`📡 Conectando a WebSocket de cámara: ${wsUrl}`);
+        // Botón desconectar
+        if (this.elements.btnDisconnect) {
+            this.elements.btnDisconnect.onclick = () => this.disconnect();
+        }
+        
+        // Slider de calidad
+        if (this.elements.qualitySlider) {
+            this.elements.qualitySlider.oninput = (e) => {
+                this.quality = e.target.value / 100;
+            };
+        }
+        
+        // Slider de FPS
+        if (this.elements.fpsSlider) {
+            this.elements.fpsSlider.oninput = (e) => {
+                this.fps = parseInt(e.target.value);
+                if (this.isStreaming) {
+                    this.restartFrameCapture();
+                }
+            };
+        }
+    }
+    
+    async loadCameras() {
+        try {
+            // Pedir permiso primero para obtener la lista de dispositivos
+            await navigator.mediaDevices.getUserMedia({ video: true })
+                .then(stream => stream.getTracks().forEach(t => t.stop()));
+            
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const cameras = devices.filter(d => d.kind === 'videoinput');
+            
+            if (!this.elements.cameraSelect) return;
+            
+            this.elements.cameraSelect.innerHTML = '';
+            
+            if (cameras.length === 0) {
+                this.elements.cameraSelect.innerHTML = '<option value="">No se encontraron cámaras</option>';
+                return;
+            }
+            
+            cameras.forEach((camera, index) => {
+                const option = document.createElement('option');
+                option.value = camera.deviceId;
+                option.textContent = camera.label || `Cámara ${index + 1}`;
+                this.elements.cameraSelect.appendChild(option);
+            });
+            
+            console.log(`📷 ${cameras.length} cámara(s) encontrada(s)`);
+            
+        } catch (error) {
+            console.error('Error accediendo a cámaras:', error);
+            if (this.elements.cameraSelect) {
+                this.elements.cameraSelect.innerHTML = '<option value="">Error: Permite acceso a la cámara</option>';
+            }
+        }
+    }
+    
+    async connect() {
+        const deviceId = this.elements.cameraSelect?.value;
+        
+        if (!deviceId) {
+            this.showNotification('Selecciona una cámara primero', 'warning');
+            return;
+        }
+        
+        this.updateState('connecting');
         
         try {
+            // 1. Obtener stream de la cámara local
+            this.localStream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    deviceId: { exact: deviceId },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                }
+            });
+            
+            // Mostrar preview local (oculto, solo para captura)
+            if (this.elements.localVideo) {
+                this.elements.localVideo.srcObject = this.localStream;
+            }
+            
+            // 2. Conectar WebSocket al servidor
+            await this.connectWebSocket();
+            
+            // 3. Iniciar envío de frames
+            this.startFrameCapture();
+            
+            this.isConnected = true;
+            this.updateState('streaming');
+            this.showNotification('📷 Cámara conectada y transmitiendo', 'success');
+            
+        } catch (error) {
+            console.error('Error conectando cámara:', error);
+            this.showNotification(`Error: ${error.message}`, 'error');
+            this.updateState('error');
+        }
+    }
+    
+    async connectWebSocket() {
+        return new Promise((resolve, reject) => {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/camera`;
+            
             this.cameraWs = new WebSocket(wsUrl);
             
             this.cameraWs.onopen = () => {
-                console.log('✅ WebSocket de cámara conectado');
-                this.stopReconnect();
+                console.log('✅ WebSocket conectado');
+                resolve();
             };
             
             this.cameraWs.onmessage = (event) => {
-                this.handleCameraMessage(JSON.parse(event.data));
-            };
-            
-            this.cameraWs.onclose = () => {
-                console.log('🔴 WebSocket de cámara desconectado');
-                this.startReconnect();
+                this.handleServerMessage(JSON.parse(event.data));
             };
             
             this.cameraWs.onerror = (error) => {
-                console.error('❌ Error en WebSocket de cámara:', error);
+                console.error('WebSocket error:', error);
+                reject(new Error('Error conectando al servidor'));
             };
-        } catch (error) {
-            console.error('❌ Error conectando WebSocket:', error);
-            this.startReconnect();
-        }
-    }
-    
-    startReconnect() {
-        if (!this.reconnectInterval) {
-            this.reconnectInterval = setInterval(() => {
-                console.log('🔄 Reconectando WebSocket de cámara...');
-                this.connectCameraWebSocket();
+            
+            this.cameraWs.onclose = () => {
+                console.log('WebSocket cerrado');
+                if (this.isConnected) {
+                    this.handleDisconnect();
+                }
+            };
+            
+            // Timeout
+            setTimeout(() => {
+                if (this.cameraWs.readyState !== WebSocket.OPEN) {
+                    reject(new Error('Timeout conectando'));
+                }
             }, 5000);
-        }
+        });
     }
     
-    stopReconnect() {
-        if (this.reconnectInterval) {
-            clearInterval(this.reconnectInterval);
-            this.reconnectInterval = null;
-        }
-    }
-    
-    handleCameraMessage(message) {
-        const type = message.type;
-        const payload = message.payload || {};
+    handleServerMessage(message) {
+        const { type, payload } = message;
         
         switch (type) {
-            case 'camera_frame':
-                this.handleFrame(payload);
+            case 'processed_frame':
+                // Frame procesado por YOLO con bounding boxes
+                if (payload.frame && this.elements.cameraFeed) {
+                    this.elements.cameraFeed.src = `data:image/jpeg;base64,${payload.frame}`;
+                    this.elements.cameraFeed.style.display = 'block';
+                    if (this.elements.cameraOverlay) {
+                        this.elements.cameraOverlay.style.display = 'none';
+                    }
+                }
+                
+                // Actualizar conteo de detecciones
+                if (this.elements.detectionsCount && payload.detections !== undefined) {
+                    this.elements.detectionsCount.textContent = payload.detections;
+                }
+                break;
+            
+            case 'detection_update':
+                // Actualización de detecciones (posiciones de miniaturas, etc.)
+                if (payload.objects) {
+                    this.handleDetections(payload.objects);
+                }
                 break;
             
             case 'camera_status':
-                this.updateStatusDisplay(payload);
-                break;
-            
-            case 'detector_disconnected':
-                this.detectorConnected = false;
-                this.isStreaming = false;
-                this.showDetectorDisconnected();
-                this.showNotification('📷 Detector desconectado', 'warning');
+                // Estado de la cámara
                 break;
             
             case 'pong':
-                // Keep-alive response
+                // Keep-alive
                 break;
-            
-            default:
-                console.log('Mensaje de cámara no manejado:', type, payload);
+                
+            case 'error':
+                this.showNotification(`Error del servidor: ${payload.message}`, 'error');
+                break;
         }
     }
     
-    handleFrame(payload) {
-        const frame = payload.frame;
-        const markers = payload.markers || [];
+    handleDetections(objects) {
+        // Aquí se pueden procesar las detecciones para tracking
+        console.log(`Detectados: ${objects.length} objetos`);
+    }
+    
+    startFrameCapture() {
+        this.isStreaming = true;
         
-        if (frame) {
-            // Mostrar el frame
-            this.elements.cameraFeed.src = `data:image/jpeg;base64,${frame}`;
-            this.elements.cameraOverlay.style.display = 'none';
-            this.elements.cameraFeed.style.display = 'block';
-            
-            // Actualizar FPS
-            this.frameCount++;
-            this.lastFrameTime = Date.now();
-            
-            // El detector está conectado
-            if (!this.detectorConnected) {
-                this.detectorConnected = true;
-                this.isStreaming = true;
-                this.updateStatusDisplay({ state: 'streaming' });
-                this.showNotification('📷 Detector conectado - Recibiendo stream', 'success');
+        // Crear canvas para capturar frames
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const video = this.elements.localVideo;
+        
+        if (!video) return;
+        
+        // Esperar a que el video esté listo
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+        };
+        
+        const captureFrame = () => {
+            if (!this.isStreaming || !this.cameraWs || this.cameraWs.readyState !== WebSocket.OPEN) {
+                return;
             }
-        }
+            
+            try {
+                // Dibujar frame en canvas
+                ctx.drawImage(video, 0, 0);
+                
+                // Convertir a JPEG base64
+                const frameData = canvas.toDataURL('image/jpeg', this.quality);
+                const base64 = frameData.split(',')[1];
+                
+                // Enviar al servidor
+                this.cameraWs.send(JSON.stringify({
+                    type: 'frame',
+                    payload: {
+                        frame: base64,
+                        width: canvas.width,
+                        height: canvas.height,
+                        timestamp: Date.now()
+                    }
+                }));
+                
+            } catch (error) {
+                console.error('Error capturando frame:', error);
+            }
+        };
         
-        // Actualizar marcadores detectados
-        this.detectedMarkers = markers;
-        this.updateMarkersDisplay(markers);
+        // Capturar frames según FPS configurado
+        this.frameInterval = setInterval(captureFrame, 1000 / this.fps);
     }
     
-    updateMarkersDisplay(markers) {
-        // Actualizar conteo
-        if (this.elements.miniaturesCount) {
-            this.elements.miniaturesCount.textContent = `${markers.length} detectadas`;
+    restartFrameCapture() {
+        if (this.frameInterval) {
+            clearInterval(this.frameInterval);
         }
-        
-        // Actualizar grid de miniaturas con los marcadores del frame
-        if (markers.length > 0) {
-            this.renderDetectedMarkers(markers);
-        }
-    }
-    
-    renderDetectedMarkers(markers) {
-        if (!this.elements.miniaturesGrid) return;
-        
-        if (markers.length === 0) {
-            this.elements.miniaturesGrid.innerHTML = '<p class="empty-state">No hay miniaturas detectadas</p>';
-            return;
-        }
-        
-        this.elements.miniaturesGrid.innerHTML = markers.map(m => `
-            <div class="miniature-card visible">
-                <div class="miniature-icon">🎭</div>
-                <div class="miniature-info">
-                    <span class="miniature-id">ID: ${m.id}</span>
-                    <span class="miniature-position">📍 (${m.x?.toFixed(0) || 0}, ${m.y?.toFixed(0) || 0})</span>
-                    <span class="miniature-visibility">👁️ Visible</span>
-                </div>
-            </div>
-        `).join('');
-        
-        // Actualizar miniaturas sin asignar para selección
-        if (this.elements.unassignedMiniatures) {
-            this.elements.unassignedMiniatures.innerHTML = markers.map(m => `
-                <div class="miniature-select-card ${this.selectedMiniature === m.id ? 'selected' : ''}" 
-                     onclick="cameraPanel.selectMiniature(${m.id})">
-                    <span class="miniature-id">🎭 ID: ${m.id}</span>
-                    <span class="miniature-position">📍 (${m.x?.toFixed(0) || 0}, ${m.y?.toFixed(0) || 0})</span>
-                </div>
-            `).join('');
+        if (this.isStreaming) {
+            this.startFrameCapture();
         }
     }
     
-    showDetectorDisconnected() {
-        if (!this.elements.cameraOverlay) return;
+    stopFrameCapture() {
+        this.isStreaming = false;
+        if (this.frameInterval) {
+            clearInterval(this.frameInterval);
+            this.frameInterval = null;
+        }
+    }
+    
+    disconnect() {
+        this.handleDisconnect();
+        this.showNotification('📷 Cámara desconectada', 'info');
+    }
+    
+    handleDisconnect() {
+        this.isConnected = false;
         
-        this.elements.cameraOverlay.innerHTML = `
-            <div class="camera-remote-info">
-                <h3>📷 Esperando conexión del detector...</h3>
-                <p style="margin-top: 15px;">
-                    El sistema de cámara funciona ejecutando un detector en tu PC local
-                    que envía el video al servidor.
-                </p>
-                <div style="margin-top: 20px; text-align: left;">
-                    <p><strong>Pasos:</strong></p>
-                    <ol style="margin-left: 20px; margin-top: 10px;">
-                        <li>Asegúrate de tener OpenCV instalado:<br>
-                            <code>pip install opencv-python opencv-contrib-python</code>
-                        </li>
-                        <li style="margin-top: 10px;">Ejecuta el detector con la cámara conectada:<br>
-                            <code>python vision/detector.py --server wss://${window.location.host}/ws/camera</code>
-                        </li>
-                    </ol>
-                </div>
-                <p style="margin-top: 20px; font-size: 0.9em; color: #888;">
-                    💡 El detector capturará video, detectará marcadores ArUco 
-                    y enviará todo al servidor para visualizarlo aquí.
-                </p>
-            </div>
-        `;
-        this.elements.cameraOverlay.style.display = 'flex';
+        // Detener captura
+        this.stopFrameCapture();
+        
+        // Cerrar WebSocket
+        if (this.cameraWs) {
+            this.cameraWs.close();
+            this.cameraWs = null;
+        }
+        
+        // Detener stream local
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => track.stop());
+            this.localStream = null;
+        }
+        
+        // Limpiar video
+        if (this.elements.localVideo) {
+            this.elements.localVideo.srcObject = null;
+        }
+        
+        // Mostrar overlay
         if (this.elements.cameraFeed) {
             this.elements.cameraFeed.style.display = 'none';
         }
-        
-        this.updateStatusDisplay({ state: 'disconnected' });
-    }
-    
-    updateFpsDisplay() {
-        if (this.elements.cameraFps) {
-            if (this.detectorConnected) {
-                this.elements.cameraFps.textContent = `${this.frameCount}`;
-            } else {
-                this.elements.cameraFps.textContent = '-';
-            }
-            this.frameCount = 0;
-        }
-    }
-    
-    // === Control del detector remoto ===
-    
-    setDetectorQuality(quality) {
-        if (this.cameraWs && this.cameraWs.readyState === WebSocket.OPEN) {
-            this.cameraWs.send(JSON.stringify({
-                type: 'set_detector_quality',
-                payload: { quality: parseInt(quality) }
-            }));
-            this.showNotification(`Calidad ajustada a ${quality}%`, 'info');
-        }
-    }
-    
-    setDetectorFps(fps) {
-        if (this.cameraWs && this.cameraWs.readyState === WebSocket.OPEN) {
-            this.cameraWs.send(JSON.stringify({
-                type: 'set_detector_fps',
-                payload: { fps: parseInt(fps) }
-            }));
-            this.showNotification(`FPS ajustado a ${fps}`, 'info');
-        }
-    }
-    
-    toggleDetectorStream(enabled) {
-        if (this.cameraWs && this.cameraWs.readyState === WebSocket.OPEN) {
-            this.cameraWs.send(JSON.stringify({
-                type: 'toggle_detector_stream',
-                payload: { enabled: enabled }
-            }));
-            this.showNotification(enabled ? 'Stream activado' : 'Stream pausado', 'info');
-        }
-    }
-    
-    // === Estado ===
-    
-    updateStatusDisplay(status) {
-        // Determinar el estado real basado en detector remoto
-        let displayState = status?.state || 'disconnected';
-        
-        if (this.detectorConnected) {
-            displayState = 'streaming';
+        if (this.elements.cameraOverlay) {
+            this.elements.cameraOverlay.style.display = 'flex';
+            this.elements.cameraOverlay.innerHTML = `
+                <div class="camera-placeholder">
+                    <p>📷 Selecciona una cámara y haz clic en Conectar</p>
+                </div>
+            `;
         }
         
-        // Actualizar indicadores de estado
+        this.updateState('disconnected');
+    }
+    
+    updateState(state) {
+        // Actualizar texto de estado
         if (this.elements.cameraState) {
-            this.elements.cameraState.textContent = this.getStateText(displayState);
-            this.elements.cameraState.className = `status-value camera-state ${displayState}`;
-        }
-        
-        if (this.elements.cameraResolution) {
-            this.elements.cameraResolution.textContent = this.detectorConnected ? '640x480' : '-';
-        }
-        
-        if (this.elements.cameraCalibrated) {
-            this.elements.cameraCalibrated.textContent = 
-                status?.calibration?.is_calibrated ? '✅' : '❌';
+            const states = {
+                'disconnected': '🔴 Desconectado',
+                'connecting': '🟡 Conectando...',
+                'streaming': '🟢 Transmitiendo',
+                'error': '🔴 Error'
+            };
+            this.elements.cameraState.textContent = states[state] || state;
+            this.elements.cameraState.className = `status-value camera-state ${state}`;
         }
         
         // Actualizar botones
-        if (this.elements.btnStartStream) {
-            this.elements.btnStartStream.disabled = this.isStreaming;
-            this.elements.btnStartStream.onclick = () => this.toggleDetectorStream(true);
+        if (this.elements.btnConnect) {
+            this.elements.btnConnect.disabled = state === 'streaming' || state === 'connecting';
         }
-        if (this.elements.btnStopStream) {
-            this.elements.btnStopStream.disabled = !this.isStreaming;
-            this.elements.btnStopStream.onclick = () => this.toggleDetectorStream(false);
+        if (this.elements.btnDisconnect) {
+            this.elements.btnDisconnect.disabled = state !== 'streaming';
         }
-    }
-    
-    getStateText(state) {
-        const states = {
-            'disconnected': '🔴 Esperando detector',
-            'connecting': '🟡 Conectando...',
-            'connected': '🟢 Conectado',
-            'streaming': '📹 Recibiendo stream',
-            'calibrating': '📐 Calibrando',
-            'error': '🔴 Error'
-        };
-        return states[state] || state;
-    }
-    
-    // === Calibración ===
-    
-    async simpleCalibration() {
-        const width = parseInt(this.elements.gameAreaWidth?.value) || 1920;
-        const height = parseInt(this.elements.gameAreaHeight?.value) || 1080;
-        
-        try {
-            const response = await fetch('/api/camera/calibration/simple', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ game_width: width, game_height: height })
-            });
-            
-            if (response.ok) {
-                this.showNotification('📐 Calibración aplicada', 'success');
-            } else {
-                const error = await response.json();
-                this.showNotification(`Error: ${error.detail}`, 'error');
-            }
-        } catch (error) {
-            console.error('Error en calibración:', error);
+        if (this.elements.cameraSelect) {
+            this.elements.cameraSelect.disabled = state === 'streaming' || state === 'connecting';
         }
     }
-    
-    // === Miniaturas ===
-    
-    selectMiniature(markerId) {
-        this.selectedMiniature = markerId;
-        if (this.elements.btnAssignMiniature) {
-            this.elements.btnAssignMiniature.disabled = false;
-        }
-        
-        // Actualizar selección visual
-        document.querySelectorAll('.miniature-select-card').forEach(card => {
-            card.classList.remove('selected');
-        });
-        document.querySelector(`.miniature-select-card[onclick*="${markerId}"]`)?.classList.add('selected');
-    }
-    
-    async assignMiniature() {
-        if (!this.selectedMiniature) {
-            this.showNotification('Selecciona una miniatura primero', 'warning');
-            return;
-        }
-        
-        const playerId = this.elements.assignPlayerId?.value.trim();
-        const playerName = this.elements.assignPlayerName?.value.trim();
-        const characterName = this.elements.assignCharacterName?.value.trim() || null;
-        
-        if (!playerId || !playerName) {
-            this.showNotification('ID y nombre del jugador son requeridos', 'warning');
-            return;
-        }
-        
-        try {
-            const response = await fetch('/api/camera/miniatures/assign', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    marker_id: this.selectedMiniature,
-                    player_id: playerId,
-                    player_name: playerName,
-                    character_name: characterName
-                })
-            });
-            
-            if (response.ok) {
-                this.showNotification(`✅ Miniatura asignada a ${playerName}`, 'success');
-                this.selectedMiniature = null;
-                if (this.elements.btnAssignMiniature) {
-                    this.elements.btnAssignMiniature.disabled = true;
-                }
-                if (this.elements.assignPlayerId) this.elements.assignPlayerId.value = '';
-                if (this.elements.assignPlayerName) this.elements.assignPlayerName.value = '';
-                if (this.elements.assignCharacterName) this.elements.assignCharacterName.value = '';
-            } else {
-                const error = await response.json();
-                this.showNotification(`Error: ${error.detail}`, 'error');
-            }
-        } catch (error) {
-            console.error('Error asignando miniatura:', error);
-        }
-    }
-    
-    async unassignMiniature(markerId) {
-        try {
-            const response = await fetch(`/api/camera/miniatures/unassign/${markerId}`, {
-                method: 'POST'
-            });
-            
-            if (response.ok) {
-                this.showNotification('Miniatura desasignada', 'info');
-            }
-        } catch (error) {
-            console.error('Error desasignando miniatura:', error);
-        }
-    }
-    
-    // === Utilidades ===
     
     showNotification(message, type = 'info') {
-        // Usar el sistema de notificaciones existente si está disponible
         if (typeof addLog === 'function') {
             addLog(message);
         }
@@ -445,8 +401,5 @@ class CameraPanel {
 let cameraPanel;
 
 document.addEventListener('DOMContentLoaded', () => {
-    // Inicializar cuando se cargue la página
-    setTimeout(() => {
-        cameraPanel = new CameraPanel();
-    }, 100);
+    cameraPanel = new CameraPanel();
 });
