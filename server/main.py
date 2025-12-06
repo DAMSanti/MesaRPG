@@ -1019,8 +1019,54 @@ async def websocket_camera(websocket: WebSocket):
     
     El admin envía frames de su cámara local, el servidor los procesa
     con YOLO y devuelve los frames con bounding boxes.
+    
+    Usa un buffer de frame único para evitar acumulación - siempre procesa
+    el frame más reciente, descartando frames antiguos.
     """
     await ws_manager.connect_camera(websocket)
+    
+    # Buffer de frame único - siempre guarda el más reciente
+    frame_buffer = {"frame": None, "timestamp": None}
+    processing_lock = asyncio.Lock()
+    is_processing = False
+    
+    async def process_latest_frame():
+        """Procesa el frame más reciente del buffer"""
+        nonlocal is_processing
+        
+        async with processing_lock:
+            if frame_buffer["frame"] is None:
+                return
+            
+            is_processing = True
+            frame_base64 = frame_buffer["frame"]
+            timestamp = frame_buffer["timestamp"]
+            # Limpiar buffer inmediatamente
+            frame_buffer["frame"] = None
+            frame_buffer["timestamp"] = None
+        
+        try:
+            # Procesar en thread pool para no bloquear
+            loop = asyncio.get_event_loop()
+            processed_frame, tracks = await loop.run_in_executor(
+                None, frame_processor.process_frame, frame_base64
+            )
+            
+            # Enviar resultado
+            await send_json_safe(websocket, {
+                "type": "processed_frame",
+                "payload": {
+                    "frame": processed_frame,
+                    "detections": len(tracks),
+                    "tracks": tracks,
+                    "timestamp": timestamp
+                }
+            })
+        finally:
+            is_processing = False
+            # Si llegó otro frame mientras procesábamos, procesarlo
+            if frame_buffer["frame"] is not None:
+                asyncio.create_task(process_latest_frame())
     
     try:
         # Enviar estado inicial
@@ -1048,19 +1094,13 @@ async def websocket_camera(websocket: WebSocket):
                 frame_base64 = payload.get("frame")
                 
                 if frame_base64:
-                    # Procesar frame con YOLO + tracking
-                    processed_frame, tracks = frame_processor.process_frame(frame_base64)
+                    # Guardar en buffer (sobrescribe cualquier frame anterior no procesado)
+                    frame_buffer["frame"] = frame_base64
+                    frame_buffer["timestamp"] = payload.get("timestamp")
                     
-                    # Devolver frame procesado con tracks
-                    await send_json_safe(websocket, {
-                        "type": "processed_frame",
-                        "payload": {
-                            "frame": processed_frame,
-                            "detections": len(tracks),
-                            "tracks": tracks,  # Objetos trackeados con ID persistente
-                            "timestamp": payload.get("timestamp")
-                        }
-                    })
+                    # Si no estamos procesando, iniciar procesamiento
+                    if not is_processing:
+                        asyncio.create_task(process_latest_frame())
             
             # Comandos de control
             elif msg_type == "camera_control":

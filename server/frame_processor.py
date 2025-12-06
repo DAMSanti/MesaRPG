@@ -8,7 +8,6 @@ import base64
 import numpy as np
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
-import threading
 import time
 
 # Importar tracker local
@@ -53,15 +52,11 @@ class FrameProcessor:
         # HSV para rojo: (0-10, 100-255, 100-255) y (170-180, 100-255, 100-255)
         self.orientation_detector.set_front_marker_color((0, 100, 100), (10, 255, 255))
         
-        # Para procesamiento no bloqueante
-        self._processing = False
-        self._lock = threading.Lock()
+        # Para estadísticas
         self._frame_count = 0
         self._process_count = 0
-        self._skip_count = 0
         self._last_fps_time = time.time()
         self._fps = 0
-        self._last_frame = None  # Guardar último frame para tracking sin YOLO
         
         # Cargar modelo si está disponible
         if YOLO_AVAILABLE:
@@ -102,46 +97,31 @@ class FrameProcessor:
     
     def process_frame(self, frame_base64: str) -> Tuple[str, List[Dict]]:
         """
-        Procesa un frame. Si ya está procesando, devuelve el último resultado.
-        Esto evita acumular frames y mantiene el sistema responsive.
+        Procesa un frame con YOLO + tracking.
+        El skip de frames se maneja ahora en el servidor (main.py) con buffer único.
         """
         self._frame_count += 1
-        
-        # Si ya estamos procesando, devolver último resultado (skip frame)
-        with self._lock:
-            if self._processing:
-                self._skip_count += 1
-                if self.last_processed_frame:
-                    return self.last_processed_frame, self.last_detections
-                return frame_base64, []
-            self._processing = True
         
         try:
             result = self._process_sync(frame_base64)
             
-            with self._lock:
-                self.last_processed_frame = result[0]
-                self.last_detections = result[1]
-                self._process_count += 1
-                
-                # Calcular FPS
-                now = time.time()
-                elapsed = now - self._last_fps_time
-                if elapsed >= 2.0:
-                    self._fps = self._process_count / elapsed
-                    print(f"📊 YOLO: {self._fps:.1f} FPS, {self._skip_count} frames saltados")
-                    self._process_count = 0
-                    self._skip_count = 0
-                    self._last_fps_time = now
-                
-                self._processing = False
+            self.last_processed_frame = result[0]
+            self.last_detections = result[1]
+            self._process_count += 1
+            
+            # Calcular FPS
+            now = time.time()
+            elapsed = now - self._last_fps_time
+            if elapsed >= 2.0:
+                self._fps = self._process_count / elapsed
+                print(f"📊 YOLO: {self._fps:.1f} FPS procesados")
+                self._process_count = 0
+                self._last_fps_time = now
             
             return result
             
         except Exception as e:
-            print(f"Error: {e}")
-            with self._lock:
-                self._processing = False
+            print(f"Error procesando frame: {e}")
             return frame_base64, []
     
     def _process_sync(self, frame_base64: str) -> Tuple[str, List[Dict]]:
