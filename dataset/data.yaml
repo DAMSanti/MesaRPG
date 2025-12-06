@@ -1,0 +1,7 @@
+# Dataset para detección de miniaturas con orientación
+path: G:\mesa\MesaRPG\dataset
+train: images/train
+val: images/val
+
+names:
+  0: miniatura

@@ -40,6 +40,7 @@ class FrameProcessor:
         self.confidence = confidence
         self.model_path = model_path
         self.is_ready = False
+        self.is_obb_model = False
         self.last_detections: List[Dict] = []
         self.last_processed_frame: Optional[str] = None
         self.last_tracks: List[Dict] = []
@@ -63,18 +64,15 @@ class FrameProcessor:
             self._load_model()
     
     def _load_model(self):
-        """Carga el modelo YOLO - preferir modelos ligeros"""
+        """Carga el modelo YOLO - preferir modelo OBB de miniaturas"""
         try:
-            # Preferir modelos más ligeros primero
+            # Prioridad: modelo OBB personalizado para miniaturas
             paths_to_try = [
-                # Modelo nano (más rápido, ~6MB)
+                # Modelo OBB entrenado para miniaturas (PRIORIDAD)
+                Path(__file__).parent.parent / "miniatures_obb.pt",
+                # Modelo nano genérico (fallback)
                 Path(__file__).parent.parent / "yolov8n.pt",
                 Path("yolov8n.pt"),
-                # Modelo small (~22MB)  
-                Path(__file__).parent.parent / "yolov8s.pt",
-                # Modelos más pesados
-                Path(__file__).parent.parent / "yolov8m.pt",
-                Path(__file__).parent.parent / "yolov8x.pt",
             ]
             
             for path in paths_to_try:
@@ -82,18 +80,21 @@ class FrameProcessor:
                     print(f"📦 Cargando modelo YOLO: {path.name}")
                     self.model = YOLO(str(path))
                     self.is_ready = True
-                    print(f"✅ Modelo {path.name} cargado")
+                    self.is_obb_model = "obb" in path.name.lower()
+                    print(f"✅ Modelo {path.name} cargado {'(OBB)' if self.is_obb_model else ''}")
                     return
             
             # Descargar nano si no hay ninguno
             print(f"⚠️ Descargando YOLOv8n (modelo ligero)...")
             self.model = YOLO("yolov8n.pt")
             self.is_ready = True
+            self.is_obb_model = False
             print(f"✅ YOLOv8n listo")
                 
         except Exception as e:
             print(f"❌ Error cargando YOLO: {e}")
             self.is_ready = False
+            self.is_obb_model = False
     
     def process_frame(self, frame_base64: str) -> Tuple[str, List[Dict]]:
         """
@@ -125,7 +126,7 @@ class FrameProcessor:
             return frame_base64, []
     
     def _process_sync(self, frame_base64: str) -> Tuple[str, List[Dict]]:
-        """Procesamiento síncrono del frame"""
+        """Procesamiento síncrono del frame - soporta OBB y detección normal"""
         if not CV2_AVAILABLE:
             return frame_base64, []
         
@@ -142,7 +143,7 @@ class FrameProcessor:
         
         if self.is_ready and self.model:
             # Reducir tamaño para procesamiento rápido
-            max_size = 320  # Muy pequeño = muy rápido
+            max_size = 416  # Un poco más grande para OBB
             scale = min(max_size / w, max_size / h, 1.0)
             
             if scale < 1:
@@ -151,38 +152,70 @@ class FrameProcessor:
                 small = frame
                 scale = 1.0
             
-            # Inferencia rápida
+            # Inferencia
             results = self.model(
                 small,
                 conf=self.confidence,
                 verbose=False,
-                imgsz=320,
-                max_det=20  # Limitar detecciones
+                imgsz=416,
+                max_det=20
             )
             
             for result in results:
-                if result.boxes is None:
-                    continue
-                for box in result.boxes:
-                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                    # Escalar de vuelta
-                    x1, y1, x2, y2 = int(x1/scale), int(y1/scale), int(x2/scale), int(y2/scale)
-                    conf = float(box.conf[0])
-                    cls = int(box.cls[0])
-                    name = result.names[cls]
-                    
-                    # Detectar orientación
-                    orientation = self.orientation_detector.detect_orientation(
-                        frame, (x1, y1, x2, y2)
-                    )
-                    
-                    detections.append({
-                        "class": name,
-                        "confidence": round(conf, 2),
-                        "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-                        "center": {"x": (x1+x2)//2, "y": (y1+y2)//2},
-                        "orientation": round(orientation, 1)
-                    })
+                # Procesar OBB (Oriented Bounding Boxes)
+                if hasattr(result, 'obb') and result.obb is not None and len(result.obb):
+                    for i in range(len(result.obb)):
+                        # OBB tiene: x, y, w, h, rotation (en radianes)
+                        xywhr = result.obb.xywhr[i].cpu().numpy()
+                        cx, cy, bw, bh, rotation = xywhr
+                        
+                        # Escalar de vuelta
+                        cx, cy, bw, bh = cx/scale, cy/scale, bw/scale, bh/scale
+                        
+                        # Convertir rotación a grados (0-360)
+                        angle_deg = float(rotation) * 180 / np.pi
+                        
+                        conf = float(result.obb.conf[i])
+                        cls = int(result.obb.cls[i])
+                        name = result.names[cls]
+                        
+                        # Calcular bounding box axis-aligned para el tracker
+                        x1 = int(cx - bw/2)
+                        y1 = int(cy - bh/2)
+                        x2 = int(cx + bw/2)
+                        y2 = int(cy + bh/2)
+                        
+                        detections.append({
+                            "class": name,
+                            "confidence": round(conf, 2),
+                            "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                            "center": {"x": int(cx), "y": int(cy)},
+                            "orientation": round(angle_deg, 1),
+                            "size": {"w": int(bw), "h": int(bh)},
+                            "is_obb": True
+                        })
+                
+                # Fallback: detección normal (boxes)
+                elif hasattr(result, 'boxes') and result.boxes is not None:
+                    for box in result.boxes:
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        x1, y1, x2, y2 = int(x1/scale), int(y1/scale), int(x2/scale), int(y2/scale)
+                        conf = float(box.conf[0])
+                        cls = int(box.cls[0])
+                        name = result.names[cls]
+                        
+                        orientation = self.orientation_detector.detect_orientation(
+                            frame, (x1, y1, x2, y2)
+                        )
+                        
+                        detections.append({
+                            "class": name,
+                            "confidence": round(conf, 2),
+                            "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                            "center": {"x": (x1+x2)//2, "y": (y1+y2)//2},
+                            "orientation": round(orientation, 1),
+                            "is_obb": False
+                        })
         
         # Actualizar tracker con detecciones
         tracked_objects = self.tracker.update(detections)
