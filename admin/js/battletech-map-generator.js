@@ -1076,7 +1076,12 @@ class BattleTechMapGenerator {
      * Coloca un arroyo estrecho (1-2 hexes de ancho)
      */
     placeNarrowStream() {
+        // Usar el mismo sistema que placeRiver para tener direcciones correctas
         const vertical = Math.random() < 0.5;
+        this.riverDirection = vertical ? 'vertical' : 'horizontal';
+        this.riverPath = this.riverPath || [];
+        this.riverDirections = this.riverDirections || {};
+        
         const startOffset = Math.floor(Math.random() * (vertical ? this.width : this.height) * 0.6) + 
                            Math.floor((vertical ? this.width : this.height) * 0.2);
         
@@ -1084,28 +1089,79 @@ class BattleTechMapGenerator {
             ? { x: startOffset, y: 0 }
             : { x: 0, y: startOffset };
         
-        const end = vertical ? this.height : this.width;
+        let prev = null;
+        const meanderChance = 0.2;
+        const maxIterations = this.width + this.height + 10;
         
-        for (let i = 0; i < end; i++) {
-            if (this.isValid(current.x, current.y)) {
-                this.terrainMap[current.y][current.x] = 'water_river';
-                this.elevationMap[current.y][current.x] = 0;
-            }
+        for (let i = 0; i < maxIterations; i++) {
+            if (!this.isValid(current.x, current.y)) break;
+            if (vertical && current.y >= this.height - 1) break;
+            if (!vertical && current.x >= this.width - 1) break;
             
-            // Avanzar con serpenteo suave
+            // Obtener vecinos válidos
+            const neighbors = this.getHexNeighbors(current.x, current.y);
+            let next;
+            
             if (vertical) {
-                current.y++;
-                if (Math.random() < 0.35) {
-                    current.x += Math.floor(Math.random() * 3) - 1;
-                    current.x = Math.max(0, Math.min(this.width - 1, current.x));
+                const southNeighbor = neighbors[3];
+                const seNeighbor = neighbors[5];
+                const swNeighbor = neighbors[1];
+                
+                if (Math.random() < meanderChance && this.isValid(seNeighbor.x, seNeighbor.y)) {
+                    next = seNeighbor;
+                } else if (Math.random() < meanderChance && this.isValid(swNeighbor.x, swNeighbor.y)) {
+                    next = swNeighbor;
+                } else {
+                    next = southNeighbor;
                 }
             } else {
-                current.x++;
-                if (Math.random() < 0.35) {
-                    current.y += Math.floor(Math.random() * 3) - 1;
-                    current.y = Math.max(0, Math.min(this.height - 1, current.y));
+                const neNeighbor = neighbors[4];
+                const seNeighbor = neighbors[5];
+                
+                if (Math.random() < meanderChance && this.isValid(seNeighbor.x, seNeighbor.y)) {
+                    next = seNeighbor;
+                } else {
+                    next = neNeighbor;
                 }
             }
+            
+            if (!this.isValid(next.x, next.y)) {
+                next = { x: current.x + (vertical ? 0 : 1), y: current.y + (vertical ? 1 : 0) };
+            }
+            
+            // Guardar posición y dirección
+            this.riverPath.push({ x: current.x, y: current.y });
+            const key = `${current.x},${current.y}`;
+            
+            let fromSide, toSide;
+            if (prev) {
+                const entryDir = this.getDirection(prev, current);
+                fromSide = this.oppositeDir(entryDir);
+            } else {
+                fromSide = vertical ? 'N' : 'SW';
+            }
+            
+            toSide = this.getDirection(current, next);
+            this.riverDirections[key] = { from: fromSide, to: toSide };
+            
+            // Marcar como río
+            this.terrainMap[current.y][current.x] = 'water_river';
+            this.elevationMap[current.y][current.x] = 0;
+            
+            prev = { ...current };
+            current = next;
+        }
+        
+        // Marcar último hex
+        if (this.isValid(current.x, current.y)) {
+            this.riverPath.push({ x: current.x, y: current.y });
+            const key = `${current.x},${current.y}`;
+            const entryDir = prev ? this.getDirection(prev, current) : (vertical ? 'N' : 'SW');
+            const fromSide = prev ? this.oppositeDir(entryDir) : (vertical ? 'N' : 'SW');
+            const toSide = vertical ? 'S' : 'NE';
+            this.riverDirections[key] = { from: fromSide, to: toSide };
+            this.terrainMap[current.y][current.x] = 'water_river';
+            this.elevationMap[current.y][current.x] = 0;
         }
     }
     
