@@ -622,10 +622,18 @@ class BattleTechMapGenerator {
         // Generar path del río con meandros suaves
         let current = { x: startX, y: startY };
         let prev = null;
-        const end = vertical ? this.height : this.width;
         const meanderChance = meanders ? 0.2 : 0.05;
         
-        for (let i = 0; i < end; i++) {
+        // Continuar hasta salir del mapa
+        const maxIterations = this.width + this.height + 10; // Seguridad contra bucles infinitos
+        for (let i = 0; i < maxIterations; i++) {
+            // Verificar si seguimos dentro del mapa
+            if (!this.isValid(current.x, current.y)) break;
+            
+            // Verificar si llegamos al borde destino
+            if (vertical && current.y >= this.height - 1) break;
+            if (!vertical && current.x >= this.width - 1) break;
+            
             // Obtener vecinos válidos en la dirección principal
             const neighbors = this.getHexNeighbors(current.x, current.y);
             let next;
@@ -689,6 +697,20 @@ class BattleTechMapGenerator {
             // Avanzar
             prev = { ...current };
             current = next;
+        }
+        
+        // Marcar el último hex del río (en el borde)
+        if (this.isValid(current.x, current.y)) {
+            this.riverPath.push({ x: current.x, y: current.y });
+            const key = `${current.x},${current.y}`;
+            
+            const entryDir = prev ? this.getDirection(prev, current) : (vertical ? 'N' : 'SW');
+            const fromSide = prev ? this.oppositeDir(entryDir) : (vertical ? 'N' : 'SW');
+            const toSide = vertical ? 'S' : 'NE';  // Sale por el borde
+            
+            this.riverDirections[key] = { from: fromSide, to: toSide };
+            this.terrainMap[current.y][current.x] = 'water_river';
+            this.elevationMap[current.y][current.x] = 0;
         }
     }
     
