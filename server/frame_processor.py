@@ -210,8 +210,8 @@ class FrameProcessor:
             model_type += "+OV"
         
         if self.is_ready and self.model:
-            # OpenVINO requiere 640, PyTorch puede usar 320 para más velocidad
-            infer_size = 640 if self.using_openvino else 320
+            # Usar 320 para todos (modelo OpenVINO ahora exportado a 320)
+            infer_size = 320
             max_size = infer_size
             scale = min(max_size / w, max_size / h, 1.0)
             
@@ -221,15 +221,20 @@ class FrameProcessor:
                 small = frame
                 scale = 1.0
             
-            # Inferencia optimizada
-            results = self.model(
-                small,
-                conf=self.confidence,
-                verbose=False,
-                imgsz=infer_size,
-                max_det=10,      # Menos detecciones = más rápido
-                half=False,      # True si tienes GPU con FP16
-            )
+            try:
+                # Inferencia optimizada - aumentar confianza para menos falsos positivos
+                results = self.model(
+                    small,
+                    conf=self.confidence,
+                    verbose=False,
+                    imgsz=infer_size,
+                    max_det=5,       # Menos detecciones = más rápido
+                    half=False,
+                    agnostic_nms=True,  # NMS más rápido
+                )
+            except Exception as e:
+                print(f"⚠️ Error en inferencia YOLO: {e}")
+                results = []
             
             for result in results:
                 # Procesar Pose (keypoints) - PRIORIDAD

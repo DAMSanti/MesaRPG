@@ -1,6 +1,6 @@
 description: Ultralytics YOLOv8n-pose model trained on dataset_keypoints\data.yaml
 author: Ultralytics
-date: '2025-12-06T18:39:08.374576'
+date: '2025-12-06T18:59:29.610833'
 version: 8.3.228
 license: AGPL-3.0 License (https://ultralytics.com/license)
 docs: https://docs.ultralytics.com
@@ -8,8 +8,8 @@ stride: 32
 task: pose
 batch: 1
 imgsz:
-- 640
-- 640
+- 320
+- 320
 names:
   0: miniature
 args:
