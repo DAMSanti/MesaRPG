@@ -38,6 +38,9 @@ class MapEditor {
         this.currentLayer = 'terrain';
         this.layerVisibility = { terrain: true, objects: true, effects: true };
         
+        // Opciones de visualización
+        this.showHexBorders = false; // Bordes de hexágono desactivados por defecto
+        
         this.init();
     }
     
@@ -1276,43 +1279,66 @@ class MapEditor {
         // Si hay imagen, dibujarla dentro del hexágono (carga lazy)
         const img = this.getTileImage(tile.id);
         if (img) {
-            this.ctx.save();
-            // Crear path hexagonal para clip (flat-top: empieza desde derecha)
-            this.ctx.beginPath();
-            for (let i = 0; i < 6; i++) {
-                const angle = (Math.PI / 3) * i; // 0° = lado derecho plano
-                const hx = cx + radius * Math.cos(angle);
-                const hy = cy + radius * Math.sin(angle);
-                if (i === 0) {
-                    this.ctx.moveTo(hx, hy);
-                } else {
-                    this.ctx.lineTo(hx, hy);
-                }
-            }
-            this.ctx.closePath();
-            this.ctx.clip();
+            // Crear hexágono con bordes suavizados usando canvas temporal
+            const tempCanvas = document.createElement('canvas');
+            const tempSize = radius * 2.5;
+            tempCanvas.width = tempSize;
+            tempCanvas.height = tempSize;
+            const tempCtx = tempCanvas.getContext('2d');
             
-            // Dibujar imagen escalada al hexágono
-            const imgSize = radius * 2.2;
-            this.ctx.drawImage(img, cx - imgSize/2, cy - imgSize/2, imgSize, imgSize);
-            this.ctx.restore();
+            const tempCx = tempSize / 2;
+            const tempCy = tempSize / 2;
             
-            // Borde del hexágono
-            this.ctx.beginPath();
+            // Dibujar imagen primero
+            const imgSize = radius * 2.15;
+            tempCtx.drawImage(img, tempCx - imgSize/2, tempCy - imgSize/2, imgSize, imgSize);
+            
+            // Aplicar máscara hexagonal con bordes suaves usando destination-in
+            tempCtx.globalCompositeOperation = 'destination-in';
+            
+            // Crear gradiente radial para suavizar bordes
+            const gradient = tempCtx.createRadialGradient(tempCx, tempCy, radius * 0.7, tempCx, tempCy, radius * 1.05);
+            gradient.addColorStop(0, 'rgba(255,255,255,1)');
+            gradient.addColorStop(0.85, 'rgba(255,255,255,1)');
+            gradient.addColorStop(1, 'rgba(255,255,255,0)');
+            
+            // Dibujar hexágono con gradiente
+            tempCtx.beginPath();
             for (let i = 0; i < 6; i++) {
                 const angle = (Math.PI / 3) * i;
-                const hx = cx + radius * Math.cos(angle);
-                const hy = cy + radius * Math.sin(angle);
+                const hx = tempCx + radius * 1.05 * Math.cos(angle);
+                const hy = tempCy + radius * 1.05 * Math.sin(angle);
                 if (i === 0) {
-                    this.ctx.moveTo(hx, hy);
+                    tempCtx.moveTo(hx, hy);
                 } else {
-                    this.ctx.lineTo(hx, hy);
+                    tempCtx.lineTo(hx, hy);
                 }
             }
-            this.ctx.closePath();
-            this.ctx.strokeStyle = 'rgba(0,0,0,0.3)';
-            this.ctx.lineWidth = 1;
-            this.ctx.stroke();
+            tempCtx.closePath();
+            tempCtx.fillStyle = gradient;
+            tempCtx.fill();
+            
+            // Dibujar el resultado en el canvas principal
+            this.ctx.drawImage(tempCanvas, cx - tempSize/2, cy - tempSize/2);
+            
+            // Borde del hexágono - solo si está activado
+            if (this.showHexBorders) {
+                this.ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                    const angle = (Math.PI / 3) * i;
+                    const hx = cx + radius * Math.cos(angle);
+                    const hy = cy + radius * Math.sin(angle);
+                    if (i === 0) {
+                        this.ctx.moveTo(hx, hy);
+                    } else {
+                        this.ctx.lineTo(hx, hy);
+                    }
+                }
+                this.ctx.closePath();
+                this.ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+                this.ctx.lineWidth = 0.5;
+                this.ctx.stroke();
+            }
             
             // Mostrar elevación si es BattleTech y mayor a 0
             if (this.systemId === 'battletech' && elevation > 0) {
@@ -1877,6 +1903,11 @@ class MapEditor {
         this.brushSize = Math.max(1, Math.min(5, size));
         const el = document.getElementById('brush-size-value');
         if (el) el.textContent = this.brushSize;
+    }
+    
+    setShowHexBorders(show) {
+        this.showHexBorders = show;
+        this.render();
     }
     
     setLayer(layer) {

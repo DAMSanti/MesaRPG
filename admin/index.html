@@ -107,6 +107,12 @@
                         <button class="btn btn-sm" onclick="mapEditor?.redo()" title="Rehacer (Ctrl+Y)">↪️</button>
                     </div>
                     <div class="toolbar-group">
+                        <label>
+                            <input type="checkbox" id="show-hex-borders" onchange="mapEditor?.setShowHexBorders(this.checked)">
+                            Bordes
+                        </label>
+                    </div>
+                    <div class="toolbar-group">
                         <button class="btn btn-sm btn-success" onclick="mapEditor?.projectToDisplay()">📺 Proyectar</button>
                     </div>
                 </div>
