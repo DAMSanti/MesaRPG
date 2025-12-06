@@ -147,6 +147,14 @@ function handleMessage(data) {
                 logAction('Sistema', `Sistema cambiado a ${sysId}`);
             }
             break;
+        case 'error':
+            const errorMsg = data.payload?.message || data.payload?.error || data.message || 'Error desconocido';
+            console.error('Server error:', errorMsg);
+            logAction('Error', errorMsg);
+            break;
+        case 'pong':
+            // Response to ping - connection alive
+            break;
         default:
             console.log('Unknown message type:', data.type);
     }

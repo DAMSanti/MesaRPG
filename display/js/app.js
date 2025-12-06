@@ -196,6 +196,13 @@ class MesaRPGApp {
             this.handlePlayerAction(payload);
         });
         
+        // Errores del servidor
+        ws.on('error', (payload) => {
+            const errorMsg = payload?.message || payload?.error || 'Error desconocido';
+            console.error('Server error:', errorMsg);
+            window.gameRenderer.addLogEntry(`Error: ${errorMsg}`, 'system');
+        });
+        
         // Conexión
         ws.on('connected', () => {
             window.gameRenderer.addLogEntry('Conectado al servidor', 'system');
