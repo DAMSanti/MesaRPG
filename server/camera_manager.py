@@ -204,6 +204,9 @@ class CameraManager:
         self.last_frame: Optional[np.ndarray] = None
         self.last_frame_encoded: Optional[str] = None
         
+        # IP Camera streaming
+        self._ip_stream_active: bool = False
+        
         # Threading
         self._capture_thread: Optional[threading.Thread] = None
         self._running: bool = False
@@ -228,6 +231,9 @@ class CameraManager:
         self._on_markers_detected = on_markers_detected
         self._on_state_change = on_state_change
     
+    def stop_ip_stream(self):
+        """Detiene el streaming de cámara IP"""
+        self._ip_stream_active = False
     def _set_state(self, state: CameraState, error: str = None):
         """Cambia el estado y notifica"""
         self.state = state

@@ -14,6 +14,7 @@ class CameraPanel {
         this.cameraWs = null;
         this.isConnected = false;
         this.isStreaming = false;
+        this.ipCameraMode = false; // True si conectamos via cámara IP
         this.frameInterval = null;
         this.fps = 10; // Frames por segundo a enviar
         this.quality = 0.7; // Calidad JPEG
@@ -189,55 +190,31 @@ class CameraPanel {
         let ipUrl = this.elements.cameraIpInput?.value.trim();
         
         if (!ipUrl) {
-            this.showNotification('Introduce la IP de la cámara', 'warning');
+            this.showNotification('Introduce la IP de la cámara (ej: 192.168.1.55:4747)', 'warning');
             return;
-        }
-        
-        // Normalizar URL
-        if (!ipUrl.startsWith('http')) {
-            ipUrl = 'http://' + ipUrl;
-        }
-        // DroidCam usa /video, añadir si no tiene path
-        if (!ipUrl.includes('/video') && !ipUrl.includes('/mjpeg') && !ipUrl.includes('/stream')) {
-            ipUrl = ipUrl + '/video';
         }
         
         // Limpiar conexión anterior
         this.handleDisconnect();
         this.updateState('connecting');
+        this.ipCameraMode = true;
         
         try {
             // Conectar WebSocket primero
             await this.connectWebSocket();
             
-            // Crear elemento img para recibir el stream MJPEG
-            // y enviar frames al servidor
-            this.showNotification('📱 Conectando a cámara IP...', 'info');
+            // Decirle al servidor que consuma el stream de la cámara IP
+            // (El servidor tiene acceso directo, evita problemas de CORS)
+            this.showNotification('📱 Conectando a cámara IP via servidor...', 'info');
             
-            // Usar un elemento de video oculto para capturar el stream
-            const video = this.elements.localVideo;
-            if (video) {
-                // Para cámaras IP, usamos un img y canvas
-                this.ipStreamImg = new Image();
-                this.ipStreamImg.crossOrigin = 'anonymous';
-                
-                this.ipStreamImg.onload = () => {
-                    if (!this.isConnected) {
-                        this.isConnected = true;
-                        this.updateState('streaming');
-                        this.showNotification('📱 Cámara IP conectada', 'success');
-                        this.startIpFrameCapture();
-                    }
-                };
-                
-                this.ipStreamImg.onerror = () => {
-                    this.showNotification('Error: No se puede conectar a la cámara IP', 'error');
-                    this.updateState('error');
-                };
-                
-                // Iniciar stream
-                this.ipStreamImg.src = ipUrl;
-            }
+            this.cameraWs.send(JSON.stringify({
+                type: 'connect_ip_camera',
+                payload: {
+                    url: ipUrl
+                }
+            }));
+            
+            // El servidor enviará 'ip_camera_connected' o 'ip_camera_error'
             
         } catch (error) {
             console.error('Error conectando cámara IP:', error);
@@ -245,58 +222,6 @@ class CameraPanel {
             this.showNotification(`Error: ${error.message}`, 'error');
             this.updateState('error');
         }
-    }
-    
-    startIpFrameCapture() {
-        this.isStreaming = true;
-        
-        const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('2d');
-        
-        const captureFrame = () => {
-            if (!this.isStreaming || !this.cameraWs || this.cameraWs.readyState !== WebSocket.OPEN) {
-                return;
-            }
-            
-            if (!this.ipStreamImg || !this.ipStreamImg.complete) {
-                if (this.isStreaming) {
-                    setTimeout(captureFrame, 1000 / this.fps);
-                }
-                return;
-            }
-            
-            try {
-                canvas.width = this.ipStreamImg.naturalWidth || 640;
-                canvas.height = this.ipStreamImg.naturalHeight || 480;
-                ctx.drawImage(this.ipStreamImg, 0, 0);
-                
-                const frameData = canvas.toDataURL('image/jpeg', this.quality);
-                const base64 = frameData.split(',')[1];
-                
-                this.cameraWs.send(JSON.stringify({
-                    type: 'frame',
-                    payload: {
-                        frame: base64,
-                        width: canvas.width,
-                        height: canvas.height,
-                        timestamp: Date.now()
-                    }
-                }));
-                
-                // Refrescar imagen para siguiente frame (MJPEG)
-                const currentSrc = this.ipStreamImg.src.split('?')[0];
-                this.ipStreamImg.src = currentSrc + '?t=' + Date.now();
-                
-            } catch (error) {
-                console.error('Error capturando frame IP:', error);
-            }
-            
-            if (this.isStreaming) {
-                this.frameInterval = setTimeout(captureFrame, 1000 / this.fps);
-            }
-        };
-        
-        captureFrame();
     }
     
     async connectWebSocket() {
@@ -354,6 +279,31 @@ class CameraPanel {
                 if (this.elements.detectionsCount && payload.detections !== undefined) {
                     this.elements.detectionsCount.textContent = payload.detections;
                 }
+                
+                // Si venimos de IP camera, marcar como conectado
+                if (this.ipCameraMode && !this.isConnected) {
+                    this.isConnected = true;
+                    this.updateState('streaming');
+                }
+                break;
+            
+            case 'ip_camera_connected':
+                // Cámara IP conectada desde el servidor
+                this.isConnected = true;
+                this.updateState('streaming');
+                this.showNotification('📱 Cámara IP conectada', 'success');
+                break;
+            
+            case 'ip_camera_error':
+                // Error en cámara IP
+                this.showNotification(`Error cámara IP: ${payload.error}`, 'error');
+                this.updateState('error');
+                this.handleDisconnect();
+                break;
+            
+            case 'ip_camera_disconnected':
+                this.showNotification('📱 Cámara IP desconectada', 'info');
+                this.handleDisconnect();
                 break;
             
             case 'detection_update':
@@ -454,7 +404,20 @@ class CameraPanel {
     }
     
     handleDisconnect() {
+        // Si estamos en modo cámara IP, notificar al servidor
+        if (this.ipCameraMode && this.cameraWs && this.cameraWs.readyState === WebSocket.OPEN) {
+            try {
+                this.cameraWs.send(JSON.stringify({
+                    type: 'disconnect_ip_camera',
+                    payload: {}
+                }));
+            } catch (e) {
+                console.log('Error enviando desconexión IP:', e);
+            }
+        }
+        
         this.isConnected = false;
+        this.ipCameraMode = false;
         
         // Detener captura
         this.stopFrameCapture();

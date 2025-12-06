@@ -1067,6 +1067,20 @@ async def websocket_camera(websocket: WebSocket):
                 action = message.get("payload", {}).get("action")
                 await handle_camera_control(websocket, action, message.get("payload", {}))
             
+            # === Conectar a cámara IP directamente desde el servidor ===
+            elif msg_type == "connect_ip_camera":
+                ip_url = message.get("payload", {}).get("url")
+                if ip_url:
+                    asyncio.create_task(stream_ip_camera(websocket, ip_url))
+            
+            # === Desconectar cámara IP ===
+            elif msg_type == "disconnect_ip_camera":
+                camera_manager.stop_ip_stream()
+                await send_json_safe(websocket, {
+                    "type": "ip_camera_disconnected",
+                    "payload": {"success": True}
+                })
+            
             # Solicitar estado
             elif msg_type == "get_status":
                 await send_json_safe(websocket, {
@@ -1116,6 +1130,92 @@ async def handle_camera_control(websocket: WebSocket, action: str, payload: dict
         "type": "camera_status",
         "payload": camera_manager.get_status()
     })
+
+
+async def stream_ip_camera(websocket: WebSocket, ip_url: str):
+    """Consume stream de cámara IP y envía frames procesados al admin"""
+    import cv2
+    import base64
+    import time
+    
+    # Normalizar URL
+    if not ip_url.startswith('http'):
+        ip_url = 'http://' + ip_url
+    if not any(x in ip_url for x in ['/video', '/mjpeg', '/stream']):
+        ip_url = ip_url + '/video'
+    
+    print(f"📷 Conectando a cámara IP: {ip_url}")
+    
+    try:
+        cap = cv2.VideoCapture(ip_url)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimizar buffer
+        
+        if not cap.isOpened():
+            await send_json_safe(websocket, {
+                "type": "ip_camera_error",
+                "payload": {"error": f"No se puede conectar a {ip_url}"}
+            })
+            return
+        
+        await send_json_safe(websocket, {
+            "type": "ip_camera_connected",
+            "payload": {"url": ip_url}
+        })
+        
+        camera_manager._ip_stream_active = True
+        frame_count = 0
+        target_fps = 10
+        frame_time = 1.0 / target_fps
+        
+        while camera_manager._ip_stream_active:
+            start = time.time()
+            
+            ret, frame = cap.read()
+            if not ret:
+                print("📷 Frame perdido, reintentando...")
+                await asyncio.sleep(0.5)
+                continue
+            
+            # Comprimir y codificar frame
+            _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+            frame_base64 = base64.b64encode(buffer).decode('utf-8')
+            
+            # Procesar con YOLO
+            processed_frame, detections = frame_processor.process_frame(frame_base64)
+            
+            # Enviar al admin
+            try:
+                await send_json_safe(websocket, {
+                    "type": "processed_frame",
+                    "payload": {
+                        "frame": processed_frame,
+                        "detections": len(detections),
+                        "objects": detections,
+                        "timestamp": int(time.time() * 1000)
+                    }
+                })
+            except Exception as e:
+                print(f"Error enviando frame: {e}")
+                break
+            
+            frame_count += 1
+            
+            # Control de FPS
+            elapsed = time.time() - start
+            if elapsed < frame_time:
+                await asyncio.sleep(frame_time - elapsed)
+        
+        cap.release()
+        print(f"📷 Cámara IP desconectada. Frames enviados: {frame_count}")
+        
+    except Exception as e:
+        print(f"Error en stream IP: {e}")
+        await send_json_safe(websocket, {
+            "type": "ip_camera_error",
+            "payload": {"error": str(e)}
+        })
+    finally:
+        camera_manager._ip_stream_active = False
 
 
 async def handle_markers_update(markers: list):
