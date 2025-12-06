@@ -45,8 +45,13 @@ class FrameProcessor:
         self.last_processed_frame: Optional[str] = None
         self.last_tracks: List[Dict] = []
         
-        # Tracker SORT para seguimiento continuo
-        self.tracker = SORTTracker(max_age=15, min_hits=2, iou_threshold=0.3)
+        # Tracker SORT para seguimiento continuo - configurado para OBB
+        self.tracker = SORTTracker(
+            max_age=30,           # Mantener track 30 frames sin detección
+            min_hits=1,           # Confirmar track inmediatamente
+            iou_threshold=0.15,   # IoU bajo porque OBB cambia mucho
+            distance_threshold=150 # Match por distancia de centro
+        )
         self.orientation_detector = OrientationDetector()
         
         # Configurar marcador rojo como indicador frontal

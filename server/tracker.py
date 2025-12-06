@@ -100,18 +100,21 @@ class SORTTracker:
     """
     Simple Online Realtime Tracker (SORT) - Implementación ligera
     Solo usa numpy, sin dependencias de ML
+    Optimizado para miniaturas con detección OBB
     """
     
-    def __init__(self, max_age: int = 10, min_hits: int = 3, iou_threshold: float = 0.3):
+    def __init__(self, max_age: int = 30, min_hits: int = 1, iou_threshold: float = 0.15, distance_threshold: float = 100):
         """
         Args:
             max_age: Frames máximos sin detección antes de eliminar track
             min_hits: Detecciones mínimas antes de confirmar track
             iou_threshold: Umbral de IoU para matching
+            distance_threshold: Distancia máxima en píxeles para matching por centro
         """
         self.max_age = max_age
         self.min_hits = min_hits
         self.iou_threshold = iou_threshold
+        self.distance_threshold = distance_threshold
         
         self.tracks: Dict[int, TrackedObject] = {}
         self.next_id = 1
@@ -156,9 +159,24 @@ class SORTTracker:
         # Calcular matriz de IoU
         iou_matrix = self._iou_batch(det_boxes, track_boxes)
         
+        # También calcular distancia entre centros (para cuando IoU falla)
+        det_centers = np.array([[(d["bbox"]["x1"]+d["bbox"]["x2"])/2, (d["bbox"]["y1"]+d["bbox"]["y2"])/2] for d in detections])
+        trk_centers = np.array([[t.center[0], t.center[1]] for t in [self.tracks[tid] for tid in track_ids]])
+        
+        # Matriz de distancias (normalizada a 0-1, donde 0 es cerca)
+        dist_matrix = np.zeros((len(detections), len(track_ids)))
+        for i, dc in enumerate(det_centers):
+            for j, tc in enumerate(trk_centers):
+                dist = np.sqrt((dc[0]-tc[0])**2 + (dc[1]-tc[1])**2)
+                # Convertir distancia a score (1 = cerca, 0 = lejos)
+                dist_matrix[i, j] = max(0, 1 - dist / self.distance_threshold)
+        
+        # Combinar IoU y distancia (usar el mejor de los dos)
+        combined_matrix = np.maximum(iou_matrix, dist_matrix * 0.5)
+        
         # Hungarian matching (greedy para simplicidad)
         matched_det, matched_trk, unmatched_det, unmatched_trk = self._match(
-            iou_matrix, track_ids, len(detections)
+            combined_matrix, track_ids, len(detections)
         )
         
         # Actualizar tracks matched
