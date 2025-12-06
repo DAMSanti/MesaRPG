@@ -605,10 +605,11 @@ class BattleTechMapGenerator {
     }
     
     placeRiver(depth, width = 2, meanders = true) {
-        // Río usando grupos de tiles v4 (verticales) que conectan correctamente
+        // Río con dirección guardada para cada hex
         const vertical = Math.random() < 0.5;
         this.riverDirection = vertical ? 'vertical' : 'horizontal';
         this.riverPath = [];
+        this.riverDirections = {}; // Mapa de direcciones: key -> {from, to}
         
         // Calcular posición inicial centrada
         let startX = vertical 
@@ -620,34 +621,63 @@ class BattleTechMapGenerator {
         
         // Generar path del río con meandros suaves
         let current = { x: startX, y: startY };
+        let prev = null;
         const end = vertical ? this.height : this.width;
-        const meanderChance = meanders ? 0.2 : 0.1;
+        const meanderChance = meanders ? 0.25 : 0.1;
         
         for (let i = 0; i < end; i++) {
-            // Guardar posición en el path
-            this.riverPath.push({ x: current.x, y: current.y });
+            // Calcular siguiente posición
+            let next = { x: current.x, y: current.y };
+            if (vertical) {
+                next.y++;
+                if (Math.random() < meanderChance) {
+                    next.x += Math.random() < 0.5 ? 1 : -1;
+                    next.x = Math.max(2, Math.min(this.width - 3, next.x));
+                }
+            } else {
+                next.x++;
+                if (Math.random() < meanderChance) {
+                    next.y += Math.random() < 0.5 ? 1 : -1;
+                    next.y = Math.max(2, Math.min(this.height - 3, next.y));
+                }
+            }
             
-            // Marcar solo este hex como río (1 hex de ancho)
+            // Guardar posición y dirección
+            this.riverPath.push({ x: current.x, y: current.y });
+            const key = `${current.x},${current.y}`;
+            
+            // Calcular dirección de entrada y salida
+            const fromDir = prev ? this.getDirection(prev, current) : (vertical ? 'N' : 'W');
+            const toDir = this.getDirection(current, next);
+            this.riverDirections[key] = { from: fromDir, to: toDir };
+            
+            // Marcar como río
             if (this.isValid(current.x, current.y)) {
                 this.terrainMap[current.y][current.x] = 'water_river';
                 this.elevationMap[current.y][current.x] = 0;
             }
             
             // Avanzar
-            if (vertical) {
-                current.y++;
-                if (Math.random() < meanderChance) {
-                    current.x += Math.random() < 0.5 ? 1 : -1;
-                    current.x = Math.max(2, Math.min(this.width - 3, current.x));
-                }
-            } else {
-                current.x++;
-                if (Math.random() < meanderChance) {
-                    current.y += Math.random() < 0.5 ? 1 : -1;
-                    current.y = Math.max(2, Math.min(this.height - 3, current.y));
-                }
-            }
+            prev = { ...current };
+            current = next;
         }
+    }
+    
+    /**
+     * Calcula la dirección entre dos hexes adyacentes
+     * Retorna: N, S, NE, SE, NW, SW
+     */
+    getDirection(from, to) {
+        const dx = to.x - from.x;
+        const dy = to.y - from.y;
+        
+        if (dx === 0 && dy < 0) return 'N';
+        if (dx === 0 && dy > 0) return 'S';
+        if (dx > 0 && dy <= 0) return 'NE';
+        if (dx > 0 && dy > 0) return 'SE';
+        if (dx < 0 && dy <= 0) return 'NW';
+        if (dx < 0 && dy > 0) return 'SW';
+        return 'S'; // Default
     }
     
     /**
@@ -1638,19 +1668,17 @@ class BattleTechMapGenerator {
     
     assignSingleTiles() {
         // Mapeo de terreno a tiles SOLO individuales (sin sufijo _X son singles)
-        // Los tiles con _X son partes de grupos y NO deben usarse aquí
         const terrainToSingles = {
-            'clear': ['11'],  // Single grass hex (único tile individual de terreno)
-            'woods': ['11'],  // No hay singles de woods, usar grass (los grupos cubrirán)
-            'woods_heavy': ['11'],  // No hay singles, usar grass
-            'water': ['27'],  // Solo un tipo de agua para consistencia
-            'water_lake': ['27'],  // Solo un tipo para lagos (grupos mega7 lo cubrirán)
-            'water_river': ['27'],  // Solo un tipo para uniformidad visual
+            'clear': ['11'],
+            'woods': ['11'],
+            'woods_heavy': ['11'],
+            'water': ['27'],
+            'water_lake': ['27'],
             'water_depth0': ['27'],
-            'rough': ['59', '60', '61', '62', '63', '64', '65', '66'],  // Rocky/rough singles
-            'rubble': ['67', '68', '69', '70'],  // Rubble singles
-            'urban': ['40', '41', '42', '43', '44', '45'],  // Building singles (sin sufijo)
-            'hazards': ['71', '72', '73', '74']  // Hazard singles (sin 75)
+            'rough': ['59', '60', '61', '62', '63', '64', '65', '66'],
+            'rubble': ['67', '68', '69', '70'],
+            'urban': ['40', '41', '42', '43', '44', '45'],
+            'hazards': ['71', '72', '73', '74']
         };
         
         for (let y = 0; y < this.height; y++) {
@@ -1658,6 +1686,17 @@ class BattleTechMapGenerator {
                 if (this.tileAssignments[y][x]) continue; // Ya asignado por grupo
                 
                 const terrain = this.terrainMap[y][x];
+                
+                // Para ríos, usar tile según dirección del flujo
+                if (terrain === 'water_river') {
+                    const riverTile = this.getRiverTileForDirection(x, y);
+                    this.tileAssignments[y][x] = {
+                        tileId: riverTile,
+                        elevation: this.elevationMap[y][x]
+                    };
+                    continue;
+                }
+                
                 const tiles = terrainToSingles[terrain] || terrainToSingles['clear'];
                 const tileNum = tiles[Math.floor(Math.random() * tiles.length)];
                 
@@ -1667,6 +1706,52 @@ class BattleTechMapGenerator {
                 };
             }
         }
+    }
+    
+    /**
+     * Determina el tile de río correcto según la dirección del flujo
+     * Tiles disponibles:
+     * - 27: Río recto (asumimos N-S)
+     * - 28: Río recto horizontal (asumimos E-W) 
+     * - 29: Curva (asumimos NE o SW)
+     * - 30: Curva opuesta (asumimos NW o SE)
+     */
+    getRiverTileForDirection(x, y) {
+        const key = `${x},${y}`;
+        const dirs = this.riverDirections?.[key];
+        
+        if (!dirs) {
+            return 'bt_27'; // Default: río vertical
+        }
+        
+        const { from, to } = dirs;
+        
+        // Detectar si es recto vertical (N-S)
+        if ((from === 'N' && to === 'S') || (from === 'S' && to === 'N') ||
+            (from === 'N' && to === 'S') || (to === 'S')) {
+            // Si hay curva, determinar qué tipo
+            if (to === 'SE' || from === 'NW') {
+                return 'bt_29'; // Curva hacia SE
+            } else if (to === 'SW' || from === 'NE') {
+                return 'bt_30'; // Curva hacia SW
+            }
+            return 'bt_27'; // Recto vertical
+        }
+        
+        // Detectar si es recto horizontal (E-W)  
+        if ((from === 'E' && to === 'W') || (from === 'W' && to === 'E') ||
+            from === 'NE' || from === 'SE' || to === 'NE' || to === 'SE') {
+            // Es horizontal o diagonal-horizontal
+            if (to === 'S' || to === 'SW') {
+                return 'bt_29'; // Curva
+            } else if (to === 'N' || to === 'NW') {
+                return 'bt_30'; // Curva opuesta
+            }
+            return 'bt_28'; // Recto horizontal
+        }
+        
+        // Por defecto
+        return 'bt_27';
     }
     
     // ==========================================
