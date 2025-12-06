@@ -83,12 +83,24 @@ class FrameProcessor:
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
             if frame is None:
+                print("⚠️ Frame decode failed")
                 return frame_base64, []
+            
+            # Guardar dimensiones originales
+            original_height, original_width = frame.shape[:2]
+            
+            # Log dimensiones para debug (solo cada 100 frames para no saturar)
+            if not hasattr(self, '_frame_count'):
+                self._frame_count = 0
+            self._frame_count += 1
+            if self._frame_count % 100 == 1:
+                print(f"📐 Frame recibido: {original_width}x{original_height}")
             
             detections = []
             
             # Procesar con YOLO si está disponible
             if self.is_ready and self.model:
+                # YOLO procesa internamente pero devuelve coords en escala original
                 results = self.model(frame, conf=self.confidence, verbose=False)
                 
                 for result in results:

@@ -428,20 +428,26 @@ class CameraPanel {
         
         if (!video) return;
         
-        // Esperar a que el video esté listo
-        video.onloadedmetadata = () => {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-        };
-        
         const captureFrame = () => {
             if (!this.isStreaming || !this.cameraWs || this.cameraWs.readyState !== WebSocket.OPEN) {
                 return;
             }
             
+            // Verificar que el video tenga dimensiones válidas
+            if (!video.videoWidth || !video.videoHeight) {
+                return;
+            }
+            
             try {
+                // Actualizar dimensiones del canvas al tamaño real del video
+                if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    console.log(`📐 Canvas actualizado: ${canvas.width}x${canvas.height}`);
+                }
+                
                 // Dibujar frame en canvas
-                ctx.drawImage(video, 0, 0);
+                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                 
                 // Convertir a JPEG base64
                 const frameData = canvas.toDataURL('image/jpeg', this.quality);

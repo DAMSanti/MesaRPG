@@ -218,7 +218,7 @@ class ConnectionManager:
         return {
             "displays": len(self.display_connections),
             "mobiles": len(self.mobile_connections),
-            "camera": self.camera_connection is not None,
+            "cameras": len(self._camera_connections),
             "admins": len(self.admin_connections),
             "mobile_players": list(self.mobile_connections.keys())
         }
