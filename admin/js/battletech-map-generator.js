@@ -1826,24 +1826,35 @@ class BattleTechMapGenerator {
         const sideKey = `${sides[0]}-${sides[1]}`;
         
         // Mapeo completo de combinación de lados a tile
-        // Cada combinación tiene su tile exacto o el más cercano
+        // Tiles disponibles:
+        // - 27: 0-3 (N-S) vertical
+        // - 28: 1-3 (NE-S) curva
+        // - 29: 0-2 (N-SE) curva
+        // - 30: 2-5 (SE-NW) con puente
+        // - 31_0: 2-4 (SE-SW)
+        // - 31_1: 3-5 (S-NW)
+        // - 32_0: 2-5 (SE-NW)
+        // - 32_1: 1-5 (NE-NW)
+        // - 36_0: 1-4 (NE-SW)
+        // - 36_1: 2-4 (SE-SW)
+        // - 36_2: 1-3 (NE-S) con puente
         const sideToTile = {
-            // Tiles exactos
+            // Tiles exactos para cada combinación
             '0-3': 'bt_27',    // N a S - recto vertical
-            '1-3': 'bt_28',    // NE a S - curva
+            '1-3': 'bt_28',    // NE a S - curva (o bt_36_2 con puente)
             '0-2': 'bt_29',    // N a SE - curva
             '2-5': 'bt_32_0',  // SE a NW (o bt_30 con puente)
-            '2-4': 'bt_31_0',  // SE a SW
+            '2-4': 'bt_31_0',  // SE a SW (o bt_36_1)
             '3-5': 'bt_31_1',  // S a NW
             '1-5': 'bt_32_1',  // NE a NW
+            '1-4': 'bt_36_0',  // NE a SW
             
             // Combinaciones aproximadas (espejadas o similares)
-            '0-4': 'bt_28',    // N a SW ≈ espejo de NE a S (28)
-            '1-4': 'bt_27',    // NE a SW - diagonal a través ≈ vertical
+            '0-4': 'bt_29',    // N a SW ≈ espejo de N a SE (29)
             '0-5': 'bt_29',    // N a NW ≈ espejo de N a SE (29)
-            '0-1': 'bt_29',    // N a NE ≈ curva suave
-            '1-2': 'bt_31_0',  // NE a SE ≈ SE a SW espejado
-            '2-3': 'bt_28',    // SE a S ≈ curva NE a S
+            '0-1': 'bt_29',    // N a NE ≈ curva suave hacia 0-2
+            '1-2': 'bt_28',    // NE a SE ≈ curva NE-S
+            '2-3': 'bt_31_0',  // SE a S ≈ SE-SW
             '3-4': 'bt_31_1',  // S a SW ≈ espejo de S a NW
             '4-5': 'bt_32_1',  // SW a NW ≈ espejo de NE a NW
         };
