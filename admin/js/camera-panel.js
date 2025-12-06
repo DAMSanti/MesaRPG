@@ -46,8 +46,10 @@ class CameraPanel {
                     cameraSelect: document.getElementById('camera-select'),
                     cameraIpInput: document.getElementById('camera-ip-input'),
                     cameraFeed: document.getElementById('camera-feed'),
-                    cameraOverlay: document.getElementById('camera-overlay'),
                     localVideo: document.getElementById('local-video'),
+                    ipVideo: document.getElementById('ip-video'),
+                    localOverlay: document.getElementById('local-overlay'),
+                    processedOverlay: document.getElementById('processed-overlay'),
                     cameraState: document.getElementById('camera-state'),
                     cameraFps: document.getElementById('camera-fps'),
                     detectionsCount: document.getElementById('detections-count'),
@@ -162,10 +164,15 @@ class CameraPanel {
                 }
             });
             
-            // Mostrar preview local (oculto, solo para captura)
+            // Mostrar preview local
             if (this.elements.localVideo) {
                 this.elements.localVideo.srcObject = this.localStream;
                 await this.elements.localVideo.play().catch(() => {});
+            }
+            
+            // Ocultar overlay del video local
+            if (this.elements.localOverlay) {
+                this.elements.localOverlay.classList.add('hidden');
             }
             
             // 2. Conectar WebSocket al servidor
@@ -194,6 +201,15 @@ class CameraPanel {
             return;
         }
         
+        // Normalizar URL
+        if (!ipUrl.startsWith('http')) {
+            ipUrl = 'http://' + ipUrl;
+        }
+        // DroidCam usa /video para MJPEG
+        if (!ipUrl.includes('/video') && !ipUrl.includes('/mjpeg')) {
+            ipUrl = ipUrl + '/video';
+        }
+        
         // Limpiar conexión anterior
         this.handleDisconnect();
         this.updateState('connecting');
@@ -203,18 +219,43 @@ class CameraPanel {
             // Conectar WebSocket primero
             await this.connectWebSocket();
             
-            // Decirle al servidor que consuma el stream de la cámara IP
-            // (El servidor tiene acceso directo, evita problemas de CORS)
-            this.showNotification('📱 Conectando a cámara IP via servidor...', 'info');
+            this.showNotification('📱 Conectando a cámara IP...', 'info');
             
-            this.cameraWs.send(JSON.stringify({
-                type: 'connect_ip_camera',
-                payload: {
-                    url: ipUrl
-                }
-            }));
+            // Mostrar el stream MJPEG en el elemento img
+            const ipVideo = this.elements.ipVideo;
+            const localVideo = this.elements.localVideo;
             
-            // El servidor enviará 'ip_camera_connected' o 'ip_camera_error'
+            if (ipVideo) {
+                // Ocultar video normal, mostrar img para IP
+                if (localVideo) localVideo.style.display = 'none';
+                ipVideo.style.display = 'block';
+                
+                ipVideo.onload = () => {
+                    // Primer frame cargado
+                    if (!this.isConnected) {
+                        this.isConnected = true;
+                        this.updateState('streaming');
+                        this.showNotification('📱 Cámara IP conectada', 'success');
+                        
+                        // Ocultar overlay
+                        if (this.elements.localOverlay) {
+                            this.elements.localOverlay.classList.add('hidden');
+                        }
+                        
+                        // Iniciar captura de frames desde el img
+                        this.startIpFrameCapture(ipVideo);
+                    }
+                };
+                
+                ipVideo.onerror = () => {
+                    this.showNotification('Error: No se puede conectar a la cámara IP. Verifica la IP.', 'error');
+                    this.updateState('error');
+                    this.handleDisconnect();
+                };
+                
+                // Cargar stream MJPEG
+                ipVideo.src = ipUrl;
+            }
             
         } catch (error) {
             console.error('Error conectando cámara IP:', error);
@@ -222,6 +263,50 @@ class CameraPanel {
             this.showNotification(`Error: ${error.message}`, 'error');
             this.updateState('error');
         }
+    }
+    
+    startIpFrameCapture(imgElement) {
+        this.isStreaming = true;
+        
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        const captureFrame = () => {
+            if (!this.isStreaming || !this.cameraWs || this.cameraWs.readyState !== WebSocket.OPEN) {
+                return;
+            }
+            
+            try {
+                // El img con MJPEG se actualiza automáticamente
+                canvas.width = imgElement.naturalWidth || 640;
+                canvas.height = imgElement.naturalHeight || 480;
+                ctx.drawImage(imgElement, 0, 0);
+                
+                const frameData = canvas.toDataURL('image/jpeg', this.quality);
+                const base64 = frameData.split(',')[1];
+                
+                this.cameraWs.send(JSON.stringify({
+                    type: 'frame',
+                    payload: {
+                        frame: base64,
+                        width: canvas.width,
+                        height: canvas.height,
+                        timestamp: Date.now()
+                    }
+                }));
+                
+            } catch (error) {
+                // CORS error - el navegador no puede leer pixels de imagen cross-origin
+                console.error('Error capturando frame (posible CORS):', error);
+            }
+            
+            if (this.isStreaming) {
+                this.frameInterval = setTimeout(captureFrame, 1000 / this.fps);
+            }
+        };
+        
+        // Pequeño delay para asegurar que el img está listo
+        setTimeout(captureFrame, 100);
     }
     
     async connectWebSocket() {
@@ -269,9 +354,10 @@ class CameraPanel {
                 // Frame procesado por YOLO con bounding boxes
                 if (payload.frame && this.elements.cameraFeed) {
                     this.elements.cameraFeed.src = `data:image/jpeg;base64,${payload.frame}`;
-                    this.elements.cameraFeed.style.display = 'block';
-                    if (this.elements.cameraOverlay) {
-                        this.elements.cameraOverlay.style.display = 'none';
+                    
+                    // Ocultar overlay del feed procesado
+                    if (this.elements.processedOverlay) {
+                        this.elements.processedOverlay.classList.add('hidden');
                     }
                 }
                 
@@ -434,22 +520,29 @@ class CameraPanel {
             this.localStream = null;
         }
         
-        // Limpiar video
+        // Limpiar video local
         if (this.elements.localVideo) {
             this.elements.localVideo.srcObject = null;
+            this.elements.localVideo.style.display = 'block';
         }
         
-        // Mostrar overlay
-        if (this.elements.cameraFeed) {
-            this.elements.cameraFeed.style.display = 'none';
+        // Limpiar video IP
+        if (this.elements.ipVideo) {
+            this.elements.ipVideo.src = '';
+            this.elements.ipVideo.style.display = 'none';
         }
-        if (this.elements.cameraOverlay) {
-            this.elements.cameraOverlay.style.display = 'flex';
-            this.elements.cameraOverlay.innerHTML = `
-                <div class="camera-placeholder">
-                    <p>📷 Selecciona una cámara y haz clic en Conectar</p>
-                </div>
-            `;
+        
+        // Limpiar feed procesado
+        if (this.elements.cameraFeed) {
+            this.elements.cameraFeed.src = '';
+        }
+        
+        // Mostrar overlays
+        if (this.elements.localOverlay) {
+            this.elements.localOverlay.classList.remove('hidden');
+        }
+        if (this.elements.processedOverlay) {
+            this.elements.processedOverlay.classList.remove('hidden');
         }
         
         this.updateState('disconnected');

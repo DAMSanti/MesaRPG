@@ -1551,66 +1551,102 @@ body {
 
 /* ==================== CAMERA PANEL STYLES ==================== */
 
-.camera-card {
-    grid-column: span 2;
-}
-
-.camera-controls {
+/* Barra de controles superior */
+.camera-controls-bar {
     display: flex;
-    gap: 15px;
+    gap: 20px;
+    padding: 15px 20px;
+    background: var(--bg-card);
+    border-radius: 12px;
     margin-bottom: 15px;
-    flex-wrap: wrap;
-    align-items: flex-end;
-}
-
-.camera-local,
-.camera-ip {
-    display: flex;
-    flex-direction: column;
-    gap: 5px;
-}
-
-.camera-local label,
-.camera-ip label {
-    font-size: 12px;
-    color: var(--text-secondary);
-}
-
-.camera-local > div,
-.camera-ip > div {
-    display: flex;
-    gap: 8px;
     align-items: center;
+    flex-wrap: wrap;
 }
 
-.camera-controls select,
-.camera-controls input[type="text"] {
+.camera-controls-bar .camera-local {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.camera-controls-bar label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.camera-controls-bar select {
     padding: 8px 12px;
     background: var(--bg-dark);
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 8px;
     font-size: 14px;
+    min-width: 200px;
 }
 
-.camera-feed-container {
-    position: relative;
-    width: 100%;
-    aspect-ratio: 16/9;
-    background: #000;
+.camera-status-inline {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.camera-ip {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.camera-ip input[type="text"] {
+    padding: 8px 12px;
+    background: var(--bg-dark);
+    color: var(--text);
+    border: 1px solid var(--border);
     border-radius: 8px;
-    overflow: hidden;
+    font-size: 14px;
+    width: 160px;
+}
+
+/* Contenedor de los dos feeds */
+.dual-feed-container {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 15px;
     margin-bottom: 15px;
 }
 
-.camera-feed {
+.feed-panel {
+    background: var(--bg-card);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.feed-panel h3 {
+    padding: 10px 15px;
+    margin: 0;
+    background: var(--bg-dark);
+    font-size: 14px;
+    font-weight: 500;
+    border-bottom: 1px solid var(--border);
+}
+
+.feed-wrapper {
+    position: relative;
+    aspect-ratio: 16/9;
+    background: #000;
+}
+
+.feed-wrapper video,
+.feed-wrapper img {
     width: 100%;
     height: 100%;
     object-fit: contain;
-    display: none;
 }
 
-.camera-overlay {
+.feed-overlay {
     position: absolute;
     top: 0;
     left: 0;
@@ -1619,60 +1655,54 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+    background: rgba(0,0,0,0.7);
+    color: var(--text-secondary);
 }
 
-.camera-placeholder {
-    font-size: 24px;
-    color: var(--text-muted);
+.feed-overlay.hidden {
+    display: none;
 }
 
-.camera-stream-controls {
+/* Barra de settings inferior */
+.camera-settings-bar {
     display: flex;
-    gap: 10px;
-    justify-content: center;
+    gap: 30px;
+    padding: 15px 20px;
+    background: var(--bg-card);
+    border-radius: 12px;
 }
 
-.camera-status-grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-    margin-bottom: 20px;
-}
-
-.camera-state {
-    font-weight: 600;
-}
-
-.camera-state.disconnected {
-    color: var(--danger);
-}
-
-.camera-state.connecting {
-    color: var(--warning);
-}
-
-.camera-state.connected,
-.camera-state.streaming {
-    color: var(--success);
-}
-
-.camera-state.calibrating {
-    color: var(--primary);
-}
-
-.camera-state.error {
-    color: var(--danger);
-}
-
-.calibration-controls {
+.camera-settings-bar .setting-item {
     display: flex;
-    flex-direction: column;
+    align-items: center;
     gap: 10px;
 }
 
-.calibration-controls .btn {
-    width: 100%;
+.camera-settings-bar label {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.camera-settings-bar input[type="range"] {
+    width: 120px;
+}
+
+.camera-settings-bar span {
+    min-width: 35px;
+    font-size: 13px;
+}
+
+/* Estados de cámara */
+.camera-state.disconnected { color: #e74c3c; }
+.camera-state.connecting { color: #f39c12; }
+.camera-state.streaming { color: #2ecc71; }
+.camera-state.error { color: #e74c3c; }
+
+/* Responsive */
+@media (max-width: 900px) {
+    .dual-feed-container {
+        grid-template-columns: 1fr;
+    }
 }
 
 /* Miniaturas */

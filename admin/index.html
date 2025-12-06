@@ -173,76 +173,62 @@
 
         <!-- Tab: Cámara y Tracking -->
         <section id="tab-camera" class="tab-content">
-            <div class="grid">
-                <!-- Feed de la cámara -->
-                <div class="card camera-card">
-                    <h2>📷 Cámara</h2>
-                    <div class="camera-controls">
-                        <div class="camera-local">
-                            <label>📹 Cámara local:</label>
-                            <select id="camera-select">
-                                <option value="">Cargando cámaras...</option>
-                            </select>
-                            <button class="btn btn-primary" id="btn-connect-camera">🔗 Conectar</button>
-                        </div>
-                        <div class="camera-ip">
-                            <label>🌐 Cámara IP (DroidCam/etc):</label>
-                            <input type="text" id="camera-ip-input" placeholder="192.168.1.55:4747" style="width:180px;">
-                            <button class="btn btn-primary" id="btn-connect-ip">🔗 Conectar IP</button>
-                        </div>
-                        <button class="btn btn-danger" id="btn-disconnect-camera" disabled>⏹️ Desconectar</button>
-                    </div>
-                    <div class="camera-feed-container">
-                        <!-- Video local oculto para captura -->
-                        <video id="local-video" autoplay playsinline muted style="display:none;"></video>
-                        <!-- Frame procesado por el servidor -->
-                        <img id="camera-feed" class="camera-feed" alt="Feed procesado" style="display:none;">
-                        <div id="camera-overlay" class="camera-overlay">
-                            <div class="camera-placeholder">
-                                <p>📷 Selecciona una cámara y haz clic en Conectar</p>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="camera-settings">
-                        <div class="setting-item">
-                            <label>Calidad:</label>
-                            <input type="range" id="stream-quality" min="30" max="100" value="70">
-                            <span>70%</span>
-                        </div>
-                        <div class="setting-item">
-                            <label>FPS:</label>
-                            <input type="range" id="stream-fps" min="5" max="30" value="10">
-                            <span>10</span>
+            <div class="camera-controls-bar">
+                <div class="camera-local">
+                    <label>📹 Cámara local:</label>
+                    <select id="camera-select">
+                        <option value="">Cargando cámaras...</option>
+                    </select>
+                    <button class="btn btn-primary" id="btn-connect-camera">🔗 Conectar</button>
+                </div>
+                <div class="camera-ip">
+                    <label>🌐 Cámara IP:</label>
+                    <input type="text" id="camera-ip-input" placeholder="192.168.1.55:4747">
+                    <button class="btn btn-primary" id="btn-connect-ip">🔗 Conectar IP</button>
+                </div>
+                <button class="btn btn-danger" id="btn-disconnect-camera" disabled>⏹️ Desconectar</button>
+                <div class="camera-status-inline">
+                    <span id="camera-state" class="camera-state disconnected">🔴 Desconectado</span>
+                    <span id="camera-fps">-</span> FPS |
+                    <span id="detections-count">0</span> detecciones
+                </div>
+            </div>
+            
+            <div class="dual-feed-container">
+                <!-- Feed LOCAL (directo de la cámara) -->
+                <div class="feed-panel">
+                    <h3>📹 Cámara Local / IP</h3>
+                    <div class="feed-wrapper">
+                        <video id="local-video" autoplay playsinline muted></video>
+                        <img id="ip-video" style="display:none;">
+                        <div id="local-overlay" class="feed-overlay">
+                            <p>📷 Selecciona una cámara o introduce IP</p>
                         </div>
                     </div>
                 </div>
-
-                <!-- Estado y Detecciones -->
-                <div class="card">
-                    <h2>📊 Estado</h2>
-                    <div class="camera-status-grid">
-                        <div class="status-item">
-                            <span class="status-label">Estado</span>
-                            <span id="camera-state" class="status-value camera-state disconnected">🔴 Desconectado</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">FPS</span>
-                            <span id="camera-fps" class="status-value">-</span>
-                        </div>
-                        <div class="status-item">
-                            <span class="status-label">Detecciones</span>
-                            <span id="detections-count" class="status-value">0</span>
+                
+                <!-- Feed PROCESADO (del servidor con YOLO) -->
+                <div class="feed-panel">
+                    <h3>🤖 Procesado (YOLO)</h3>
+                    <div class="feed-wrapper">
+                        <img id="camera-feed" alt="Feed procesado">
+                        <div id="processed-overlay" class="feed-overlay">
+                            <p>⏳ Esperando frames procesados...</p>
                         </div>
                     </div>
                 </div>
-
-                <!-- Objetos detectados -->
-                <div class="card full-width">
-                    <h2>🎯 Objetos Detectados</h2>
-                    <p class="help-text">El servidor usa YOLO para detectar miniaturas y objetos en la mesa.</p>
-                    <div id="detections-grid" class="detections-grid">
-                        <p class="empty-state">Conecta la cámara para ver detecciones</p>
-                    </div>
+            </div>
+            
+            <div class="camera-settings-bar">
+                <div class="setting-item">
+                    <label>Calidad:</label>
+                    <input type="range" id="stream-quality" min="30" max="100" value="70">
+                    <span>70%</span>
+                </div>
+                <div class="setting-item">
+                    <label>FPS:</label>
+                    <input type="range" id="stream-fps" min="5" max="30" value="10">
+                    <span>10</span>
                 </div>
             </div>
         </section>
