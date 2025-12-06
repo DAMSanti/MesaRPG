@@ -916,51 +916,61 @@ class BattleTechMapGenerator {
     }
     
     placePond() {
-        // Crear un lago de tamaño compatible con grupos mega7 (7 hexes)
-        const cx = 3 + Math.floor(Math.random() * (this.width - 6));
-        const cy = 3 + Math.floor(Math.random() * (this.height - 6));
+        // Colocar directamente un grupo de lago aleatorio
+        // Los grupos de lago son: 22 (2 tiles), 23 (3 tiles), 24 (7 tiles), 25 (7 tiles)
+        if (!this.tileGroups?.groups) return;
         
-        // Patrón mega7: debe coincidir con offsets del config
-        // Config grupos 24/25: [[0,0], [0,-1], [0,1], [-1,-1], [-1,0], [1,-1], [1,0]]
-        const mega7Offsets = [
-            [0, 0], [0, -1], [0, 1], [-1, -1], [-1, 0], [1, -1], [1, 0]
-        ];
+        // Obtener grupos de lago disponibles
+        const lakeGroups = Object.entries(this.tileGroups.groups)
+            .filter(([id, g]) => g.category === 'water_lake');
         
-        // Colocar lago con forma compatible con grupos
-        for (const [dx, dy] of mega7Offsets) {
-            const nx = cx + dx;
-            const ny = cy + dy;
-            if (this.isValid(nx, ny)) {
-                this.terrainMap[ny][nx] = 'water_lake';
-                this.elevationMap[ny][nx] = 0;
+        if (lakeGroups.length === 0) return;
+        
+        // Elegir un grupo aleatorio
+        const [groupId, group] = lakeGroups[Math.floor(Math.random() * lakeGroups.length)];
+        
+        // Buscar posición válida para colocar el grupo
+        const maxAttempts = 20;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+            const cx = 2 + Math.floor(Math.random() * (this.width - 4));
+            const cy = 2 + Math.floor(Math.random() * (this.height - 4));
+            
+            // Verificar que todos los hexes del grupo están disponibles (clear)
+            let canPlace = true;
+            for (const [dx, dy] of group.offsets) {
+                const adjOffset = this.adjustOffsetForParity(cx, dx, dy);
+                const nx = cx + adjOffset.dx;
+                const ny = cy + adjOffset.dy;
+                if (!this.isValid(nx, ny) || this.terrainMap[ny][nx] !== 'clear') {
+                    canPlace = false;
+                    break;
+                }
             }
-        }
-        
-        // Opcionalmente añadir más hexes alrededor para lagos más grandes
-        if (Math.random() < 0.5) {
-            // Segundo anillo: posiciones adicionales alrededor del mega7
-            const extraOffsets = [
-                [-2, -1], [-2, 0], [-1, -2], [-1, 1], [0, -2], [0, 2], 
-                [1, -2], [1, 1], [2, -1], [2, 0]
-            ];
-            for (const [dx, dy] of extraOffsets) {
-                if (Math.random() < 0.5) {
-                    const nx = cx + dx;
-                    const ny = cy + dy;
+            
+            if (canPlace) {
+                // Marcar terreno como lago y asignar tiles directamente
+                for (let i = 0; i < group.offsets.length; i++) {
+                    const [dx, dy] = group.offsets[i];
+                    const adjOffset = this.adjustOffsetForParity(cx, dx, dy);
+                    const nx = cx + adjOffset.dx;
+                    const ny = cy + adjOffset.dy;
+                    
                     if (this.isValid(nx, ny)) {
                         this.terrainMap[ny][nx] = 'water_lake';
                         this.elevationMap[ny][nx] = 0;
+                        
+                        // Asignar tile directamente
+                        const tileName = group.tiles[i];
+                        this.tileAssignments[ny][nx] = {
+                            tileId: `bt_${tileName}`,
+                            groupId: groupId,
+                            groupIndex: i,
+                            isCenter: i === 0,
+                            elevation: 0
+                        };
                     }
                 }
-            }
-        }
-        
-        // Bajar elevación del agua
-        for (let y = 0; y < this.height; y++) {
-            for (let x = 0; x < this.width; x++) {
-                if (this.isWater(x, y)) {
-                    this.elevationMap[y][x] = 0;
-                }
+                return; // Lago colocado exitosamente
             }
         }
     }
