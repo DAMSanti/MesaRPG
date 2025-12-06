@@ -37,8 +37,19 @@ COPY server/requirements.txt .
 # Instalar dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar todo el proyecto
-COPY . .
+# Copiar modelos YOLO (cambian poco, bueno para caché)
+COPY miniatures_pose.pt miniatures_obb.pt ./
+COPY miniatures_pose_openvino_model/ ./miniatures_pose_openvino_model/
+
+# Copiar código del servidor (cambia frecuentemente)
+COPY server/ ./server/
+
+# Copiar assets y config
+COPY config/ ./config/
+COPY assets/ ./assets/
+COPY admin/ ./admin/
+COPY display/ ./display/
+COPY mobile/ ./mobile/
 
 # Crear directorios necesarios
 RUN mkdir -p /app/data /app/assets/markers /app/assets/maps
