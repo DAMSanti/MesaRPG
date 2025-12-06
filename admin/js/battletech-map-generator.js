@@ -1629,23 +1629,16 @@ class BattleTechMapGenerator {
     }
     
     /**
-     * Rellena lago con grupos autocontenidos, prefiriendo mega7
+     * Rellena lago con grupos autocontenidos (grupos 22, 23, 24, 25)
      */
     fillLakeWithGroups(cluster, available, hexMap, matchingGroups) {
-        console.log(`fillLakeWithGroups: cluster tiene ${cluster.hexes.length} hexes, matchingGroups: ${matchingGroups.length}`);
-        
-        // Usar grupos de lago (mega7 preferido: grupos 22, 23, 24, 25)
-        const lakeGroups = matchingGroups.filter(([id, g]) => 
-            g.shape === 'mega7' || g.tiles.length >= 4
+        // Usar TODOS los grupos de lago disponibles (22, 23, 24, 25)
+        // No filtrar por tamaño - usar todos
+        const groupsToUse = matchingGroups.filter(([id, g]) => 
+            g.category === 'water_lake'
         );
         
-        console.log(`  lakeGroups (mega7 o >=4 tiles): ${lakeGroups.length}`);
-        
-        // Si no hay grupos de lago, buscar cualquier grupo de agua
-        const groupsToUse = lakeGroups.length > 0 ? lakeGroups : matchingGroups;
-        
         if (groupsToUse.length === 0) {
-            console.log(`  Sin grupos disponibles para lago`);
             return; // Sin grupos, usar singles
         }
         
@@ -1668,9 +1661,9 @@ class BattleTechMapGenerator {
             return distA - distB;
         });
         
-        // Colocar tantos grupos como quepan
+        // Colocar tantos grupos como quepan, variando el tipo
         let groupsPlaced = 0;
-        const maxGroups = Math.max(1, Math.floor(cluster.hexes.length / 5)); // ~1 grupo por cada 5 hexes
+        const maxGroups = Math.max(1, Math.floor(cluster.hexes.length / 3)); // ~1 grupo por cada 3 hexes
         
         for (const hex of sortedHexes) {
             if (groupsPlaced >= maxGroups) break;
@@ -1678,8 +1671,11 @@ class BattleTechMapGenerator {
             const key = `${hex.x},${hex.y}`;
             if (!available.has(key)) continue;
             
-            // Probar cada grupo en orden de tamaño
-            for (const [groupId, group] of groupsToUse) {
+            // Mezclar grupos aleatoriamente para variedad
+            const shuffledGroups = [...groupsToUse].sort(() => Math.random() - 0.5);
+            
+            // Probar cada grupo
+            for (const [groupId, group] of shuffledGroups) {
                 if (this.canPlaceGroup(hex.x, hex.y, group, available)) {
                     this.placeGroup(hex.x, hex.y, group, groupId, available, hexMap);
                     groupsPlaced++;
@@ -1886,8 +1882,8 @@ class BattleTechMapGenerator {
             'clear': ['11'],
             'woods': ['11'],
             'woods_heavy': ['11'],
-            'water': ['27'],
-            'water_lake': ['27'],
+            'water': ['22_0', '23_0', '24_0', '25_0'],
+            'water_lake': ['22_0', '23_0', '24_0', '25_0'],
             'water_depth0': ['27'],
             'rough': ['59', '60', '61', '62', '63', '64', '65', '66'],
             'rubble': ['67', '68', '69', '70'],
