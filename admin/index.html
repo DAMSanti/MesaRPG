@@ -178,10 +178,18 @@
                 <div class="card camera-card">
                     <h2>📷 Cámara</h2>
                     <div class="camera-controls">
-                        <select id="camera-select">
-                            <option value="">Cargando cámaras...</option>
-                        </select>
-                        <button class="btn btn-primary" id="btn-connect-camera">🔗 Conectar</button>
+                        <div class="camera-local">
+                            <label>📹 Cámara local:</label>
+                            <select id="camera-select">
+                                <option value="">Cargando cámaras...</option>
+                            </select>
+                            <button class="btn btn-primary" id="btn-connect-camera">🔗 Conectar</button>
+                        </div>
+                        <div class="camera-ip">
+                            <label>🌐 Cámara IP (DroidCam/etc):</label>
+                            <input type="text" id="camera-ip-input" placeholder="192.168.1.55:4747" style="width:180px;">
+                            <button class="btn btn-primary" id="btn-connect-ip">🔗 Conectar IP</button>
+                        </div>
                         <button class="btn btn-danger" id="btn-disconnect-camera" disabled>⏹️ Desconectar</button>
                     </div>
                     <div class="camera-feed-container">

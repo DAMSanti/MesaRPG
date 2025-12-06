@@ -43,6 +43,7 @@ class CameraPanel {
             const check = () => {
                 this.elements = {
                     cameraSelect: document.getElementById('camera-select'),
+                    cameraIpInput: document.getElementById('camera-ip-input'),
                     cameraFeed: document.getElementById('camera-feed'),
                     cameraOverlay: document.getElementById('camera-overlay'),
                     localVideo: document.getElementById('local-video'),
@@ -50,6 +51,7 @@ class CameraPanel {
                     cameraFps: document.getElementById('camera-fps'),
                     detectionsCount: document.getElementById('detections-count'),
                     btnConnect: document.getElementById('btn-connect-camera'),
+                    btnConnectIp: document.getElementById('btn-connect-ip'),
                     btnDisconnect: document.getElementById('btn-disconnect-camera'),
                     qualitySlider: document.getElementById('stream-quality'),
                     fpsSlider: document.getElementById('stream-fps')
@@ -66,9 +68,14 @@ class CameraPanel {
     }
     
     setupEvents() {
-        // Botón conectar
+        // Botón conectar cámara local
         if (this.elements.btnConnect) {
             this.elements.btnConnect.onclick = () => this.connect();
+        }
+        
+        // Botón conectar por IP
+        if (this.elements.btnConnectIp) {
+            this.elements.btnConnectIp.onclick = () => this.connectByIp();
         }
         
         // Botón desconectar
@@ -80,6 +87,7 @@ class CameraPanel {
         if (this.elements.qualitySlider) {
             this.elements.qualitySlider.oninput = (e) => {
                 this.quality = e.target.value / 100;
+                e.target.nextElementSibling.textContent = e.target.value + '%';
             };
         }
         
@@ -87,6 +95,7 @@ class CameraPanel {
         if (this.elements.fpsSlider) {
             this.elements.fpsSlider.oninput = (e) => {
                 this.fps = parseInt(e.target.value);
+                e.target.nextElementSibling.textContent = e.target.value;
                 if (this.isStreaming) {
                     this.restartFrameCapture();
                 }
@@ -137,6 +146,9 @@ class CameraPanel {
             return;
         }
         
+        // Limpiar conexión anterior si existe
+        this.handleDisconnect();
+        
         this.updateState('connecting');
         
         try {
@@ -152,6 +164,7 @@ class CameraPanel {
             // Mostrar preview local (oculto, solo para captura)
             if (this.elements.localVideo) {
                 this.elements.localVideo.srcObject = this.localStream;
+                await this.elements.localVideo.play().catch(() => {});
             }
             
             // 2. Conectar WebSocket al servidor
@@ -166,9 +179,124 @@ class CameraPanel {
             
         } catch (error) {
             console.error('Error conectando cámara:', error);
+            this.handleDisconnect();
             this.showNotification(`Error: ${error.message}`, 'error');
             this.updateState('error');
         }
+    }
+    
+    async connectByIp() {
+        let ipUrl = this.elements.cameraIpInput?.value.trim();
+        
+        if (!ipUrl) {
+            this.showNotification('Introduce la IP de la cámara', 'warning');
+            return;
+        }
+        
+        // Normalizar URL
+        if (!ipUrl.startsWith('http')) {
+            ipUrl = 'http://' + ipUrl;
+        }
+        // DroidCam usa /video, añadir si no tiene path
+        if (!ipUrl.includes('/video') && !ipUrl.includes('/mjpeg') && !ipUrl.includes('/stream')) {
+            ipUrl = ipUrl + '/video';
+        }
+        
+        // Limpiar conexión anterior
+        this.handleDisconnect();
+        this.updateState('connecting');
+        
+        try {
+            // Conectar WebSocket primero
+            await this.connectWebSocket();
+            
+            // Crear elemento img para recibir el stream MJPEG
+            // y enviar frames al servidor
+            this.showNotification('📱 Conectando a cámara IP...', 'info');
+            
+            // Usar un elemento de video oculto para capturar el stream
+            const video = this.elements.localVideo;
+            if (video) {
+                // Para cámaras IP, usamos un img y canvas
+                this.ipStreamImg = new Image();
+                this.ipStreamImg.crossOrigin = 'anonymous';
+                
+                this.ipStreamImg.onload = () => {
+                    if (!this.isConnected) {
+                        this.isConnected = true;
+                        this.updateState('streaming');
+                        this.showNotification('📱 Cámara IP conectada', 'success');
+                        this.startIpFrameCapture();
+                    }
+                };
+                
+                this.ipStreamImg.onerror = () => {
+                    this.showNotification('Error: No se puede conectar a la cámara IP', 'error');
+                    this.updateState('error');
+                };
+                
+                // Iniciar stream
+                this.ipStreamImg.src = ipUrl;
+            }
+            
+        } catch (error) {
+            console.error('Error conectando cámara IP:', error);
+            this.handleDisconnect();
+            this.showNotification(`Error: ${error.message}`, 'error');
+            this.updateState('error');
+        }
+    }
+    
+    startIpFrameCapture() {
+        this.isStreaming = true;
+        
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        
+        const captureFrame = () => {
+            if (!this.isStreaming || !this.cameraWs || this.cameraWs.readyState !== WebSocket.OPEN) {
+                return;
+            }
+            
+            if (!this.ipStreamImg || !this.ipStreamImg.complete) {
+                if (this.isStreaming) {
+                    setTimeout(captureFrame, 1000 / this.fps);
+                }
+                return;
+            }
+            
+            try {
+                canvas.width = this.ipStreamImg.naturalWidth || 640;
+                canvas.height = this.ipStreamImg.naturalHeight || 480;
+                ctx.drawImage(this.ipStreamImg, 0, 0);
+                
+                const frameData = canvas.toDataURL('image/jpeg', this.quality);
+                const base64 = frameData.split(',')[1];
+                
+                this.cameraWs.send(JSON.stringify({
+                    type: 'frame',
+                    payload: {
+                        frame: base64,
+                        width: canvas.width,
+                        height: canvas.height,
+                        timestamp: Date.now()
+                    }
+                }));
+                
+                // Refrescar imagen para siguiente frame (MJPEG)
+                const currentSrc = this.ipStreamImg.src.split('?')[0];
+                this.ipStreamImg.src = currentSrc + '?t=' + Date.now();
+                
+            } catch (error) {
+                console.error('Error capturando frame IP:', error);
+            }
+            
+            if (this.isStreaming) {
+                this.frameInterval = setTimeout(captureFrame, 1000 / this.fps);
+            }
+        };
+        
+        captureFrame();
     }
     
     async connectWebSocket() {
@@ -201,7 +329,7 @@ class CameraPanel {
             
             // Timeout
             setTimeout(() => {
-                if (this.cameraWs.readyState !== WebSocket.OPEN) {
+                if (this.cameraWs && this.cameraWs.readyState !== WebSocket.OPEN) {
                     reject(new Error('Timeout conectando'));
                 }
             }, 5000);
