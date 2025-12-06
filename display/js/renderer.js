@@ -1225,29 +1225,39 @@ class GameRenderer {
         const hp = character?.data?.hp || character?.hp;
         const maxHp = character?.data?.max_hp || character?.max_hp;
         const charClass = character?.data?.class || character?.class || '';
+        const tokenVisual = character?.token_visual;  // Imagen del token asignada por el admin
         
         // Calcular porcentaje de HP para la barra
         const hpPercent = (hp && maxHp) ? Math.round((hp / maxHp) * 100) : 100;
         const hpColor = hpPercent > 50 ? '#4ade80' : hpPercent > 25 ? '#fbbf24' : '#ef4444';
         
+        // El token NO rota - solo la flecha de dirección rota
         token.style.cssText = `
             position: absolute;
             left: ${pos.x}px;
             top: ${pos.y}px;
-            transform: translate(-50%, -50%) rotate(${orientation}deg);
-            transition: left 0.1s ease-out, top 0.1s ease-out, transform 0.1s ease-out;
+            transform: translate(-50%, -50%);
+            transition: left 0.1s ease-out, top 0.1s ease-out;
             pointer-events: none;
             z-index: 100;
         `;
         
+        // Guardar orientación como data attribute para actualizar la flecha
+        token.dataset.orientation = orientation;
+        
         if (hasCharacter) {
             // Token completo con información del personaje
+            const tokenInnerContent = tokenVisual 
+                ? `<img src="${tokenVisual}" alt="${this.escapeHtml(name)}" class="mini-token-image" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                   <div class="mini-avatar fallback" style="display:none;">${name.charAt(0).toUpperCase()}</div>`
+                : `<div class="mini-avatar">${name.charAt(0).toUpperCase()}</div>`;
+            
             token.innerHTML = `
                 <div class="mini-token-container">
                     <div class="mini-token-inner character-assigned">
-                        <div class="mini-avatar">${name.charAt(0).toUpperCase()}</div>
+                        ${tokenInnerContent}
                     </div>
-                    <div class="mini-direction-arrow"></div>
+                    <div class="mini-direction-arrow" style="transform: translateX(-50%) rotate(${orientation - 90}deg);"></div>
                     <div class="mini-info-panel">
                         <div class="mini-name">${this.escapeHtml(name)}</div>
                         ${charClass ? `<div class="mini-class">${this.escapeHtml(charClass)}</div>` : ''}
@@ -1267,18 +1277,18 @@ class GameRenderer {
                     <div class="mini-token-inner unassigned">
                         <span class="mini-id-label">#${id}</span>
                     </div>
-                    <div class="mini-direction-arrow"></div>
+                    <div class="mini-direction-arrow" style="transform: translateX(-50%) rotate(${orientation - 90}deg);"></div>
                 </div>
             `;
         }
         
         this.tokensContainer.appendChild(token);
-        this.miniatureTokens[id] = { element: token, character };
+        this.miniatureTokens[id] = { element: token, character, orientation };
         
         // Animación de entrada
         token.style.animation = 'tokenAppear 0.3s ease-out';
         
-        console.log(`🎯 Miniatura #${id} creada en (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)})${hasCharacter ? ` → ${name}` : ''}`);
+        console.log(`🎯 Miniatura #${id} creada en (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)})${hasCharacter ? ` → ${name}${character?.token_visual ? ' (con imagen)' : ''}` : ''}`);
     }
     
     updateMiniatureToken(id, pos, orientation = 0, character = null) {
@@ -1287,9 +1297,16 @@ class GameRenderer {
         
         const token = tokenData.element || tokenData;
         
+        // Actualizar posición (sin rotar todo el token)
         token.style.left = `${pos.x}px`;
         token.style.top = `${pos.y}px`;
-        token.style.transform = `translate(-50%, -50%) rotate(${orientation}deg)`;
+        
+        // Actualizar solo la flecha de orientación
+        const arrow = token.querySelector('.mini-direction-arrow');
+        if (arrow) {
+            arrow.style.transform = `translateX(-50%) rotate(${orientation - 90}deg)`;
+        }
+        token.dataset.orientation = orientation;
         
         // Si el personaje cambió, recrear el token
         const currentCharId = tokenData.character?.id;

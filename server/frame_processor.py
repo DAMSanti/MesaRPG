@@ -2,6 +2,7 @@
 MesaRPG - Procesador de Frames con YOLO (Optimizado)
 Procesa frames de forma no bloqueante con skip de frames
 Incluye tracking SORT y detección de orientación
+Soporte para OpenVINO para inferencia acelerada
 """
 
 import base64
@@ -9,6 +10,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import time
+import os
 
 # Importar tracker simple
 try:
@@ -31,17 +33,28 @@ except ImportError:
     YOLO_AVAILABLE = False
     print("⚠️ YOLO no disponible - detección desactivada")
 
+# Verificar disponibilidad de OpenVINO
+OPENVINO_AVAILABLE = False
+try:
+    import openvino
+    OPENVINO_AVAILABLE = True
+    print(f"✅ OpenVINO {openvino.__version__} disponible")
+except ImportError:
+    print("ℹ️ OpenVINO no instalado - usando inferencia estándar")
+
 
 class FrameProcessor:
     """Procesa frames de video con YOLO + SORT tracking + orientación"""
     
-    def __init__(self, model_path: str = "yolov8n.pt", confidence: float = 0.4):
+    def __init__(self, model_path: str = "yolov8n.pt", confidence: float = 0.4, 
+                 use_openvino: bool = True):
         self.model = None
         self.confidence = confidence
         self.model_path = model_path
         self.is_ready = False
         self.is_pose_model = False
         self.is_obb_model = False
+        self.use_openvino = use_openvino and OPENVINO_AVAILABLE
         self.last_detections: List[Dict] = []
         self.last_processed_frame: Optional[str] = None
         self.last_tracks: List[Dict] = []
@@ -62,6 +75,28 @@ class FrameProcessor:
         if YOLO_AVAILABLE:
             self._load_model()
     
+    def _get_openvino_model_path(self, pt_path: Path) -> Optional[Path]:
+        """Obtiene la ruta del modelo OpenVINO pre-exportado"""
+        # Buscar modelo pre-exportado (nombre_openvino_model/)
+        openvino_dir = pt_path.parent / f"{pt_path.stem}_openvino_model"
+        openvino_model = openvino_dir / f"{pt_path.stem}.xml"
+        
+        if openvino_model.exists():
+            print(f"✅ Encontrado modelo OpenVINO pre-exportado: {openvino_dir}")
+            return openvino_dir
+        
+        # Formato alternativo (nombre_openvino/)
+        openvino_dir_alt = pt_path.parent / f"{pt_path.stem}_openvino"
+        openvino_model_alt = openvino_dir_alt / f"{pt_path.stem}.xml"
+        
+        if openvino_model_alt.exists():
+            print(f"✅ Encontrado modelo OpenVINO: {openvino_dir_alt}")
+            return openvino_dir_alt
+        
+        # No exportar en runtime - usar modelo pre-exportado
+        print(f"ℹ️ No hay modelo OpenVINO para {pt_path.name}")
+        return None
+    
     def _load_model(self):
         """Carga el modelo YOLO - preferir modelo Pose con keypoints"""
         try:
@@ -78,11 +113,25 @@ class FrameProcessor:
             
             for path in paths_to_try:
                 if path.exists():
+                    self.is_pose_model = "pose" in path.name.lower()
+                    self.is_obb_model = "obb" in path.name.lower()
+                    
+                    # Intentar cargar versión OpenVINO si está disponible
+                    if self.use_openvino and not self.is_obb_model:
+                        # OBB no soporta bien OpenVINO por ahora
+                        openvino_path = self._get_openvino_model_path(path)
+                        if openvino_path:
+                            print(f"📦 Cargando modelo OpenVINO: {openvino_path}")
+                            self.model = YOLO(str(openvino_path))
+                            self.is_ready = True
+                            model_type = "(Pose+OpenVINO)" if self.is_pose_model else "(OpenVINO)"
+                            print(f"✅ Modelo {path.name} cargado {model_type}")
+                            return
+                    
+                    # Fallback a modelo PyTorch normal
                     print(f"📦 Cargando modelo YOLO: {path.name}")
                     self.model = YOLO(str(path))
                     self.is_ready = True
-                    self.is_pose_model = "pose" in path.name.lower()
-                    self.is_obb_model = "obb" in path.name.lower()
                     model_type = "(Pose)" if self.is_pose_model else "(OBB)" if self.is_obb_model else ""
                     print(f"✅ Modelo {path.name} cargado {model_type}")
                     return

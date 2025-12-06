@@ -1,5 +1,5 @@
 # MesaRPG Dockerfile
-# Imagen para ejecutar el servidor web con YOLO
+# Imagen para ejecutar el servidor web con YOLO + OpenVINO
 
 FROM python:3.11-slim
 
@@ -12,8 +12,12 @@ LABEL version="1.0"
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
+# OpenVINO optimizations
+ENV OV_DEVICE=CPU
+ENV OMP_NUM_THREADS=1
+ENV OV_CPU_THREADS_NUM=1
 
-# Dependencias del sistema para OpenCV y YOLO
+# Dependencias del sistema para OpenCV, YOLO y OpenVINO
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libgl1 \
