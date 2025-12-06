@@ -181,18 +181,28 @@ class FrameProcessor:
     def _process_sync(self, frame_base64: str) -> Tuple[str, List[Dict]]:
         """Procesamiento síncrono del frame - optimizado para velocidad"""
         if not CV2_AVAILABLE:
+            print("⚠️ OpenCV no disponible")
             return frame_base64, []
         
         # Decodificar
-        frame_bytes = base64.b64decode(frame_base64)
-        nparr = np.frombuffer(frame_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        try:
+            frame_bytes = base64.b64decode(frame_base64)
+            nparr = np.frombuffer(frame_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        except Exception as e:
+            print(f"❌ Error decodificando frame: {e}")
+            return frame_base64, []
         
         if frame is None:
+            print("⚠️ Frame decodificado es None")
             return frame_base64, []
         
         h, w = frame.shape[:2]
         detections = []
+        
+        # Info de debug en frame
+        model_status = "LISTO" if self.is_ready else "NO CARGADO"
+        model_type = "Pose" if self.is_pose_model else "OBB" if self.is_obb_model else "Normal"
         
         if self.is_ready and self.model:
             # Reducir tamaño para procesamiento rápido (320 es más rápido que 416)
@@ -329,12 +339,16 @@ class FrameProcessor:
             cv2.putText(frame, angle_text, (x2+5, y1+15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
         
         if not self.is_ready:
-            cv2.putText(frame, "YOLO no disponible", (10, 30), 
+            cv2.putText(frame, f"YOLO: {model_status}", (10, 30), 
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
         
-        # Overlay info
-        info = f"Tracks: {len(tracked_objects)} | YOLO: {self._fps:.1f} fps"
+        # Overlay info - SIEMPRE mostrar
+        info = f"Tracks: {len(tracked_objects)} | YOLO: {self._fps:.1f} fps | {model_type}"
         cv2.putText(frame, info, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # Mostrar estado del modelo arriba a la derecha
+        status_color = (0, 255, 0) if self.is_ready else (0, 0, 255)
+        cv2.putText(frame, model_status, (w - 100, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 2)
         
         # Codificar (calidad reducida para velocidad)
         _, buf = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 60])
