@@ -1315,25 +1315,33 @@ class GameRenderer {
     
     // Actualizar asignaciones (llamado cuando cambian)
     updateMiniatureAssignments(assignments, characters) {
-        this.miniatureAssignments = assignments;
-        this.miniatureCharacters = characters;
+        console.log('🔄 Actualizando asignaciones:', assignments, 'Personajes:', Object.keys(characters || {}));
+        
+        this.miniatureAssignments = assignments || {};
+        this.miniatureCharacters = characters || {};
         
         // Recrear todos los tokens con la nueva info
-        if (this.miniatureTokens) {
+        if (this.miniatureTokens && Object.keys(this.miniatureTokens).length > 0) {
             Object.keys(this.miniatureTokens).forEach(id => {
                 const tokenData = this.miniatureTokens[id];
-                const token = tokenData.element || tokenData;
-                const pos = {
-                    x: parseFloat(token.style.left),
-                    y: parseFloat(token.style.top)
-                };
-                const orientation = parseFloat(token.style.transform.match(/rotate\(([^)]+)deg\)/)?.[1] || 0);
+                const token = tokenData?.element || tokenData;
+                if (!token || !token.style) return;
                 
-                const characterId = assignments?.[id];
-                const character = characterId ? characters?.[characterId] : null;
+                const pos = {
+                    x: parseFloat(token.style.left) || 0,
+                    y: parseFloat(token.style.top) || 0
+                };
+                const orientationMatch = token.style.transform?.match(/rotate\(([^)]+)deg\)/);
+                const orientation = parseFloat(orientationMatch?.[1] || 0);
+                
+                // Buscar por id numérico o string
+                const characterId = assignments?.[id] || assignments?.[parseInt(id)];
+                const character = characterId ? (characters?.[characterId] || null) : null;
+                
+                console.log(`  Token #${id}: characterId=${characterId}, character=${character?.character_name || character?.name || 'null'}`);
                 
                 this.removeMiniatureToken(id);
-                this.createMiniatureToken(id, pos, orientation, character);
+                this.createMiniatureToken(parseInt(id), pos, orientation, character);
             });
         }
     }

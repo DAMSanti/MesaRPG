@@ -33,8 +33,9 @@ class MesaRPGApp {
         // Conectar
         window.wsManager.connect();
         
-        // Cargar asignaciones
+        // Cargar asignaciones y personajes
         this.loadMiniatureAssignments();
+        this.loadCharactersById();
         
         // Eventos de teclado
         this.setupKeyboardEvents();
@@ -569,7 +570,14 @@ class MesaRPGApp {
     
     // Manejar actualizaciones de asignaciones via WebSocket
     handleMiniatureAssignment(payload) {
+        console.log('📌 Recibida asignación:', payload);
         this.state.miniatureAssignments = payload.assignments || {};
+        
+        // Recargar personajes si no los tenemos
+        if (!this.state.charactersById || Object.keys(this.state.charactersById).length === 0) {
+            console.log('⚠️ No hay personajes cargados, recargando...');
+            this.loadCharactersById();
+        }
         
         // Notificar al renderer para actualizar tokens
         if (window.gameRenderer && window.gameRenderer.updateMiniatureAssignments) {
@@ -577,6 +585,31 @@ class MesaRPGApp {
                 this.state.miniatureAssignments,
                 this.state.charactersById
             );
+        }
+    }
+    
+    // Cargar personajes por ID desde el servidor
+    async loadCharactersById() {
+        try {
+            const response = await fetch('/api/sheets?status=approved');
+            const sheets = await response.json();
+            this.state.charactersById = {};
+            sheets.forEach(sheet => {
+                if (sheet.id) {
+                    this.state.charactersById[sheet.id] = sheet;
+                }
+            });
+            console.log('👥 Personajes cargados:', Object.keys(this.state.charactersById));
+            
+            // Actualizar renderer con los personajes
+            if (window.gameRenderer && this.state.miniatureAssignments) {
+                window.gameRenderer.updateMiniatureAssignments(
+                    this.state.miniatureAssignments,
+                    this.state.charactersById
+                );
+            }
+        } catch (error) {
+            console.error('Error cargando personajes:', error);
         }
     }
     
