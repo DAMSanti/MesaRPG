@@ -1710,11 +1710,20 @@ class BattleTechMapGenerator {
     
     /**
      * Determina el tile de río correcto según la dirección del flujo
+     * 
+     * Lados del hexágono (flat-top, sentido horario desde arriba):
+     *   0 = N (arriba)
+     *   1 = NE (arriba-derecha)
+     *   2 = SE (abajo-derecha)
+     *   3 = S (abajo)
+     *   4 = SW (abajo-izquierda)
+     *   5 = NW (arriba-izquierda)
+     * 
      * Tiles disponibles:
-     * - 27: Río recto (asumimos N-S)
-     * - 28: Río recto horizontal (asumimos E-W) 
-     * - 29: Curva (asumimos NE o SW)
-     * - 30: Curva opuesta (asumimos NW o SE)
+     * - 27: Lados 0-3 (N a S) - recto vertical
+     * - 28: Lados 1-3 (NE a S) - curva
+     * - 29: Lados 0-2 (N a SE) - curva
+     * - 30: Lados 2-5 (SE a NW) - diagonal con puente
      */
     getRiverTileForDirection(x, y) {
         const key = `${x},${y}`;
@@ -1726,32 +1735,49 @@ class BattleTechMapGenerator {
         
         const { from, to } = dirs;
         
-        // Detectar si es recto vertical (N-S)
-        if ((from === 'N' && to === 'S') || (from === 'S' && to === 'N') ||
-            (from === 'N' && to === 'S') || (to === 'S')) {
-            // Si hay curva, determinar qué tipo
-            if (to === 'SE' || from === 'NW') {
-                return 'bt_29'; // Curva hacia SE
-            } else if (to === 'SW' || from === 'NE') {
-                return 'bt_30'; // Curva hacia SW
-            }
-            return 'bt_27'; // Recto vertical
-        }
+        // Convertir direcciones a lados del hex
+        const dirToSide = {
+            'N': 0,
+            'NE': 1,
+            'SE': 2,
+            'S': 3,
+            'SW': 4,
+            'NW': 5
+        };
         
-        // Detectar si es recto horizontal (E-W)  
-        if ((from === 'E' && to === 'W') || (from === 'W' && to === 'E') ||
-            from === 'NE' || from === 'SE' || to === 'NE' || to === 'SE') {
-            // Es horizontal o diagonal-horizontal
-            if (to === 'S' || to === 'SW') {
-                return 'bt_29'; // Curva
-            } else if (to === 'N' || to === 'NW') {
-                return 'bt_30'; // Curva opuesta
-            }
-            return 'bt_28'; // Recto horizontal
-        }
+        const fromSide = dirToSide[from] ?? 0;
+        const toSide = dirToSide[to] ?? 3;
         
-        // Por defecto
-        return 'bt_27';
+        // Crear clave ordenada para buscar el tile
+        const sides = [fromSide, toSide].sort((a, b) => a - b);
+        const sideKey = `${sides[0]}-${sides[1]}`;
+        
+        // Mapeo de combinación de lados a tile
+        const sideToTile = {
+            '0-3': 'bt_27',  // N a S - recto vertical
+            '0-2': 'bt_29',  // N a SE - curva
+            '1-3': 'bt_28',  // NE a S - curva
+            '2-5': 'bt_30',  // SE a NW - diagonal con puente
+            // Combinaciones equivalentes por simetría
+            '3-0': 'bt_27',
+            '2-0': 'bt_29',
+            '3-1': 'bt_28',
+            '5-2': 'bt_30',
+            // Otras combinaciones posibles - aproximar al más cercano
+            '0-1': 'bt_29',  // N a NE ≈ curva N-SE
+            '1-2': 'bt_28',  // NE a SE ≈ curva NE-S
+            '2-3': 'bt_28',  // SE a S ≈ curva NE-S
+            '3-4': 'bt_27',  // S a SW ≈ vertical (espejado)
+            '4-5': 'bt_30',  // SW a NW ≈ diagonal
+            '0-5': 'bt_29',  // N a NW ≈ curva (espejado)
+            '1-4': 'bt_27',  // NE a SW ≈ vertical diagonal
+            '0-4': 'bt_27',  // N a SW ≈ vertical
+            '1-5': 'bt_30',  // NE a NW ≈ diagonal
+            '3-5': 'bt_28',  // S a NW ≈ curva (espejado de 1-3)
+            '2-4': 'bt_29',  // SE a SW ≈ curva
+        };
+        
+        return sideToTile[sideKey] || 'bt_27';
     }
     
     // ==========================================
