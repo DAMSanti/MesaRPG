@@ -40,6 +40,7 @@ class FrameProcessor:
         self.confidence = confidence
         self.model_path = model_path
         self.is_ready = False
+        self.is_pose_model = False
         self.is_obb_model = False
         self.last_detections: List[Dict] = []
         self.last_processed_frame: Optional[str] = None
@@ -62,11 +63,13 @@ class FrameProcessor:
             self._load_model()
     
     def _load_model(self):
-        """Carga el modelo YOLO - preferir modelo OBB de miniaturas"""
+        """Carga el modelo YOLO - preferir modelo Pose con keypoints"""
         try:
-            # Prioridad: modelo OBB personalizado para miniaturas
+            # Prioridad: modelo Pose con keypoint de orientación
             paths_to_try = [
-                # Modelo OBB entrenado para miniaturas (PRIORIDAD)
+                # Modelo Pose entrenado para miniaturas (PRIORIDAD)
+                Path(__file__).parent.parent / "miniatures_pose.pt",
+                # Modelo OBB (legacy)
                 Path(__file__).parent.parent / "miniatures_obb.pt",
                 # Modelo nano genérico (fallback)
                 Path(__file__).parent.parent / "yolov8n.pt",
@@ -78,14 +81,17 @@ class FrameProcessor:
                     print(f"📦 Cargando modelo YOLO: {path.name}")
                     self.model = YOLO(str(path))
                     self.is_ready = True
+                    self.is_pose_model = "pose" in path.name.lower()
                     self.is_obb_model = "obb" in path.name.lower()
-                    print(f"✅ Modelo {path.name} cargado {'(OBB)' if self.is_obb_model else ''}")
+                    model_type = "(Pose)" if self.is_pose_model else "(OBB)" if self.is_obb_model else ""
+                    print(f"✅ Modelo {path.name} cargado {model_type}")
                     return
             
             # Descargar nano si no hay ninguno
             print(f"⚠️ Descargando YOLOv8n (modelo ligero)...")
             self.model = YOLO("yolov8n.pt")
             self.is_ready = True
+            self.is_pose_model = False
             self.is_obb_model = False
             print(f"✅ YOLOv8n listo")
                 
@@ -160,24 +166,53 @@ class FrameProcessor:
             )
             
             for result in results:
+                # Procesar Pose (keypoints) - PRIORIDAD
+                if hasattr(result, 'keypoints') and result.keypoints is not None and len(result.boxes):
+                    for i, (box, kpts) in enumerate(zip(result.boxes, result.keypoints.xy)):
+                        x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                        x1, y1, x2, y2 = int(x1/scale), int(y1/scale), int(x2/scale), int(y2/scale)
+                        
+                        conf = float(box.conf[0])
+                        cls = int(box.cls[0])
+                        name = result.names[cls]
+                        
+                        # Centro del bbox
+                        cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+                        
+                        # Keypoint de orientación (punto frontal)
+                        orientation = 0.0
+                        front_point = None
+                        if len(kpts) > 0:
+                            fx, fy = float(kpts[0][0]) / scale, float(kpts[0][1]) / scale
+                            if fx > 0 and fy > 0:  # Keypoint válido
+                                front_point = {"x": int(fx), "y": int(fy)}
+                                # Calcular ángulo desde centro hacia keypoint
+                                dx = fx - cx
+                                dy = fy - cy
+                                orientation = float(np.degrees(np.arctan2(dy, dx)))
+                        
+                        detections.append({
+                            "class": name,
+                            "confidence": round(conf, 2),
+                            "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+                            "center": {"x": cx, "y": cy},
+                            "orientation": round(orientation, 1),
+                            "front_point": front_point,
+                            "is_pose": True
+                        })
+                
                 # Procesar OBB (Oriented Bounding Boxes)
-                if hasattr(result, 'obb') and result.obb is not None and len(result.obb):
+                elif hasattr(result, 'obb') and result.obb is not None and len(result.obb):
                     for i in range(len(result.obb)):
-                        # OBB tiene: x, y, w, h, rotation (en radianes)
                         xywhr = result.obb.xywhr[i].cpu().numpy()
                         cx, cy, bw, bh, rotation = xywhr
-                        
-                        # Escalar de vuelta
                         cx, cy, bw, bh = cx/scale, cy/scale, bw/scale, bh/scale
-                        
-                        # Convertir rotación a grados (0-360)
                         angle_deg = float(rotation) * 180 / np.pi
                         
                         conf = float(result.obb.conf[i])
                         cls = int(result.obb.cls[i])
                         name = result.names[cls]
                         
-                        # Calcular bounding box axis-aligned para el tracker
                         x1 = int(cx - bw/2)
                         y1 = int(cy - bh/2)
                         x2 = int(cx + bw/2)
@@ -189,7 +224,6 @@ class FrameProcessor:
                             "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
                             "center": {"x": int(cx), "y": int(cy)},
                             "orientation": round(angle_deg, 1),
-                            "size": {"w": int(bw), "h": int(bh)},
                             "is_obb": True
                         })
                 

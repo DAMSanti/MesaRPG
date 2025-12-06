@@ -1,0 +1,14 @@
+# Dataset YOLO-Pose para miniaturas
+path: G:\mesa\MesaRPG\tools\dataset_keypoints
+train: images/train
+val: images/val
+
+# 1 keypoint (frente), 3 valores: x, y, visibilidad
+kpt_shape: [1, 3]
+
+# Clases
+names:
+  0: miniature
+
+# No flip horizontal (afecta orientación)
+flip_idx: []
