@@ -28,7 +28,7 @@ class ConnectionManager:
         # Conexiones activas por tipo
         self.display_connections: Set[WebSocket] = set()
         self.mobile_connections: Dict[str, WebSocket] = {}  # player_id -> websocket
-        self.camera_connection: Optional[WebSocket] = None
+        self._camera_connections: Set[WebSocket] = set()  # Múltiples conexiones de cámara
         self.admin_connections: Set[WebSocket] = set()
         
         # Mapeo inverso para encontrar player_id por websocket
@@ -48,16 +48,10 @@ class ConnectionManager:
         print(f"📱 Móvil conectado: {player_id}. Total: {len(self.mobile_connections)}")
     
     async def connect_camera(self, websocket: WebSocket):
-        """Conecta el sistema de cámara"""
+        """Conecta al sistema de cámara (detector o visor)"""
         await websocket.accept()
-        if self.camera_connection:
-            # Desconectar cámara anterior
-            try:
-                await self.camera_connection.close()
-            except:
-                pass
-        self.camera_connection = websocket
-        print("📷 Cámara conectada")
+        self._camera_connections.add(websocket)
+        print(f"📷 Cámara conectada. Total: {len(self._camera_connections)}")
     
     async def connect_admin(self, websocket: WebSocket):
         """Conecta un panel de administración"""
@@ -79,10 +73,9 @@ class ConnectionManager:
         return player_id
     
     def disconnect_camera(self, websocket: WebSocket):
-        """Desconecta la cámara"""
-        if self.camera_connection == websocket:
-            self.camera_connection = None
-            print("📷 Cámara desconectada")
+        """Desconecta una conexión de cámara"""
+        self._camera_connections.discard(websocket)
+        print(f"📷 Cámara desconectada. Total: {len(self._camera_connections)}")
     
     def disconnect_admin(self, websocket: WebSocket):
         """Desconecta un admin"""

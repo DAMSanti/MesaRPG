@@ -1,6 +1,7 @@
 """
 MesaRPG - Detector de Marcadores ArUco
 Sistema de visión por computadora para detectar figuritas
+Incluye streaming de video al servidor para visualización remota
 """
 
 import cv2
@@ -8,6 +9,7 @@ import numpy as np
 import json
 import asyncio
 import websockets
+import base64
 from datetime import datetime
 from typing import Optional, Dict, List, Tuple
 import argparse
@@ -33,6 +35,13 @@ class ArucoDetector:
         self.camera_url = camera_url  # URL para cámara IP (DroidCam, IP Webcam)
         self.server_url = server_url
         self.marker_size_cm = marker_size_cm
+        
+        # Configuración de streaming
+        self.stream_enabled = True
+        self.stream_quality = 70  # Calidad JPEG (0-100)
+        self.stream_fps = 15  # FPS de streaming (menor que captura para ahorrar ancho de banda)
+        self.last_stream_time = 0
+        self.stream_interval = 1.0 / self.stream_fps
         
         # Configurar detector ArUco
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(dictionary_type)
@@ -191,6 +200,68 @@ class ArucoDetector:
                 print(f"❌ Error enviando marcadores: {e}")
                 self.websocket = None
     
+    async def send_frame(self, frame: np.ndarray, markers: List[dict]):
+        """Envía el frame procesado al servidor para streaming al admin"""
+        if self.websocket and self.stream_enabled:
+            try:
+                current_time = time.time()
+                # Limitar FPS de streaming
+                if current_time - self.last_stream_time < self.stream_interval:
+                    return
+                self.last_stream_time = current_time
+                
+                # Redimensionar frame para streaming (reducir ancho de banda)
+                stream_width = 640
+                stream_height = int(frame.shape[0] * stream_width / frame.shape[1])
+                resized = cv2.resize(frame, (stream_width, stream_height))
+                
+                # Codificar como JPEG
+                encode_params = [cv2.IMWRITE_JPEG_QUALITY, self.stream_quality]
+                _, buffer = cv2.imencode('.jpg', resized, encode_params)
+                
+                # Convertir a base64
+                frame_base64 = base64.b64encode(buffer).decode('utf-8')
+                
+                message = {
+                    "type": "frame_update",
+                    "payload": {
+                        "frame": frame_base64,
+                        "markers": markers,
+                        "width": stream_width,
+                        "height": stream_height,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+                await self.websocket.send(json.dumps(message))
+            except Exception as e:
+                print(f"❌ Error enviando frame: {e}")
+                self.websocket = None
+    
+    async def handle_server_messages(self):
+        """Maneja mensajes del servidor (comandos de control)"""
+        if not self.websocket:
+            return
+        try:
+            message = await asyncio.wait_for(self.websocket.recv(), timeout=0.01)
+            data = json.loads(message)
+            msg_type = data.get("type", "")
+            
+            if msg_type == "set_stream_quality":
+                self.stream_quality = data.get("quality", 70)
+                print(f"📊 Calidad de stream ajustada a: {self.stream_quality}")
+            elif msg_type == "set_stream_fps":
+                self.stream_fps = data.get("fps", 15)
+                self.stream_interval = 1.0 / self.stream_fps
+                print(f"🎬 FPS de stream ajustado a: {self.stream_fps}")
+            elif msg_type == "toggle_stream":
+                self.stream_enabled = data.get("enabled", True)
+                print(f"📹 Streaming {'activado' if self.stream_enabled else 'desactivado'}")
+        except asyncio.TimeoutError:
+            pass
+        except Exception as e:
+            if "closed" in str(e).lower():
+                self.websocket = None
+    
     def run_detection_loop(self, show_preview: bool = True):
         """Loop principal de detección (síncrono para OpenCV)"""
         if not self.cap:
@@ -201,7 +272,12 @@ class ArucoDetector:
         frame_count = 0
         start_time = time.time()
         
+        # Crear event loop para async
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         print("🎯 Detección iniciada. Presiona 'q' para salir, 'c' para calibrar")
+        print(f"📹 Streaming habilitado a {self.stream_fps} FPS, calidad {self.stream_quality}")
         
         while self.running:
             ret, frame = self.cap.read()
@@ -212,11 +288,16 @@ class ArucoDetector:
             # Detectar marcadores
             markers, annotated_frame = self.detect_markers(frame)
             
-            # Enviar al servidor si hay cambios significativos
+            # Enviar frame al servidor para streaming (siempre, con límite de FPS)
+            loop.run_until_complete(self.send_frame(annotated_frame, markers))
+            
+            # Enviar marcadores si hay cambios significativos
             if self._markers_changed(markers):
                 self.last_markers = {m["id"]: m for m in markers}
-                # Enviar asíncronamente
-                asyncio.get_event_loop().run_until_complete(self.send_markers(markers))
+                loop.run_until_complete(self.send_markers(markers))
+            
+            # Manejar mensajes del servidor
+            loop.run_until_complete(self.handle_server_messages())
             
             # Mostrar FPS
             frame_count += 1
@@ -224,7 +305,7 @@ class ArucoDetector:
                 fps = frame_count / (time.time() - start_time)
                 cv2.putText(
                     annotated_frame,
-                    f"FPS: {fps:.1f} | Markers: {len(markers)}",
+                    f"FPS: {fps:.1f} | Markers: {len(markers)} | Stream: {'ON' if self.stream_enabled else 'OFF'}",
                     (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
@@ -241,10 +322,14 @@ class ArucoDetector:
                     break
                 elif key == ord('c'):
                     self.calibrate_interactive(frame)
+                elif key == ord('s'):
+                    self.stream_enabled = not self.stream_enabled
+                    print(f"📹 Streaming {'activado' if self.stream_enabled else 'desactivado'}")
         
         self.running = False
         self.stop_camera()
         cv2.destroyAllWindows()
+        loop.close()
     
     def _markers_changed(self, new_markers: List[dict], threshold: float = 5.0) -> bool:
         """Verifica si los marcadores han cambiado significativamente"""
@@ -285,7 +370,13 @@ async def main():
                        help="URL de cámara IP (ej: http://192.168.1.100:4747/video)")
     parser.add_argument("--server", type=str, default="ws://localhost:8000/ws/camera",
                        help="URL del servidor WebSocket")
-    parser.add_argument("--no-preview", action="store_true", help="Desactivar preview")
+    parser.add_argument("--no-preview", action="store_true", help="Desactivar preview local")
+    parser.add_argument("--stream-quality", type=int, default=70,
+                       help="Calidad JPEG del stream (1-100)")
+    parser.add_argument("--stream-fps", type=int, default=15,
+                       help="FPS del stream al servidor")
+    parser.add_argument("--no-stream", action="store_true", 
+                       help="Desactivar streaming de video")
     args = parser.parse_args()
     
     detector = ArucoDetector(
@@ -294,8 +385,26 @@ async def main():
         server_url=args.server
     )
     
+    # Configurar streaming
+    detector.stream_quality = args.stream_quality
+    detector.stream_fps = args.stream_fps
+    detector.stream_interval = 1.0 / args.stream_fps
+    detector.stream_enabled = not args.no_stream
+    
+    print("=" * 50)
+    print("🎮 MesaRPG - Detector de Marcadores ArUco")
+    print("=" * 50)
+    print(f"📡 Servidor: {args.server}")
+    print(f"📹 Streaming: {'Activado' if detector.stream_enabled else 'Desactivado'}")
+    if detector.stream_enabled:
+        print(f"   - Calidad: {detector.stream_quality}%")
+        print(f"   - FPS: {detector.stream_fps}")
+    print("=" * 50)
+    
     # Conectar al servidor
-    await detector.connect_to_server()
+    connected = await detector.connect_to_server()
+    if not connected:
+        print("⚠️ Ejecutando sin conexión al servidor")
     
     # Ejecutar detección en thread separado para no bloquear
     detection_thread = threading.Thread(
@@ -307,15 +416,17 @@ async def main():
     # Mantener conexión WebSocket
     try:
         while detector.running:
-            await asyncio.sleep(0.1)
+            await asyncio.sleep(0.5)
             # Reconectar si es necesario
-            if detector.websocket is None:
+            if detector.websocket is None and detector.running:
+                print("🔄 Reconectando al servidor...")
                 await detector.connect_to_server()
     except KeyboardInterrupt:
         print("\n⏹️ Deteniendo...")
         detector.running = False
     
     detection_thread.join()
+    print("👋 ¡Hasta pronto!")
 
 
 if __name__ == "__main__":

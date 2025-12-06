@@ -1014,8 +1014,16 @@ async def handle_mobile_message(player_id: str, message: dict, websocket: WebSoc
 
 @app.websocket("/ws/camera")
 async def websocket_camera(websocket: WebSocket):
-    """WebSocket para el sistema de cámara/visión"""
+    """WebSocket para el sistema de cámara/visión
+    
+    Soporta dos tipos de conexiones:
+    1. Detector (PC local): envía frames y markers
+    2. Admin (navegador): recibe frames y controla
+    """
     await ws_manager.connect_camera(websocket)
+    
+    # Determinar si es un detector o admin basado en el primer mensaje
+    is_detector = False
     
     try:
         # Enviar estado inicial de la cámara
@@ -1027,23 +1035,97 @@ async def websocket_camera(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
+            msg_type = message.get("type", "")
             
             # Responder a ping con pong para mantener conexión viva
-            if message.get("type") == "ping":
+            if msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
                 continue
             
-            if message.get("type") == "markers_update":
+            # === Mensajes del Detector (PC con cámara) ===
+            
+            # Recibir frame del detector y retransmitir a admins
+            if msg_type == "frame_update":
+                is_detector = True
+                payload = message.get("payload", {})
+                
+                # Retransmitir frame a todos los admins conectados
+                frame_message = {
+                    "type": "camera_frame",
+                    "payload": {
+                        "frame": payload.get("frame"),
+                        "markers": payload.get("markers", []),
+                        "width": payload.get("width", 640),
+                        "height": payload.get("height", 480),
+                        "timestamp": payload.get("timestamp"),
+                        "source": "detector"
+                    }
+                }
+                # Broadcast a admins y otras conexiones de cámara (excepto el detector)
+                for conn in ws_manager._camera_connections:
+                    if conn != websocket:
+                        try:
+                            await send_json_safe(conn, frame_message)
+                        except:
+                            pass
+                
+                # También procesar marcadores
+                markers = payload.get("markers", [])
+                if markers:
+                    await handle_markers_update(markers)
+            
+            elif msg_type == "markers_update":
+                is_detector = True
                 markers = message.get("payload", {}).get("markers", [])
                 await handle_markers_update(markers)
             
+            # === Mensajes del Admin (control) ===
+            
             # Comandos de control de cámara desde el admin
-            elif message.get("type") == "camera_control":
+            elif msg_type == "camera_control":
                 action = message.get("payload", {}).get("action")
                 await handle_camera_control(websocket, action, message.get("payload", {}))
             
-            # Solicitar frame actual
-            elif message.get("type") == "get_frame":
+            # Controlar calidad/fps del streaming del detector
+            elif msg_type == "set_detector_quality":
+                quality = message.get("payload", {}).get("quality", 70)
+                # Enviar comando a todos los detectores conectados
+                for conn in ws_manager._camera_connections:
+                    if conn != websocket:
+                        try:
+                            await send_json_safe(conn, {
+                                "type": "set_stream_quality",
+                                "quality": quality
+                            })
+                        except:
+                            pass
+            
+            elif msg_type == "set_detector_fps":
+                fps = message.get("payload", {}).get("fps", 15)
+                for conn in ws_manager._camera_connections:
+                    if conn != websocket:
+                        try:
+                            await send_json_safe(conn, {
+                                "type": "set_stream_fps",
+                                "fps": fps
+                            })
+                        except:
+                            pass
+            
+            elif msg_type == "toggle_detector_stream":
+                enabled = message.get("payload", {}).get("enabled", True)
+                for conn in ws_manager._camera_connections:
+                    if conn != websocket:
+                        try:
+                            await send_json_safe(conn, {
+                                "type": "toggle_stream",
+                                "enabled": enabled
+                            })
+                        except:
+                            pass
+            
+            # Solicitar frame actual (para modo servidor local)
+            elif msg_type == "get_frame":
                 frame = camera_manager.get_current_frame()
                 await send_json_safe(websocket, {
                     "type": "camera_frame",
@@ -1052,6 +1134,12 @@ async def websocket_camera(websocket: WebSocket):
             
     except WebSocketDisconnect:
         ws_manager.disconnect_camera(websocket)
+        if is_detector:
+            # Notificar a admins que el detector se desconectó
+            await ws_manager.broadcast_admins({
+                "type": "detector_disconnected",
+                "payload": {"timestamp": datetime.now().isoformat()}
+            })
 
 async def handle_camera_control(websocket: WebSocket, action: str, payload: dict):
     """Procesa comandos de control de cámara"""
