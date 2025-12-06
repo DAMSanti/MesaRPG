@@ -7,11 +7,14 @@ class MesaRPGApp {
     constructor() {
         this.state = {
             characters: {},
+            charactersById: {},  // Mapa id -> character para acceso rápido
             players: {},
             is_combat: false,
             current_turn: 0,
             active_character_id: null,
-            current_map: 'default'
+            current_map: 'default',
+            miniatures: {},
+            miniatureAssignments: {}  // track_id -> character_id
         };
         
         this.init();
@@ -29,6 +32,9 @@ class MesaRPGApp {
         
         // Conectar
         window.wsManager.connect();
+        
+        // Cargar asignaciones
+        this.loadMiniatureAssignments();
         
         // Eventos de teclado
         this.setupKeyboardEvents();
@@ -192,6 +198,15 @@ class MesaRPGApp {
             this.handleMiniaturePositions(payload);
         });
         
+        // Asignaciones de figuritas a personajes
+        ws.on('miniature_assigned', (payload) => {
+            this.handleMiniatureAssignment(payload);
+        });
+        
+        ws.on('miniature_unassigned', (payload) => {
+            this.handleMiniatureAssignment(payload);
+        });
+        
         ws.on('player_action', (payload) => {
             this.handlePlayerAction(payload);
         });
@@ -223,6 +238,25 @@ class MesaRPGApp {
             ...this.state,
             ...state
         };
+        
+        // Construir mapa de personajes por ID para acceso rápido
+        if (state.characters) {
+            this.state.charactersById = {};
+            Object.entries(state.characters).forEach(([key, char]) => {
+                const id = char.id || key;
+                this.state.charactersById[id] = char;
+            });
+        }
+        
+        // Si hay fichas aprobadas (approved_sheets), también las añadimos
+        if (state.approved_sheets) {
+            state.approved_sheets.forEach(sheet => {
+                const id = sheet.id;
+                if (id) {
+                    this.state.charactersById[id] = sheet;
+                }
+            });
+        }
         
         // Actualizar renderer
         if (state.characters) {
@@ -510,9 +544,39 @@ class MesaRPGApp {
             };
         });
         
-        // Actualizar visualización de miniaturas
+        // Actualizar visualización de miniaturas con asignaciones y personajes
         if (window.gameRenderer && window.gameRenderer.updateMiniaturePositions) {
-            window.gameRenderer.updateMiniaturePositions(miniatures);
+            window.gameRenderer.updateMiniaturePositions(
+                miniatures, 
+                this.state.miniatureAssignments, 
+                this.state.charactersById
+            );
+        }
+    }
+    
+    // Cargar asignaciones de miniaturas desde el servidor
+    async loadMiniatureAssignments() {
+        try {
+            const response = await fetch('/api/miniature-assignments');
+            const data = await response.json();
+            this.state.miniatureAssignments = data.assignments || {};
+            console.log('📌 Asignaciones cargadas:', this.state.miniatureAssignments);
+        } catch (error) {
+            console.warn('No se pudieron cargar asignaciones:', error);
+            this.state.miniatureAssignments = {};
+        }
+    }
+    
+    // Manejar actualizaciones de asignaciones via WebSocket
+    handleMiniatureAssignment(payload) {
+        this.state.miniatureAssignments = payload.assignments || {};
+        
+        // Notificar al renderer para actualizar tokens
+        if (window.gameRenderer && window.gameRenderer.updateMiniatureAssignments) {
+            window.gameRenderer.updateMiniatureAssignments(
+                this.state.miniatureAssignments,
+                this.state.charactersById
+            );
         }
     }
     

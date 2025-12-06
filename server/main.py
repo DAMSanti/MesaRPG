@@ -9,7 +9,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Optional, Dict
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Body
 from fastapi.staticfiles import StaticFiles
@@ -827,6 +827,63 @@ async def simple_calibration(body: dict = Body(...)):
         return {"status": "calibrated", "game_size": {"width": game_width, "height": game_height}}
     else:
         raise HTTPException(status_code=500, detail="Error en calibración simple")
+
+
+# === Miniature-to-Character Assignments ===
+
+# Diccionario en memoria para asignaciones track_id -> character_id
+_miniature_assignments: Dict[int, str] = {}
+
+@app.get("/api/miniature-assignments")
+async def get_miniature_assignments():
+    """Obtiene todas las asignaciones de figuritas a personajes"""
+    return {"assignments": _miniature_assignments}
+
+@app.post("/api/miniature-assignments")
+async def assign_miniature_to_character(body: dict = Body(...)):
+    """Asigna una figurita (track_id) a un personaje (character_id)"""
+    track_id = body.get("track_id")
+    character_id = body.get("character_id")
+    
+    if track_id is None or character_id is None:
+        raise HTTPException(status_code=400, detail="track_id y character_id son requeridos")
+    
+    _miniature_assignments[int(track_id)] = character_id
+    
+    # Notificar a todos los clientes
+    await ws_manager.broadcast_all({
+        "type": "miniature_assigned",
+        "payload": {
+            "track_id": track_id,
+            "character_id": character_id,
+            "assignments": _miniature_assignments
+        }
+    })
+    
+    return {"status": "assigned", "assignments": _miniature_assignments}
+
+@app.delete("/api/miniature-assignments/{track_id}")
+async def unassign_miniature_from_character(track_id: int):
+    """Desasigna una figurita de un personaje"""
+    if track_id in _miniature_assignments:
+        del _miniature_assignments[track_id]
+    
+    # Notificar a todos
+    await ws_manager.broadcast_all({
+        "type": "miniature_unassigned",
+        "payload": {
+            "track_id": track_id,
+            "assignments": _miniature_assignments
+        }
+    })
+    
+    return {"status": "unassigned", "assignments": _miniature_assignments}
+
+@app.get("/api/camera/tracks")
+async def get_current_tracks():
+    """Obtiene los tracks actuales del procesador de frames YOLO"""
+    tracks = frame_processor.get_tracks()
+    return {"tracks": tracks, "count": len(tracks)}
 
 
 # === WebSocket Endpoints ===

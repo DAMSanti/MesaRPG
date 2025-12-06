@@ -271,8 +271,33 @@
         <!-- Tab: Asignación de Tokens -->
         <section id="tab-tokens" class="tab-content">
             <div class="grid">
+                <!-- Nueva sección: Figuritas detectadas por cámara -->
                 <div class="card full-width">
-                    <h2>🎯 Asignar Tokens a Personajes</h2>
+                    <h2>📷 Figuritas Detectadas (Cámara)</h2>
+                    <p class="help-text">Haz clic en una figurita detectada y luego en un personaje para vincularlos.</p>
+                    
+                    <div class="detected-miniatures-section">
+                        <div class="detected-list" id="detected-miniatures">
+                            <p class="empty-state">No hay figuritas detectadas. Activa la cámara para detectar.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="assignment-actions" style="margin-top: 15px;">
+                        <button class="btn btn-secondary" onclick="refreshDetectedMiniatures()">🔄 Actualizar</button>
+                        <button class="btn btn-warning" onclick="clearAllAssignments()">🗑️ Limpiar Asignaciones</button>
+                    </div>
+                </div>
+                
+                <!-- Personajes disponibles para asignar -->
+                <div class="card full-width">
+                    <h2>👤 Personajes en Partida</h2>
+                    <div id="characters-for-assignment" class="characters-assignment-grid">
+                        <p class="empty-state">No hay personajes. Crea uno en la pestaña Fichas.</p>
+                    </div>
+                </div>
+
+                <div class="card full-width">
+                    <h2>🎯 Asignar Tokens Visuales</h2>
                     <p class="help-text">Selecciona un jugador y elige un token visual para representarlo en el tablero.</p>
                     
                     <div id="token-assignment" class="token-assignment-grid-simple">

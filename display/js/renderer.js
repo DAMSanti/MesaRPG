@@ -1141,15 +1141,27 @@ class GameRenderer {
     
     // === Sistema de Miniaturas (desde cámara YOLO) ===
     
-    updateMiniaturePositions(miniatures) {
+    updateMiniaturePositions(miniatures, assignments = null, characters = null) {
         /**
          * Actualiza las posiciones de las miniaturas detectadas por la cámara.
          * Cada miniatura tiene: id, center.x, center.y, orientation, confidence
          * Las coordenadas vienen normalizadas respecto al tamaño del frame de la cámara.
+         * 
+         * @param {Array} miniatures - Lista de miniaturas detectadas
+         * @param {Object} assignments - Mapa de track_id -> character_id
+         * @param {Object} characters - Mapa de character_id -> character data
          */
         
         if (!this.miniatureTokens) {
             this.miniatureTokens = {};
+        }
+        
+        // Guardar asignaciones y personajes para uso interno
+        if (assignments) {
+            this.miniatureAssignments = assignments;
+        }
+        if (characters) {
+            this.miniatureCharacters = characters;
         }
         
         const currentIds = new Set();
@@ -1161,12 +1173,16 @@ class GameRenderer {
             // Convertir coordenadas de cámara a coordenadas de pantalla
             const screenPos = this.cameraToScreen(m.center || m);
             
+            // Obtener info del personaje asignado
+            const characterId = this.miniatureAssignments?.[id];
+            const character = characterId ? this.miniatureCharacters?.[characterId] : null;
+            
             if (this.miniatureTokens[id]) {
                 // Actualizar posición existente con animación suave
-                this.updateMiniatureToken(id, screenPos, m.orientation);
+                this.updateMiniatureToken(id, screenPos, m.orientation, character);
             } else {
                 // Crear nuevo token de miniatura
-                this.createMiniatureToken(id, screenPos, m.orientation);
+                this.createMiniatureToken(id, screenPos, m.orientation, character);
             }
         });
         
@@ -1197,74 +1213,97 @@ class GameRenderer {
         };
     }
     
-    createMiniatureToken(id, pos, orientation = 0) {
+    createMiniatureToken(id, pos, orientation = 0, character = null) {
         const token = document.createElement('div');
         token.className = 'miniature-token';
+        if (character) token.classList.add('has-character');
         token.id = `miniature-${id}`;
         token.dataset.miniatureId = id;
+        
+        const hasCharacter = character !== null;
+        const name = character?.character_name || character?.data?.name || character?.name || `#${id}`;
+        const hp = character?.data?.hp || character?.hp;
+        const maxHp = character?.data?.max_hp || character?.max_hp;
+        const charClass = character?.data?.class || character?.class || '';
+        
+        // Calcular porcentaje de HP para la barra
+        const hpPercent = (hp && maxHp) ? Math.round((hp / maxHp) * 100) : 100;
+        const hpColor = hpPercent > 50 ? '#4ade80' : hpPercent > 25 ? '#fbbf24' : '#ef4444';
         
         token.style.cssText = `
             position: absolute;
             left: ${pos.x}px;
             top: ${pos.y}px;
-            width: 60px;
-            height: 60px;
             transform: translate(-50%, -50%) rotate(${orientation}deg);
             transition: left 0.1s ease-out, top 0.1s ease-out, transform 0.1s ease-out;
             pointer-events: none;
             z-index: 100;
         `;
         
-        token.innerHTML = `
-            <div class="mini-token-inner" style="
-                width: 100%;
-                height: 100%;
-                border-radius: 50%;
-                background: radial-gradient(circle at 30% 30%, #4a90d9, #1e3a5f);
-                border: 3px solid #ffd700;
-                box-shadow: 0 0 15px rgba(74, 144, 217, 0.6), 0 4px 8px rgba(0,0,0,0.4);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-size: 20px;
-                font-weight: bold;
-                color: white;
-                text-shadow: 1px 1px 2px black;
-            ">#${id}</div>
-            <div class="mini-direction" style="
-                position: absolute;
-                top: -15px;
-                left: 50%;
-                transform: translateX(-50%);
-                width: 0;
-                height: 0;
-                border-left: 8px solid transparent;
-                border-right: 8px solid transparent;
-                border-bottom: 15px solid #ffd700;
-            "></div>
-        `;
+        if (hasCharacter) {
+            // Token completo con información del personaje
+            token.innerHTML = `
+                <div class="mini-token-container">
+                    <div class="mini-token-inner character-assigned">
+                        <div class="mini-avatar">${name.charAt(0).toUpperCase()}</div>
+                    </div>
+                    <div class="mini-direction-arrow"></div>
+                    <div class="mini-info-panel">
+                        <div class="mini-name">${this.escapeHtml(name)}</div>
+                        ${charClass ? `<div class="mini-class">${this.escapeHtml(charClass)}</div>` : ''}
+                        ${hp !== undefined ? `
+                            <div class="mini-hp-bar">
+                                <div class="mini-hp-fill" style="width: ${hpPercent}%; background: ${hpColor};"></div>
+                                <span class="mini-hp-text">${hp}/${maxHp || '?'}</span>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+        } else {
+            // Token simple sin asignar
+            token.innerHTML = `
+                <div class="mini-token-container">
+                    <div class="mini-token-inner unassigned">
+                        <span class="mini-id-label">#${id}</span>
+                    </div>
+                    <div class="mini-direction-arrow"></div>
+                </div>
+            `;
+        }
         
         this.tokensContainer.appendChild(token);
-        this.miniatureTokens[id] = token;
+        this.miniatureTokens[id] = { element: token, character };
         
         // Animación de entrada
         token.style.animation = 'tokenAppear 0.3s ease-out';
         
-        console.log(`🎯 Miniatura #${id} creada en (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)})`);
+        console.log(`🎯 Miniatura #${id} creada en (${pos.x.toFixed(0)}, ${pos.y.toFixed(0)})${hasCharacter ? ` → ${name}` : ''}`);
     }
     
-    updateMiniatureToken(id, pos, orientation = 0) {
-        const token = this.miniatureTokens[id];
-        if (!token) return;
+    updateMiniatureToken(id, pos, orientation = 0, character = null) {
+        const tokenData = this.miniatureTokens[id];
+        if (!tokenData) return;
+        
+        const token = tokenData.element || tokenData;
         
         token.style.left = `${pos.x}px`;
         token.style.top = `${pos.y}px`;
         token.style.transform = `translate(-50%, -50%) rotate(${orientation}deg)`;
+        
+        // Si el personaje cambió, recrear el token
+        const currentCharId = tokenData.character?.id;
+        const newCharId = character?.id;
+        if (currentCharId !== newCharId) {
+            this.removeMiniatureToken(id);
+            this.createMiniatureToken(id, pos, orientation, character);
+        }
     }
     
     removeMiniatureToken(id) {
-        const token = this.miniatureTokens[id];
-        if (token) {
+        const tokenData = this.miniatureTokens[id];
+        if (tokenData) {
+            const token = tokenData.element || tokenData;
             token.style.animation = 'tokenDisappear 0.3s ease-out';
             setTimeout(() => {
                 token.remove();
@@ -1272,6 +1311,37 @@ class GameRenderer {
             delete this.miniatureTokens[id];
             console.log(`👋 Miniatura #${id} eliminada`);
         }
+    }
+    
+    // Actualizar asignaciones (llamado cuando cambian)
+    updateMiniatureAssignments(assignments, characters) {
+        this.miniatureAssignments = assignments;
+        this.miniatureCharacters = characters;
+        
+        // Recrear todos los tokens con la nueva info
+        if (this.miniatureTokens) {
+            Object.keys(this.miniatureTokens).forEach(id => {
+                const tokenData = this.miniatureTokens[id];
+                const token = tokenData.element || tokenData;
+                const pos = {
+                    x: parseFloat(token.style.left),
+                    y: parseFloat(token.style.top)
+                };
+                const orientation = parseFloat(token.style.transform.match(/rotate\(([^)]+)deg\)/)?.[1] || 0);
+                
+                const characterId = assignments?.[id];
+                const character = characterId ? characters?.[characterId] : null;
+                
+                this.removeMiniatureToken(id);
+                this.createMiniatureToken(id, pos, orientation, character);
+            });
+        }
+    }
+    
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text || '';
+        return div.innerHTML;
     }
     
     toggleFullscreen() {

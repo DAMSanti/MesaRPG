@@ -16,6 +16,10 @@ let selectedTokenSheetId = null;
 let selectedTokenId = null;
 let currentTokenCategory = 'system';
 
+// Camera tracking state
+let detectedMiniatures = [];  // Figuritas detectadas por cámara (tracks)
+let miniatureAssignments = {};  // { trackId: characterId }
+
 // DOM Ready
 document.addEventListener('DOMContentLoaded', () => {
     initTabs();
@@ -154,6 +158,12 @@ function handleMessage(data) {
             break;
         case 'pong':
             // Response to ping - connection alive
+            break;
+        case 'processed_frame':
+            // Frame procesado de cámara con tracks
+            if (data.payload?.tracks) {
+                handleCameraTracks(data.payload.tracks);
+            }
             break;
         default:
             console.log('Unknown message type:', data.type);
@@ -295,6 +305,8 @@ async function loadApprovedSheets() {
         renderAssignedTokens();
         renderSheetsForToken();
         renderTokenGallery();
+        updateCharactersForAssignment();  // Actualizar vista de asignación de figuritas
+        updateDetectedMiniaturesList();   // Refrescar también la lista de miniaturas
     } catch (error) {
         console.error('Error loading approved sheets:', error);
     }
@@ -904,4 +916,223 @@ function formatTime(isoString) {
 // Load markers on page load after systems are ready
 setTimeout(() => {
     loadAvailableMarkers();
+    loadMiniatureAssignments();
 }, 1000);
+
+// ==================== Camera Miniature Detection ====================
+
+// Actualizar miniaturas cuando llegan datos del WebSocket de cámara
+function handleCameraTracks(tracks) {
+    detectedMiniatures = tracks || [];
+    updateDetectedMiniaturesList();
+}
+
+// Cargar asignaciones guardadas
+async function loadMiniatureAssignments() {
+    try {
+        const response = await fetch('/api/miniature-assignments');
+        const data = await response.json();
+        miniatureAssignments = data.assignments || {};
+        updateDetectedMiniaturesList();
+    } catch (error) {
+        console.error('Error loading miniature assignments:', error);
+    }
+}
+
+// Refrescar lista de miniaturas detectadas
+function refreshDetectedMiniatures() {
+    // Las miniaturas se actualizan automáticamente via WebSocket
+    // Pero podemos forzar una petición al endpoint de tracks
+    fetch('/api/camera/tracks')
+        .then(res => res.json())
+        .then(data => {
+            detectedMiniatures = data.tracks || [];
+            updateDetectedMiniaturesList();
+        })
+        .catch(err => console.error('Error getting tracks:', err));
+}
+
+// Actualizar UI de lista de miniaturas detectadas
+function updateDetectedMiniaturesList() {
+    const container = document.getElementById('detected-miniatures');
+    const quickSelect = document.getElementById('quick-assign-select');
+    
+    if (!container) return;
+    
+    const unassigned = detectedMiniatures.filter(m => !miniatureAssignments[m.id]);
+    
+    if (detectedMiniatures.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state">
+                <p>No hay figuritas detectadas</p>
+                <small>Asegúrate de que la cámara está activa</small>
+            </div>
+        `;
+        if (quickSelect) quickSelect.innerHTML = '<option value="">Sin figuritas</option>';
+        return;
+    }
+    
+    container.innerHTML = `
+        <div class="detected-minis-header">
+            <span>${detectedMiniatures.length} figuritas detectadas</span>
+            <span class="badge-count">${unassigned.length} sin asignar</span>
+        </div>
+        <div class="detected-minis-container">
+            ${detectedMiniatures.map(mini => {
+                const assignment = miniatureAssignments[mini.id];
+                const character = assignment ? approvedSheets.find(s => s.id === assignment) : null;
+                const characterName = character ? (character.character_name || character.data?.name || 'Personaje') : null;
+                
+                return `
+                    <div class="detected-mini-card ${assignment ? 'assigned' : 'unassigned'}" data-track-id="${mini.id}">
+                        <div class="mini-id">#${mini.id}</div>
+                        <div class="mini-position">
+                            <span>📍 ${mini.center?.x?.toFixed(0) || 0}, ${mini.center?.y?.toFixed(0) || 0}</span>
+                            ${mini.orientation !== undefined ? `<span>🧭 ${mini.orientation.toFixed(0)}°</span>` : ''}
+                        </div>
+                        <div class="mini-assignment">
+                            ${characterName 
+                                ? `<span class="assigned-to">→ ${escapeHtml(characterName)}</span>
+                                   <button class="btn btn-sm btn-danger" onclick="unassignMiniature(${mini.id})">✕</button>`
+                                : `<select class="mini-assign-select" onchange="assignMiniatureFromSelect(${mini.id}, this.value)">
+                                      <option value="">Asignar a...</option>
+                                      ${approvedSheets.map(s => `<option value="${s.id}">${escapeHtml(s.character_name || s.data?.name || 'Sin nombre')}</option>`).join('')}
+                                   </select>`
+                            }
+                        </div>
+                    </div>
+                `;
+            }).join('')}
+        </div>
+    `;
+    
+    // Actualizar quick assign select si existe
+    if (quickSelect) {
+        quickSelect.innerHTML = `
+            <option value="">Selecciona figurita...</option>
+            ${unassigned.map(m => `<option value="${m.id}">Figurita #${m.id}</option>`).join('')}
+        `;
+    }
+}
+
+// Asignar miniatura desde el dropdown de la tarjeta
+async function assignMiniatureFromSelect(trackId, characterId) {
+    if (!characterId) return;
+    await assignMiniatureToCharacter(trackId, characterId);
+}
+
+// Asignar una miniatura a un personaje
+async function assignMiniatureToCharacter(trackId, characterId) {
+    try {
+        const response = await fetch('/api/miniature-assignments', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ track_id: trackId, character_id: characterId })
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            miniatureAssignments = data.assignments || {};
+            updateDetectedMiniaturesList();
+            
+            const character = approvedSheets.find(s => s.id === characterId);
+            logAction('Asignación', `Figurita #${trackId} → ${character?.character_name || 'Personaje'}`);
+        } else {
+            console.error('Error assigning miniature');
+        }
+    } catch (error) {
+        console.error('Error assigning miniature:', error);
+    }
+}
+
+// Desasignar una miniatura
+async function unassignMiniature(trackId) {
+    try {
+        const response = await fetch(`/api/miniature-assignments/${trackId}`, {
+            method: 'DELETE'
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            miniatureAssignments = data.assignments || {};
+            updateDetectedMiniaturesList();
+            logAction('Asignación', `Figurita #${trackId} desasignada`);
+        }
+    } catch (error) {
+        console.error('Error unassigning miniature:', error);
+    }
+}
+
+// Asignar miniatura seleccionada al personaje de la ficha actual
+function assignSelectedMiniatureToSheet(sheetId) {
+    const quickSelect = document.getElementById('quick-assign-select');
+    const trackId = quickSelect?.value;
+    
+    if (!trackId || !sheetId) {
+        alert('Selecciona una figurita primero');
+        return;
+    }
+    
+    assignMiniatureToCharacter(parseInt(trackId), sheetId);
+}
+
+// Limpiar todas las asignaciones
+async function clearAllAssignments() {
+    if (!confirm('¿Seguro que quieres eliminar todas las asignaciones de figuritas?')) {
+        return;
+    }
+    
+    // Desasignar cada una
+    const trackIds = Object.keys(miniatureAssignments);
+    for (const trackId of trackIds) {
+        try {
+            await fetch(`/api/miniature-assignments/${trackId}`, { method: 'DELETE' });
+        } catch (e) {
+            console.error('Error desasignando', trackId, e);
+        }
+    }
+    
+    miniatureAssignments = {};
+    updateDetectedMiniaturesList();
+    logAction('Asignación', 'Todas las asignaciones eliminadas');
+}
+
+// Actualizar lista de personajes para asignación
+function updateCharactersForAssignment() {
+    const container = document.getElementById('characters-for-assignment');
+    if (!container) return;
+    
+    if (approvedSheets.length === 0) {
+        container.innerHTML = '<p class="empty-state">No hay personajes. Crea uno en la pestaña Fichas.</p>';
+        return;
+    }
+    
+    container.innerHTML = approvedSheets.map(sheet => {
+        const name = sheet.character_name || sheet.data?.name || 'Sin nombre';
+        const player = sheet.player_name || 'Sin jugador';
+        const hp = sheet.data?.hp || '?';
+        const maxHp = sheet.data?.max_hp || '?';
+        const charClass = sheet.data?.class || sheet.data?.tipo || '';
+        
+        // Verificar si tiene figurita asignada
+        const assignedTrack = Object.entries(miniatureAssignments).find(([trackId, charId]) => charId === sheet.id);
+        
+        return `
+            <div class="character-assignment-card ${assignedTrack ? 'has-miniature' : ''}" data-character-id="${sheet.id}">
+                <div class="char-avatar">${name.charAt(0).toUpperCase()}</div>
+                <div class="char-info">
+                    <div class="char-name">${escapeHtml(name)}</div>
+                    <div class="char-player">${escapeHtml(player)}</div>
+                    ${charClass ? `<div class="char-class">${escapeHtml(charClass)}</div>` : ''}
+                    <div class="char-hp">❤️ ${hp}/${maxHp}</div>
+                </div>
+                <div class="char-status">
+                    ${assignedTrack 
+                        ? `<span class="miniature-linked">📍 #${assignedTrack[0]}</span>` 
+                        : `<span class="miniature-unlinked">Sin figurita</span>`
+                    }
+                </div>
+            </div>
+        `;
+    }).join('');
+}
