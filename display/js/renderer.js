@@ -665,6 +665,20 @@ class GameRenderer {
         
         // Sin bordes para integración seamless (las tiles se superponen ligeramente)
         
+        // Grid sutil para referencia táctica
+        ctx.beginPath();
+        for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i;
+            const hx = cx + radius * Math.cos(angle);
+            const hy = cy + radius * Math.sin(angle);
+            if (i === 0) ctx.moveTo(hx, hy);
+            else ctx.lineTo(hx, hy);
+        }
+        ctx.closePath();
+        ctx.strokeStyle = 'rgba(128,128,128,0.25)';
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        
         // Mostrar elevación si es mayor a 0
         if (elevation > 0) {
             const fontSize = Math.max(8, radius * 0.35);
