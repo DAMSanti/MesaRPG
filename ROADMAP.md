@@ -44,18 +44,22 @@ Es el ítem #1 del backlog original y la razón de ser del proyecto (visión por
 - `server/camera_manager.py` y `vision/detector.py` (pipeline ArUco huérfano) siguen en el repo sin usarse desde ningún frontend — candidatos a eliminar o revivir deliberadamente, no a dejar ambiguos.
 - El tracking por proximidad (`simple_tracker.py`) reasigna `track_id` si una miniatura se pierde varios frames — aceptable para uso doméstico, pero puede exigir reasignar en el admin más de lo ideal en mesas con mucho movimiento.
 
-## Fase 2 — Deuda técnica estructural
+## Fase 2 — Deuda técnica estructural ✅ Completada (2026-08-11)
 
 Cambios de arquitectura que hacen más barato todo lo que viene después. Vale la pena hacerlos antes de seguir añadiendo features sobre las mismas grietas.
 
-- [ ] **Eliminar (o aislar explícitamente como "legacy/experimental") el sistema de personajes por plantilla ArUco** (`config/characters.json`, `add_character_from_marker`) si el sistema de fichas dinámicas es el soportado. Mantener ambos sin marcar cuál es la fuente de verdad es lo que causó el bug de Fase 0.
-- [ ] **Persistencia real del estado de partida.** Hoy solo los mapas sobreviven a un reinicio. Opciones, de menor a mayor esfuerzo:
-  1. Volcar `GameState` completo a JSON en disco periódicamente + al cerrar (rápido, suficiente para uso doméstico).
-  2. SQLite embebido (ya insinuado en `.env.example`, nunca implementado) si se necesita consultas/histórico.
-- [ ] **Autenticación mínima viable**: al menos un secreto compartido para el rol GM (admin panel) y una cookie/token de sesión para jugadores, para que `PlayerRole.GM` deje de ser un campo decorativo. No hace falta un sistema de usuarios completo — el riesgo real es que cualquiera con la URL pueda aprobar fichas o borrar mapas ajenos si el servidor está expuesto a Internet (ver `SPECS.md §8.2-8.3`).
-- [ ] **Restringir CORS** a los orígenes reales de despliegue en vez de `*`, o quitar `allow_credentials=True` si `*` se mantiene por simplicidad de LAN.
-- [ ] **Proteger o eliminar endpoints `/api/debug/*`** en despliegues de producción (flag de entorno `DEBUG`, que ya existe en `.env.example` pero no se lee en el código).
-- [ ] Fijar rangos de versión de dependencias (`server/requirements.txt`) en vez de solo `>=`, y considerar un lockfile (`pip-compile` o similar).
+- [x] **Eliminar (o aislar explícitamente como "legacy/experimental") el sistema de personajes por plantilla ArUco** (`config/characters.json`, `add_character_from_marker`) si el sistema de fichas dinámicas es el soportado. Mantener ambos sin marcar cuál es la fuente de verdad es lo que causó el bug de Fase 0.
+  → `get_character_by_marker` (sin ningún llamador en todo el repo) se eliminó. `add_character_from_marker`/`remove_character_by_marker` siguen existiendo (los usan los endpoints `/api/debug/*` para crear personajes de prueba sin cámara), pero ahora con docstring explícito de que son legacy y el sistema soportado es el de fichas dinámicas.
+- [x] **Persistencia real del estado de partida.** Hoy solo los mapas sobreviven a un reinicio.
+  → Implementada la opción 1 (volcado a JSON): `GameStateManager` escribe `data/session_state.json` (escritura atómica tmp+rename) tras cada cambio de estado, y lo restaura al arrancar. Probado end-to-end (crear ficha → aprobar → asignar token → asignar miniatura → nueva instancia restaura todo). SQLite queda anotado como opción futura si algún día hace falta consultar histórico.
+- [x] **Autenticación mínima viable**: al menos un secreto compartido para el rol GM (admin panel) y una cookie/token de sesión para jugadores, para que `PlayerRole.GM` deje de ser un campo decorativo.
+  → `GM_SECRET` (env, opcional): si se define, ~25 endpoints de mutación de solo-GM + `/ws/admin` exigen cookie de sesión vía `POST /api/admin/login`; admin.js pide la contraseña una sola vez al cargar. Si no se define, el admin sigue funcionando sin login (uso doméstico en LAN). Para jugadores: `player_id` (que ya actúa como credencial de sesión) ahora se genera con `crypto.randomUUID()` en vez de `Math.random()`. Probado con FastAPI TestClient: sin `GM_SECRET` el comportamiento es idéntico al anterior; con `GM_SECRET`, 401 sin cookie y 200 tras login correcto.
+- [x] **Restringir CORS** a los orígenes reales de despliegue en vez de `*`, o quitar `allow_credentials=True` si `*` se mantiene por simplicidad de LAN.
+  → Orígenes configurables vía `CORS_ORIGINS` (por defecto sigue siendo `*` para no romper el uso en LAN), y `allow_credentials` pasa a `False` (la sesión de GM usa cookie same-origin, no la necesita).
+- [x] **Proteger o eliminar endpoints `/api/debug/*`** en despliegues de producción (flag de entorno `DEBUG`, que ya existe en `.env.example` pero no se lee en el código).
+  → Ahora sí se lee: `/api/debug/*` devuelve 404 salvo `DEBUG=true`, y además exige sesión de GM si `GM_SECRET` está configurado.
+- [x] Fijar rangos de versión de dependencias (`server/requirements.txt`) en vez de solo `>=`, y considerar un lockfile (`pip-compile` o similar).
+  → Cada dependencia acotada al siguiente major por encima de la versión mínima probada. Lockfile real queda pendiente (requiere resolver contra un entorno reproducible que esta sesión no tenía disponible).
 
 ## Fase 3 — Calidad y mantenibilidad
 

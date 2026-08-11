@@ -19,7 +19,7 @@
 ## 🔧 MEJORAS RECOMENDADAS
 
 - [x] **Display sin mapa cargado por defecto** - ARREGLADO (2026-08-11): `current_map` tenía como default un id de mapa ("default") que nunca existe; ahora es `None` hasta que el GM proyecta un mapa real
-- [ ] **No hay persistencia de sesión** - Si el servidor reinicia, se pierden fichas y tokens
+- [x] **No hay persistencia de sesión** - ARREGLADO (2026-08-11): el estado se guarda en `data/session_state.json` en cada cambio y se restaura al arrancar. Ver ROADMAP.md Fase 2
 - [ ] **Falta indicador de jugador activo** - En admin/display no se ve claramente quién tiene el turno
 - [ ] **Sin sistema de chat/comunicación** - Los jugadores no pueden comunicarse entre sí
 - [ ] **Escaneo de fichas no funciona** - Funcionalidad de escanear PDFs con cámara está incompleta (no hay OCR)
@@ -32,9 +32,11 @@
 
 ## ⚠️ TÉCNICOS
 
-- [ ] **Archivos YOLO en el repo (>100MB)** - Los `.pt` files no deberían estar en git
-- [ ] **Sin tests automatizados** - No hay pruebas unitarias ni de integración
-- [ ] **Logs mínimos en producción** - Difícil debugear sin logs estructurados
+- [x] **Archivos YOLO en el repo (>100MB)** - Verificado (2026-08-11): ya estaban excluidos por `.gitignore` (`*.pt`) y ninguno está trackeado en git (`git ls-files` no devuelve ninguno). No era un problema real
+- [ ] **Sin tests automatizados** - No hay pruebas unitarias ni de integración (ver ROADMAP.md Fase 3)
+- [ ] **Logs mínimos en producción** - Difícil debugear sin logs estructurados (ver ROADMAP.md Fase 3)
+- [x] **Sin autenticación ni límite de CORS** - ARREGLADO (2026-08-11): `GM_SECRET` opcional para proteger acciones de GM, `CORS_ORIGINS` configurable, `/api/debug/*` apagado salvo `DEBUG=true`. Ver ROADMAP.md Fase 2
+- [x] **Dos sistemas de personajes sin marcar cuál es el soportado** - ARREGLADO (2026-08-11): el sistema por marcador ArUco queda documentado como legacy/solo-debug; código muerto (`get_character_by_marker`) eliminado
 
 ---
 
@@ -46,4 +48,4 @@
 
 ---
 
-*Última actualización: 11 Ago 2026 — Fase 0 y Fase 1 de ROADMAP.md completadas*
+*Última actualización: 11 Ago 2026 — Fases 0, 1 y 2 de ROADMAP.md completadas*

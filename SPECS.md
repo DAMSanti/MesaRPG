@@ -2,7 +2,7 @@
 
 Especificación técnica del estado actual del sistema. Este documento describe **qué es** el sistema y **cómo está construido hoy** (no qué debería ser — eso vive en `ROADMAP.md`).
 
-> Generado a partir de una auditoría del código el 2026-08-10. Si el código cambia, este documento debe actualizarse junto con él.
+> Generado a partir de una auditoría del código el 2026-08-10. Actualizado el 2026-08-11 tras completar las Fases 0, 1 y 2 del ROADMAP. Si el código cambia, este documento debe actualizarse junto con él.
 
 ---
 
@@ -15,7 +15,7 @@ MesaRPG convierte una mesa con pantalla táctil en una superficie de juego para 
 - Tres **clientes web** sin build step (HTML/CSS/JS vanilla): pantalla (`display`), móvil de jugador (`mobile`, PWA) y panel de GM (`admin`).
 - Sincronización en tiempo real vía **WebSocket** entre los tres clientes.
 
-No hay base de datos: todo el estado de partida vive en memoria del proceso Python; solo los mapas se persisten como JSON en disco.
+No hay base de datos: el estado de partida vive en memoria del proceso Python, pero se vuelca automáticamente a `data/session_state.json` en cada cambio y se restaura al arrancar (ver §7), así que sobrevive a un reinicio del servidor. No es un motor de consultas ni soporta histórico — para eso haría falta SQLite (ver `ROADMAP.md` Fase 2).
 
 ## 2. Arquitectura
 
@@ -36,8 +36,8 @@ No hay base de datos: todo el estado de partida vive en memoria del proceso Pyth
 ```
 
 - **Proceso único**: un solo `uvicorn` sirviendo API REST, WebSockets y archivos estáticos. No hay separación de servicios, cola de mensajes ni workers.
-- **Sin autenticación**: ningún endpoint valida identidad ni rol. El campo `player_id` que viaja en query params o body es autodeclarado por el cliente, no verificado.
-- **CORS abierto**: `allow_origins=["*"]` combinado con `allow_credentials=True` en [server/main.py](server/main.py#L107-L113).
+- **Autenticación de GM opcional**: si se define `GM_SECRET` (env), los endpoints de mutación de solo-GM y `/ws/admin` exigen una cookie de sesión (`POST /api/admin/login`). Si no se define, el admin funciona sin login (uso doméstico en LAN, comportamiento por defecto). No hay autenticación de jugador propiamente dicha: `player_id` sigue siendo autodeclarado por el cliente, pero ahora se genera con `crypto.randomUUID()` (antes `Math.random()`), lo que lo hace impracticable de adivinar.
+- **CORS restringible**: `allow_origins` configurable vía `CORS_ORIGINS` (env), `*` por defecto; `allow_credentials=False` (la cookie de sesión de GM es same-origin, no depende de CORS). Ver [server/main.py](server/main.py).
 
 ## 3. Componentes
 
@@ -53,9 +53,9 @@ No hay base de datos: todo el estado de partida vive en memoria del proceso Pyth
 | `frame_processor.py` (446 líneas) | Inferencia YOLO/OpenVINO sobre frames recibidos por WebSocket, produce tracks de miniaturas. |
 | `simple_tracker.py` (143 líneas) | Tracker auxiliar (asociación de detecciones entre frames). |
 
-**Estado en memoria (`GameStateManager.state: GameState`)**: personajes, fichas, jugadores conectados, historial de acciones (últimas 10 expuestas), orden de iniciativa, mapa actual, marcadores disponibles. Se pierde por completo al reiniciar el proceso.
+**Estado en memoria (`GameStateManager.state: GameState`)**: personajes, fichas, jugadores conectados, historial de acciones (últimas 10 expuestas), orden de iniciativa, mapa actual, marcadores disponibles, asignaciones de miniaturas, cooldowns.
 
-**Persistencia real**: únicamente `config/maps/*.json` (uno por mapa, vía `save_map`/`get_map`/`delete_map`). El resto de `config/*.json` (`characters.json`, `abilities.json`, `game_systems.json`, `settings.json`) se carga en arranque como configuración de solo lectura.
+**Persistencia**: `config/maps/*.json` (uno por mapa, vía `save_map`/`get_map`/`delete_map`) y `data/session_state.json` (fichas, personajes, cooldowns, asignaciones de miniaturas, mapa actual, turno/combate — volcado en cada cambio de estado, restaurado al arrancar; ver `GameStateManager.save_state_to_disk`/`_load_persisted_state`). Los jugadores conectados (`state.players`) NO se persisten — se recrean cuando cada móvil reconecta. El resto de `config/*.json` (`characters.json`, `abilities.json`, `game_systems.json`, `settings.json`) se carga en arranque como configuración de solo lectura.
 
 ### 3.2 `display/` — Pantalla de visualización
 
@@ -133,7 +133,10 @@ El camino ArUco se conserva en el repo (documentado como legacy en el docstring 
 | Tiles/config/assets | `GET /api/tiles`, `GET /api/tiles/{system_id}`, `GET /config/{filename}`, `GET /assets/markers/...`, `GET /assets/tiles/...` |
 | Cámara | `GET /api/camera/status`, `GET /api/camera/devices`, `POST /api/camera/{connect,disconnect}`, `POST /api/camera/stream/{start,stop}`, `GET /api/camera/frame`, `GET /api/camera/miniatures[/visible]`, `POST /api/camera/miniatures/assign`, `POST /api/camera/miniatures/unassign/{marker_id}`, `GET /api/camera/miniatures/player/{player_id}`, `POST /api/camera/calibration/{start,point,finish,simple}` |
 | Asignación figurita↔personaje | `GET/POST /api/miniature-assignments`, `DELETE /api/miniature-assignments/{track_id}` |
-| Debug (sin protección de entorno) | `POST /api/debug/add-test-character`, `DELETE /api/debug/clear-characters` |
+| Debug (404 salvo `DEBUG=true`) | `POST /api/debug/add-test-character`, `DELETE /api/debug/clear-characters` |
+| Sesión de GM | `GET /api/admin/session`, `POST /api/admin/login` |
+
+~25 endpoints de mutación (fichas GM-only, mapas, combate, sistemas, cámara, asignación de miniaturas, debug) llevan `dependencies=[Depends(require_gm)]`: no-op si `GM_SECRET` no está configurado, 401 sin cookie de sesión si sí lo está.
 
 ⚠️ `docs/API.md` documenta solo el subconjunto original (estado, personajes legacy, acciones, combate, conexiones, WS básico) y **está desactualizado** respecto a fichas, mapas, sistemas, cámara y asignaciones de miniaturas.
 
@@ -142,8 +145,8 @@ El camino ArUco se conserva en el repo (documentado como legacy en el docstring 
 | Endpoint | Cliente | Notas |
 |---|---|---|
 | `/ws/display` | Pantalla | Recibe `state_update` inicial, luego eventos broadcast. Puede enviar `character_move/create/remove` (edición táctil directa) y `ping`. |
-| `/ws/mobile?player_id=&name=` | Jugador | `player_id` autodeclarado, sin verificación. Recibe `connected` con estado inicial. Envía `ability`, `select_character`, `ping`. |
-| `/ws/admin` | GM | Recibe `state_update` + `stats`. Envía `start_combat`, `end_combat`, `next_turn`, `refresh`, `ping`. |
+| `/ws/mobile?player_id=&name=` | Jugador | `player_id` autodeclarado (ahora generado con `crypto.randomUUID()`, no verificado contra servidor). Recibe `connected` con estado inicial. Envía `ability`, `select_character`, `ping`. |
+| `/ws/admin` | GM | Si `GM_SECRET` está configurado, exige cookie `gm_session` válida (se cierra con código 4401 si no). Recibe `state_update` + `stats`. Envía `start_combat`, `end_combat`, `next_turn`, `refresh`, `ping`. |
 | `/ws/camera` | Admin (streaming de frames) | Envía frames en base64 para procesar server-side; recibe `processed_frame` con detecciones/tracks. Soporta conexión a cámara IP vía `connect_ip_camera`. |
 
 Todos los mensajes de servidor→cliente van serializados con `json.dumps(default=json_serial)` para manejar `datetime`.
@@ -152,25 +155,26 @@ Todos los mensajes de servidor→cliente van serializados con `json.dumps(defaul
 
 - **Config**: archivos JSON planos en `config/` (sin schema validation más allá de los modelos Pydantic que los consumen parcialmente).
 - **Contenedores**: `Dockerfile` (Python 3.11-slim + libs OpenCV/OpenVINO), `docker-compose.yml` + variantes `deploy/docker-compose.{prod,simple}.yml`, `deploy/nginx*.conf`, `deploy/setup-server.sh` (aprovisionamiento inicial), `deploy/deploy.sh` (deploy con Let's Encrypt).
-- **`.env.example`** referencia `DATABASE_URL` (Postgres) como opcional "por defecto usa SQLite" — **no hay ningún uso real de base de datos en el código**; es documentación aspiracional, no una capacidad existente.
+- **`.env.example`** referencia `DATABASE_URL` (Postgres) como opcional "por defecto usa SQLite" — **sigue sin haber ningún uso real de base de datos en el código** (la persistencia es el volcado JSON de §3.1/§7); es documentación aspiracional, no una capacidad existente. Sí son reales y se leen en `main.py`: `DEBUG`, `GM_SECRET`, `CORS_ORIGINS`.
 - **Arranque local**: `start.bat`/`start.sh` o `python server/main.py` (con `reload=True`, no apto para producción — el `Dockerfile` sí usa el comando correcto sin reload).
 - **Hardware objetivo**: PC con pantalla táctil + cámara cenital USB o IP; recomendaciones en `docs/HARDWARE.md`.
+- **Dependencias** (`server/requirements.txt`): rangos acotados al siguiente major por encima de la versión mínima probada (no solo `>=`). No hay lockfile real todavía.
 
 ## 8. Deuda técnica y riesgos conocidos (observados en código, no solo en TODO.md)
 
-> Los puntos 1 y 5 se corrigieron en la Fase 0/1 del ROADMAP (2026-08-11); se dejan documentados como referencia histórica de por qué el modelo quedó como quedó.
+> Los puntos 1, 2, 3, 4, 5 y 6 se corrigieron en las Fases 0/1/2 del ROADMAP (2026-08-11); se dejan documentados como referencia histórica de por qué el modelo quedó como quedó.
 
 1. ~~**Inconsistencia de modelo**: `Character` requiere `sheet_id` sin valor por defecto...~~ **Corregido**: `sheet_id` y `marker_id` son `Optional` en `Character` ([server/models.py](server/models.py#L77)).
-2. **Sin autenticación/autorización** en ningún endpoint REST ni WebSocket; roles (`PlayerRole.GM`) existen en el modelo pero no se verifican contra la identidad de la conexión.
-3. **CORS `*` + credentials `True`**: combinación no recomendada si el servidor se expone a Internet (el propio README sugiere desplegar en una IP pública de DigitalOcean).
-4. **Endpoints de debug sin guardas de entorno** (`/api/debug/*`) accesibles en producción tal como está.
+2. ~~**Sin autenticación/autorización** en ningún endpoint REST ni WebSocket...~~ **Mitigado**: `GM_SECRET` opcional protege las acciones de GM (ver §2/§6.1). Sigue sin haber autenticación de jugador propiamente dicha, solo un `player_id` difícil de adivinar — suficiente para una mesa de confianza, no para un servicio multiusuario público.
+3. ~~**CORS `*` + credentials `True`**...~~ **Corregido**: `allow_credentials=False`, orígenes configurables vía `CORS_ORIGINS`.
+4. ~~**Endpoints de debug sin guardas de entorno**...~~ **Corregido**: `/api/debug/*` devuelve 404 salvo `DEBUG=true`, y además exige sesión de GM si `GM_SECRET` está configurado.
 5. ~~**Estado global duplicado**: `_miniature_assignments` en `main.py`...~~ **Corregido**: movido a `GameStateManager.miniature_assignments`, única fuente de verdad. `camera_manager.assign_player_to_miniature()` resultó ser código huérfano (sin frontend que lo llame), no un segundo camino activo — ver §5.
-6. **Sin persistencia de sesión** (confirmado en `TODO.md` y en el código: todo en memoria salvo mapas).
-7. **Sin tests automatizados**: no existe carpeta `tests/`; único artefacto relacionado es `vision/camera_test.py`, un script de prueba manual con cámara real.
-8. **Dos pipelines de visión en paralelo** (YOLO/OpenVINO vs. ArUco) sin que el código indique cuál es el soportado; aumenta superficie de mantenimiento.
-9. **Documentación de API desactualizada** (`docs/API.md` no cubre ~60% de los endpoints reales).
-10. **Historial de git con mensajes no descriptivos** (`"1231"`, `"123421234"`, `"123"`, etc. en los últimos commits) — dificulta auditar cambios pasados.
-11. **Dependencias con floor version únicamente** (`fastapi>=0.104.0`, `ultralytics>=8.0.0`, etc., sin upper bound ni lockfile) — riesgo de romper builds al reinstalar en el futuro.
+6. ~~**Sin persistencia de sesión**...~~ **Corregido**: volcado automático a `data/session_state.json` en cada cambio, restaurado al arrancar (ver §3.1/§7). No es una base de datos real.
+7. **Sin tests automatizados**: no existe carpeta `tests/`; único artefacto relacionado es `vision/camera_test.py`, un script de prueba manual con cámara real. (Esta sesión sí verificó el código con `ast.parse`, `node --check`, y pruebas manuales con `FastAPI TestClient` para la persistencia y la autenticación, pero eso no sustituye una suite de tests versionada — ver `ROADMAP.md` Fase 3.)
+8. ~~**Dos pipelines de visión en paralelo**...~~ **Corregido en Fase 1**: YOLO/OpenVINO es el pipeline soportado, documentado en `docs/CAMERA.md`; el camino ArUco queda marcado como legacy en el docstring de sus propios módulos — ver §5.
+9. **Documentación de API desactualizada** (`docs/API.md` no cubre ~60% de los endpoints reales, y ahora tampoco cubre `/api/admin/*`). Sigue pendiente — ver `ROADMAP.md` Fase 3.
+10. **Historial de git con mensajes no descriptivos** (`"1231"`, `"123421234"`, `"123"`, etc. en los commits previos a esta serie de sesiones) — dificulta auditar cambios pasados. Los commits de las Fases 0-2 del ROADMAP sí llevan mensajes descriptivos.
+11. ~~**Dependencias con floor version únicamente**...~~ **Corregido**: rangos acotados en `server/requirements.txt` (ver §7). Sigue sin haber lockfile real.
 
 ## 9. Fuera de alcance de este documento
 
