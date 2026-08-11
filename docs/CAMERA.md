@@ -1,139 +1,125 @@
 # 📷 Guía de Cámara para MesaRPG
 
-## Opciones de Cámara
+## Pipeline soportado: YOLO/OpenVINO vía panel de admin
 
-### Opción 1: Webcam USB (Más fácil)
-- Cualquier webcam USB
-- Montar encima de la mesa mirando hacia abajo
-- Resolución mínima: 720p
+MesaRPG detecta miniaturas físicas con un modelo YOLO propio (entrenado con
+las herramientas de `tools/`, exportado a OpenVINO para correr en CPU), no
+con marcadores ArUco. El flujo completo es:
 
-### Opción 2: Móvil como Cámara (Flexible)
-
-#### Android - DroidCam
-1. Instala **DroidCam** desde Play Store
-2. Instala **DroidCam Client** en tu PC: https://www.dev47apps.com/
-3. Conecta móvil y PC a la misma WiFi
-4. Abre DroidCam en el móvil, anota la IP (ej: 192.168.1.100)
-5. Conecta desde el script:
-   ```bash
-   python vision/camera_test.py --url http://192.168.1.100:4747/video
-   ```
-
-#### Android - IP Webcam
-1. Instala **IP Webcam** desde Play Store
-2. Abre la app, baja hasta "Start server"
-3. Anota la URL que muestra (ej: http://192.168.1.100:8080)
-4. Conecta:
-   ```bash
-   python vision/camera_test.py --url http://192.168.1.100:8080/video
-   ```
-
-#### iPhone - EpocCam
-1. Instala **EpocCam** desde App Store
-2. Instala driver en PC: https://www.elgato.com/epoccam
-3. Aparecerá como webcam virtual (usa --camera 1 o 2)
-
----
-
-## Generar Marcadores ArUco
-
-Los marcadores son códigos que la cámara reconoce. Cada figurita necesita uno.
-
-```bash
-# Instalar OpenCV si no lo tienes
-pip install opencv-python opencv-contrib-python
-
-# Generar 10 marcadores
-python vision/generate_markers.py
-
-# Generar más marcadores
-python vision/generate_markers.py --count 20
+```
+Navegador del admin          Servidor (FastAPI)              Todas las pantallas
+─────────────────────       ──────────────────────           ───────────────────
+getUserMedia (webcam)   ──►  /ws/camera (WebSocket)
+captura frame en canvas      frame_processor.py
+envía frame JPEG base64      (YOLO + OpenVINO + tracking) ──► miniature_positions
+por WS                       devuelve tracks + frame           (posiciones + frame_size)
+                              anotado al admin                       │
+                                                                      ▼
+                                                          display/js/renderer.js
+                                                          dibuja el token en el
+                                                          mapa (con calibración)
 ```
 
-Esto crea:
-- `markers/marker_XX_nombre.png` - Marcadores individuales
-- `markers/print_sheet.png` - Hoja para imprimir todos
+No hace falta ningún script aparte ni marcadores impresos: todo ocurre
+dentro del navegador del admin y el servidor.
 
-**Instrucciones:**
-1. Imprime la hoja de marcadores
-2. Recorta cada marcador (cuadrado negro con borde blanco)
-3. Pega debajo de cada figurita (o en una base)
-4. El marcador debe ser visible para la cámara
+### Pasos para usarlo
 
----
+1. Abre el panel de admin (`/admin`) en el equipo con la cámara (webcam USB
+   apuntando hacia abajo sobre la mesa, o cámara IP — ver más abajo).
+2. En la pestaña de cámara, conecta la webcam y arranca el streaming. El
+   navegador pide permiso de cámara (`getUserMedia`) y empieza a enviar
+   frames al servidor.
+3. El servidor procesa cada frame con YOLO, detecta miniaturas y les asigna
+   un `track_id` estable mientras sigan visibles (tracking simple por
+   proximidad, ver `server/simple_tracker.py`).
+4. En el propio panel de admin aparece la lista de "figuritas detectadas"
+   (una por `track_id`). Para cada una, elige en el desplegable la ficha de
+   personaje (ya aprobada) a la que corresponde — eso llama a
+   `POST /api/miniature-assignments`.
+5. Esa asignación (`track_id -> sheet_id`) vive en
+   `GameStateManager.miniature_assignments` (única fuente de verdad) y se
+   difunde por WebSocket a todas las pantallas conectadas.
+6. El display recibe las posiciones (`miniature_positions`) y, para cada
+   track asignado, dibuja el token visual de la ficha (`token_visual`) en el
+   mapa, en la posición correspondiente.
 
-## Probar la Cámara
+### Cámara IP en vez de webcam USB
 
-```bash
-# Webcam por defecto
-python vision/camera_test.py
+El panel de admin también permite conectar una cámara IP (móvil con
+DroidCam/IP Webcam, o similar) enviando su URL de streaming MJPEG; el
+servidor la consume directamente (`stream_ip_camera` en `server/main.py`)
+sin pasar por el navegador. El resto del flujo (YOLO, tracking, asignación,
+display) es idéntico.
 
-# Webcam secundaria
-python vision/camera_test.py --camera 1
+### Calibración
 
-# Cámara IP/Móvil
-python vision/camera_test.py --url http://192.168.1.100:4747/video
-```
+El display tiene su propio panel de calibración (offset X/Y, escala X/Y)
+para corregir el mapeo entre las coordenadas del frame de cámara y la
+pantalla física — útil si la cámara no está perfectamente centrada/alineada
+sobre la mesa. Vive en el display (no en el admin) porque ahí es donde se ve
+en tiempo real si el token cae en el sitio correcto de la mesa. El servidor
+también envía la resolución real del frame procesado junto con cada
+actualización de posiciones, así que la conversión no depende de asumir una
+resolución fija de cámara.
 
-Deberías ver:
-- Ventana con imagen de la cámara
-- Marcadores detectados resaltados en verde
-- ID y posición de cada marcador
-
----
-
-## Conectar al Servidor
-
-Una vez que la cámara detecta marcadores:
-
-```bash
-# Conectar al servidor local
-python vision/detector.py --server ws://localhost:8000/ws/camera
-
-# Conectar al servidor remoto
-python vision/detector.py --server ws://209.97.131.243/ws/camera
-
-# Con cámara IP
-python vision/detector.py --url http://192.168.1.100:4747/video --server ws://209.97.131.243/ws/camera
-```
-
----
-
-## Montaje Físico
+### Montaje físico
 
 ```
         [Cámara mirando abajo]
               ↓
     ┌─────────────────────┐
     │                     │
-    │   Mesa / Pantalla   │  ← Figuritas con marcadores
+    │   Mesa / Pantalla   │  ← Figuritas (sin marcador, YOLO las reconoce directamente)
     │                     │
     └─────────────────────┘
 ```
 
 **Tips:**
-- La cámara debe estar centrada sobre la mesa
-- Altura recomendada: 60-100cm sobre la mesa
-- Buena iluminación (evitar sombras fuertes)
-- Los marcadores deben ser visibles y planos
+- La cámara debe estar centrada sobre la mesa, altura recomendada 60-100 cm.
+- Buena iluminación uniforme (evitar sombras fuertes y reflejos).
+- Cuantas más miniaturas distintas veas en el dataset de entrenamiento
+  (`tools/capture_dataset.py`, `tools/train_miniatures.ipynb`), mejor
+  detecta el modelo en tu mesa específica.
+
+### Solución de problemas
+
+**"No aparecen figuritas detectadas en el admin"**
+- Verifica que el streaming esté activo (frames viajando por `/ws/camera`).
+- Revisa la consola del servidor: debería loguear FPS de YOLO al procesar.
+- Comprueba que el modelo cargó bien (`GET /api/camera/status` /
+  `frame_processor.get_status()` en la respuesta `camera_status` del WS).
+
+**"Los tokens aparecen desplazados en el display"**
+- Ajusta la calibración (offset/escala) desde el panel de calibración del
+  display.
+- Confirma que el display está recibiendo `frame_size` en los mensajes
+  `miniature_positions` (si el servidor es una versión anterior a esta
+  actualización, puede faltar y se usará una resolución 1280x720 por
+  defecto).
+
+**"Track_id cambia todo el rato / pierde la asignación"**
+- El tracking es por proximidad entre frames (`simple_tracker.py`); si la
+  miniatura se mueve muy rápido o se pierde muchos frames seguidos, se le
+  asigna un `track_id` nuevo y hay que reasignarla en el admin.
 
 ---
 
-## Solución de Problemas
+## Pipeline legacy: marcadores ArUco (no integrado)
 
-### "No se pudo abrir la cámara"
-- Verifica conexión USB
-- Prueba otro ID: `--camera 1`, `--camera 2`
-- En Windows, cierra otras apps que usen la cámara
+El repo incluye un sistema de detección por marcadores ArUco en `vision/`
+(`detector.py`, `generate_markers.py`, `camera_test.py`) y un
+`server/camera_manager.py` que también sabe detectar ArUco capturando la
+cámara directamente en el servidor. **Ninguno de los dos está conectado al
+flujo actual del admin/display**: no hay frontend que los use, y sus
+endpoints (`/api/camera/connect`, `/api/camera/miniatures/assign`, etc.)
+quedan huérfanos. Se mantienen en el repo por si se retoma ese enfoque, pero
+no son el camino soportado — usa el pipeline YOLO/OpenVINO descrito arriba.
 
-### "No detecta marcadores"
-- Asegúrate que el marcador esté completamente visible
-- Mejora la iluminación
-- Acerca la cámara o usa marcadores más grandes
-- Imprime en blanco y negro con buen contraste
+Si aun así quieres probarlo de forma aislada (fuera del servidor principal):
 
-### "Detección inestable"
-- Fija la cámara (evita vibraciones)
-- Aumenta la iluminación
-- Reduce reflejos en la superficie
-
+```bash
+pip install opencv-python opencv-contrib-python
+python vision/generate_markers.py --count 20   # genera marcadores para imprimir
+python vision/camera_test.py                   # prueba la detección con tu webcam
+```

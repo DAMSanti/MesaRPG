@@ -1,7 +1,12 @@
 """
 MesaRPG - Detector de Marcadores ArUco
-Sistema de visión por computadora para detectar figuritas
-Incluye streaming de video al servidor para visualización remota
+
+NO ES el pipeline de detección soportado actualmente (ver docs/CAMERA.md).
+El flujo activo es admin/js/camera-panel.js (captura en el navegador) +
+server/frame_processor.py (YOLO/OpenVINO) sobre /ws/camera. Este módulo
+ArUco funciona de forma aislada como script standalone, sin integración
+con GameStateManager ni con las asignaciones figurita->ficha actuales.
+Se conserva por si en el futuro se retoma la detección por marcador.
 """
 
 import cv2

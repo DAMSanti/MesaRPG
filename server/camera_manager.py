@@ -1,6 +1,14 @@
 """
 MesaRPG - Camera Manager
 Gestiona la cámara cenital para tracking de miniaturas
+
+NOTA: este manager detecta por ArUco (self.detection_mode = ARUCO) y captura
+la cámara directamente en el servidor (cv2.VideoCapture). El panel de admin
+actual (admin/js/camera-panel.js) NO usa este camino: captura en el navegador
+y envía frames por /ws/camera para inferencia YOLO/OpenVINO en
+server/frame_processor.py, que es el pipeline soportado (ver docs/CAMERA.md).
+Los endpoints /api/camera/connect, /api/camera/miniatures/assign, etc. que
+dependen de este manager quedan sin frontend que los use hoy.
 """
 
 import asyncio
