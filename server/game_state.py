@@ -24,6 +24,8 @@ class GameStateManager:
     
     def __init__(self, config_path: str = "../config"):
         self.config_path = Path(config_path)
+        self.data_dir = self.config_path.parent / "data"
+        self.state_file = self.data_dir / "session_state.json"
         self.state = GameState(session_id=str(uuid.uuid4()))
         self.abilities: Dict[str, Ability] = {}
         self.character_templates: Dict[int, dict] = {}  # marker_id -> template
@@ -31,9 +33,12 @@ class GameStateManager:
         self.cooldowns: Dict[str, Dict[str, int]] = {}  # character_id -> {ability_id: turns_left}
         self.miniature_assignments: Dict[int, str] = {}  # track_id (cámara) -> sheet_id
         self.callbacks: List[Callable] = []
-        
+
         # Cargar configuración
         self._load_config()
+
+        # Restaurar partida previa si el servidor se reinició (ver save_state_to_disk)
+        self._load_persisted_state()
     
     def _load_config(self):
         """Carga la configuración desde archivos JSON"""
@@ -45,7 +50,8 @@ class GameStateManager:
                     data = json.load(f)
                     self.game_systems = data.get("systems", {})
             
-            # Cargar personajes (templates legacy)
+            # Cargar personajes (templates legacy por marcador ArUco - ver add_character_from_marker,
+            # deprecado en favor de las fichas dinámicas; ver docs/CAMERA.md y ROADMAP.md Fase 2)
             chars_file = self.config_path / "characters.json"
             if chars_file.exists():
                 with open(chars_file, 'r', encoding='utf-8') as f:
@@ -72,13 +78,79 @@ class GameStateManager:
             
         except Exception as e:
             print(f"⚠️ Error cargando configuración: {e}")
-    
+
+    # === Persistencia de la partida en disco ===
+    # El estado de GameState vive en memoria; esto lo vuelca a data/session_state.json
+    # para que sobreviva a un reinicio del servidor (antes se perdía todo). No es una
+    # base de datos: es un volcado plano pensado para uso doméstico de una sola mesa.
+
+    def _load_persisted_state(self):
+        """Restaura fichas, personajes y asignaciones de una sesión anterior, si existen"""
+        if not self.state_file.exists():
+            return
+        try:
+            with open(self.state_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            self.state.game_system = data.get("game_system", self.state.game_system)
+            self.state.current_turn = data.get("current_turn", 0)
+            self.state.is_combat = data.get("is_combat", False)
+            self.state.active_character_id = data.get("active_character_id")
+            self.state.initiative_order = data.get("initiative_order", [])
+            self.state.current_map = data.get("current_map")
+            self.state.available_markers = data.get("available_markers", list(range(1, 51)))
+            self.state.characters = {
+                cid: Character(**c) for cid, c in data.get("characters", {}).items()
+            }
+            self.state.character_sheets = {
+                sid: CharacterSheet(**s) for sid, s in data.get("character_sheets", {}).items()
+            }
+            self.cooldowns = data.get("cooldowns", {})
+            self.miniature_assignments = {
+                int(k): v for k, v in data.get("miniature_assignments", {}).items()
+            }
+
+            print(f"💾 Partida restaurada desde {self.state_file.name}: "
+                  f"{len(self.state.character_sheets)} fichas, {len(self.state.characters)} personajes")
+        except Exception as e:
+            print(f"⚠️ Error restaurando partida desde disco (se empieza de cero): {e}")
+
+    def save_state_to_disk(self):
+        """Vuelca el estado actual a disco. Se llama automáticamente tras cada cambio (ver _notify_change)"""
+        try:
+            self.data_dir.mkdir(exist_ok=True)
+            data = {
+                "game_system": self.state.game_system,
+                "current_turn": self.state.current_turn,
+                "is_combat": self.state.is_combat,
+                "active_character_id": self.state.active_character_id,
+                "initiative_order": self.state.initiative_order,
+                "current_map": self.state.current_map,
+                "available_markers": self.state.available_markers,
+                "characters": {
+                    cid: self._serialize_datetime(c.model_dump()) for cid, c in self.state.characters.items()
+                },
+                "character_sheets": {
+                    sid: self._serialize_sheet(s) for sid, s in self.state.character_sheets.items()
+                },
+                "cooldowns": self.cooldowns,
+                "miniature_assignments": self.miniature_assignments,
+            }
+            # Escritura atómica: escribir a un .tmp y renombrar, para no dejar un
+            # archivo a medias si el proceso muere justo durante el guardado.
+            tmp_file = self.state_file.with_suffix(".tmp")
+            with open(tmp_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            tmp_file.replace(self.state_file)
+        except Exception as e:
+            print(f"⚠️ Error guardando partida en disco: {e}")
+
     def on_state_change(self, callback: Callable):
         """Registra un callback para cambios de estado"""
         self.callbacks.append(callback)
     
     async def _notify_change(self, change_type: str, data: dict):
-        """Notifica a todos los callbacks de un cambio"""
+        """Notifica a todos los callbacks de un cambio y persiste el estado en disco"""
         for callback in self.callbacks:
             try:
                 if asyncio.iscoroutinefunction(callback):
@@ -87,6 +159,8 @@ class GameStateManager:
                     callback(change_type, data)
             except Exception as e:
                 print(f"Error en callback: {e}")
+
+        self.save_state_to_disk()
     
     # === Gestión de Sistemas de Juego ===
     
@@ -261,11 +335,13 @@ class GameStateManager:
     def assign_miniature(self, track_id: int, sheet_id: str) -> Dict[int, str]:
         """Asigna una miniatura detectada (track_id) a una ficha de personaje"""
         self.miniature_assignments[track_id] = sheet_id
+        self.save_state_to_disk()
         return self.miniature_assignments
 
     def unassign_miniature(self, track_id: int) -> Dict[int, str]:
         """Quita la asignación de una miniatura detectada"""
         self.miniature_assignments.pop(track_id, None)
+        self.save_state_to_disk()
         return self.miniature_assignments
 
     def get_player_sheet(self, player_id: str) -> Optional[CharacterSheet]:
