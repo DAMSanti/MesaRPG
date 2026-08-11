@@ -5,13 +5,14 @@ FastAPI server que coordina todo el sistema
 
 import asyncio
 import json
+import os
 import uuid
 from datetime import datetime
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Body
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Body, Cookie, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -46,6 +47,27 @@ BASE_DIR = Path(__file__).parent.parent
 CONFIG_DIR = BASE_DIR / "config"
 DISPLAY_DIR = BASE_DIR / "display"
 MOBILE_DIR = BASE_DIR / "mobile"
+
+# Modo debug: habilita /api/debug/*. Por defecto apagado (falla "seguro" en producción).
+DEBUG = os.environ.get("DEBUG", "false").lower() in ("1", "true", "yes")
+
+# Secreto de GM (opcional). Si no se configura, el panel de admin funciona igual que
+# hasta ahora (sin login) - pensado para uso en LAN/casa. Si se configura (despliegues
+# expuestos a Internet, ver docs/DEPLOY.md), las acciones de GM exigen haber iniciado
+# sesión en /api/admin/login, que deja una cookie de sesión.
+GM_SECRET = os.environ.get("GM_SECRET")
+
+
+async def require_gm(gm_session: Optional[str] = Cookie(None)):
+    """Dependency para endpoints de solo-GM. No-op si GM_SECRET no está configurado."""
+    if GM_SECRET and gm_session != GM_SECRET:
+        raise HTTPException(status_code=401, detail="Se requiere sesión de GM (ver /api/admin/login)")
+
+
+async def require_debug():
+    """Dependency para endpoints de desarrollo (/api/debug/*). Apagados salvo DEBUG=true."""
+    if not DEBUG:
+        raise HTTPException(status_code=404, detail="Not Found")
 
 # === Inicialización ===
 game_state = GameStateManager(str(CONFIG_DIR))
@@ -103,11 +125,18 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS para desarrollo
+# CORS: orígenes configurables por env (CORS_ORIGINS="https://a.com,https://b.com").
+# Por defecto "*" para simplicidad en LAN/desarrollo. allow_credentials=False porque
+# la sesión de GM usa una cookie same-origin (el admin se sirve desde este mismo
+# servidor) y no depende de credentials cross-origin; "*" + credentials=True es además
+# una combinación que los navegadores rechazan.
+_cors_origins_env = os.environ.get("CORS_ORIGINS", "*")
+CORS_ORIGINS = ["*"] if _cors_origins_env == "*" else [o.strip() for o in _cors_origins_env.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -317,6 +346,27 @@ async def get_tile_thumbnail(system: str, filename: str):
     raise HTTPException(status_code=404, detail="Thumbnail not found")
 
 
+# === Autenticación de GM (opcional, ver GM_SECRET arriba) ===
+
+@app.get("/api/admin/session")
+async def admin_session_status(gm_session: Optional[str] = Cookie(None)):
+    """El admin panel consulta esto al cargar para saber si necesita pedir la contraseña de GM"""
+    return {
+        "gm_required": bool(GM_SECRET),
+        "authenticated": (not GM_SECRET) or gm_session == GM_SECRET
+    }
+
+@app.post("/api/admin/login")
+async def admin_login(body: dict = Body(...)):
+    """Inicia sesión de GM. Si GM_SECRET no está configurado, no hace falta llamarlo."""
+    secret = body.get("secret", "")
+    if not GM_SECRET or secret != GM_SECRET:
+        raise HTTPException(status_code=401, detail="Contraseña de GM incorrecta")
+    resp = JSONResponse({"status": "ok"})
+    resp.set_cookie("gm_session", GM_SECRET, httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30)
+    return resp
+
+
 # === API REST ===
 
 @app.get("/api/state")
@@ -399,19 +449,19 @@ async def execute_action_with_camera_position(body: dict = Body(...)):
         "action_type": action_type
     }
 
-@app.post("/api/combat/start")
+@app.post("/api/combat/start", dependencies=[Depends(require_gm)])
 async def start_combat():
     """Inicia el combate"""
     await game_state.start_combat()
     return {"status": "combat_started"}
 
-@app.post("/api/combat/end")
+@app.post("/api/combat/end", dependencies=[Depends(require_gm)])
 async def end_combat():
     """Finaliza el combate"""
     await game_state.end_combat()
     return {"status": "combat_ended"}
 
-@app.post("/api/combat/next-turn")
+@app.post("/api/combat/next-turn", dependencies=[Depends(require_gm)])
 async def next_turn():
     """Avanza al siguiente turno"""
     await game_state.next_turn()
@@ -433,7 +483,7 @@ async def get_system_config(system_id: str):
         raise HTTPException(status_code=404, detail="Sistema no encontrado")
     return config
 
-@app.post("/api/systems/set/{system_id}")
+@app.post("/api/systems/set/{system_id}", dependencies=[Depends(require_gm)])
 async def set_game_system(system_id: str):
     """Establece el sistema de juego activo (solo GM)"""
     success = await game_state.set_game_system(system_id)
@@ -441,7 +491,7 @@ async def set_game_system(system_id: str):
         raise HTTPException(status_code=400, detail="Sistema no válido")
     return {"status": "success", "system_id": system_id}
 
-@app.post("/api/session/select-system")
+@app.post("/api/session/select-system", dependencies=[Depends(require_gm)])
 async def select_game_system(data: dict):
     """Establece el sistema de juego activo (endpoint alternativo para admin panel)"""
     system_id = data.get("system_id")
@@ -520,7 +570,7 @@ async def submit_sheet(sheet_id: str, body: dict = Body(...)):
         raise HTTPException(status_code=400, detail="No se pudo enviar la ficha")
     return {"status": "success"}
 
-@app.post("/api/sheets/{sheet_id}/approve")
+@app.post("/api/sheets/{sheet_id}/approve", dependencies=[Depends(require_gm)])
 async def approve_sheet(sheet_id: str):
     """Aprueba una ficha (solo GM)"""
     success = await game_state.approve_character_sheet(sheet_id)
@@ -528,7 +578,7 @@ async def approve_sheet(sheet_id: str):
         raise HTTPException(status_code=400, detail="No se pudo aprobar la ficha")
     return {"status": "success"}
 
-@app.post("/api/sheets/{sheet_id}/reject")
+@app.post("/api/sheets/{sheet_id}/reject", dependencies=[Depends(require_gm)])
 async def reject_sheet(sheet_id: str, body: dict = Body(default={})):
     """Rechaza una ficha (solo GM)"""
     reason = body.get('reason', '')
@@ -537,7 +587,7 @@ async def reject_sheet(sheet_id: str, body: dict = Body(default={})):
         raise HTTPException(status_code=400, detail="No se pudo rechazar la ficha")
     return {"status": "success"}
 
-@app.post("/api/sheets/{sheet_id}/assign-token")
+@app.post("/api/sheets/{sheet_id}/assign-token", dependencies=[Depends(require_gm)])
 async def assign_token(sheet_id: str, body: dict = Body(...)):
     """Asigna un token/marcador a una ficha aprobada (solo GM)"""
     marker_id = body.get('marker_id')
@@ -549,7 +599,7 @@ async def assign_token(sheet_id: str, body: dict = Body(...)):
         raise HTTPException(status_code=400, detail="No se pudo asignar el token")
     return {"status": "success", "marker_id": marker_id, "token_visual": token_visual}
 
-@app.post("/api/sheets/{sheet_id}/remove-token")
+@app.post("/api/sheets/{sheet_id}/remove-token", dependencies=[Depends(require_gm)])
 async def remove_token(sheet_id: str):
     """Quita el token asignado a una ficha, dejándola en estado APPROVED (solo GM)"""
     success = await game_state.remove_token_from_sheet(sheet_id)
@@ -619,13 +669,13 @@ async def get_map(map_id: str):
         raise HTTPException(status_code=404, detail="Mapa no encontrado")
     return map_data
 
-@app.post("/api/maps")
+@app.post("/api/maps", dependencies=[Depends(require_gm)])
 async def save_map(body: dict = Body(...)):
     """Guarda un mapa (nuevo o actualizado)"""
     result = await game_state.save_map(body)
     return result
 
-@app.delete("/api/maps/{map_id}")
+@app.delete("/api/maps/{map_id}", dependencies=[Depends(require_gm)])
 async def delete_map(map_id: str):
     """Elimina un mapa"""
     success = await game_state.delete_map(map_id)
@@ -633,7 +683,7 @@ async def delete_map(map_id: str):
         raise HTTPException(status_code=404, detail="Mapa no encontrado")
     return {"status": "deleted", "map_id": map_id}
 
-@app.post("/api/maps/{map_id}/project")
+@app.post("/api/maps/{map_id}/project", dependencies=[Depends(require_gm)])
 async def project_map(map_id: str):
     """Proyecta un mapa al display"""
     success = await game_state.set_current_map(map_id)
@@ -641,7 +691,7 @@ async def project_map(map_id: str):
         raise HTTPException(status_code=404, detail="Mapa no encontrado")
     return {"status": "projected", "map_id": map_id}
 
-@app.post("/api/display/project-map")
+@app.post("/api/display/project-map", dependencies=[Depends(require_gm)])
 async def project_map_data(body: dict = Body(...)):
     """Proyecta datos de mapa directamente al display (sin guardar)"""
     map_data = body.get("mapData")
@@ -657,7 +707,7 @@ async def project_map_data(body: dict = Body(...)):
 
 # === Debug API ===
 
-@app.post("/api/debug/add-test-character")
+@app.post("/api/debug/add-test-character", dependencies=[Depends(require_debug), Depends(require_gm)])
 async def add_test_character(marker_id: int = 1, name: str = "Test Character"):
     """Añade un personaje de prueba (para desarrollo sin cámara)"""
     from .models import DetectedMarker, Position
@@ -678,7 +728,7 @@ async def add_test_character(marker_id: int = 1, name: str = "Test Character"):
         return {"status": "error", "message": "No hay template para ese marker_id"}
 
 
-@app.delete("/api/debug/clear-characters")
+@app.delete("/api/debug/clear-characters", dependencies=[Depends(require_debug), Depends(require_gm)])
 async def clear_characters():
     """Elimina todos los personajes (para desarrollo)"""
     for char_id in list(game_state.state.characters.keys()):
@@ -701,7 +751,7 @@ async def get_camera_devices():
     cameras = camera_manager.get_available_cameras()
     return {"cameras": cameras}
 
-@app.post("/api/camera/connect")
+@app.post("/api/camera/connect", dependencies=[Depends(require_gm)])
 async def connect_camera(body: dict = Body(...)):
     """Conecta a una cámara"""
     camera_id = body.get("camera_id", 0)
@@ -713,13 +763,13 @@ async def connect_camera(body: dict = Body(...)):
     else:
         raise HTTPException(status_code=500, detail=camera_manager.error_message or "No se pudo conectar a la cámara")
 
-@app.post("/api/camera/disconnect")
+@app.post("/api/camera/disconnect", dependencies=[Depends(require_gm)])
 async def disconnect_camera():
     """Desconecta la cámara"""
     camera_manager.disconnect()
     return {"status": "disconnected"}
 
-@app.post("/api/camera/stream/start")
+@app.post("/api/camera/stream/start", dependencies=[Depends(require_gm)])
 async def start_camera_stream():
     """Inicia el streaming de video"""
     if camera_manager.state not in [CameraState.CONNECTED, CameraState.STREAMING]:
@@ -731,7 +781,7 @@ async def start_camera_stream():
     else:
         raise HTTPException(status_code=500, detail="No se pudo iniciar el streaming")
 
-@app.post("/api/camera/stream/stop")
+@app.post("/api/camera/stream/stop", dependencies=[Depends(require_gm)])
 async def stop_camera_stream():
     """Detiene el streaming de video"""
     camera_manager.stop_streaming()
@@ -795,13 +845,13 @@ async def get_player_miniature(player_id: str):
         return miniature.to_dict()
     raise HTTPException(status_code=404, detail="Jugador no tiene miniatura asignada")
 
-@app.post("/api/camera/calibration/start")
+@app.post("/api/camera/calibration/start", dependencies=[Depends(require_gm)])
 async def start_calibration():
     """Inicia el modo de calibración"""
     camera_manager.start_calibration()
     return {"status": "calibrating"}
 
-@app.post("/api/camera/calibration/point")
+@app.post("/api/camera/calibration/point", dependencies=[Depends(require_gm)])
 async def add_calibration_point(body: dict = Body(...)):
     """Añade un punto de calibración"""
     image_x = body.get("image_x")
@@ -815,7 +865,7 @@ async def add_calibration_point(body: dict = Body(...)):
     count = camera_manager.add_calibration_point(image_x, image_y, game_x, game_y)
     return {"status": "point_added", "total_points": count}
 
-@app.post("/api/camera/calibration/finish")
+@app.post("/api/camera/calibration/finish", dependencies=[Depends(require_gm)])
 async def finish_calibration():
     """Finaliza la calibración"""
     success = camera_manager.finish_calibration()
@@ -824,7 +874,7 @@ async def finish_calibration():
     else:
         raise HTTPException(status_code=400, detail="Se necesitan al menos 4 puntos de calibración")
 
-@app.post("/api/camera/calibration/simple")
+@app.post("/api/camera/calibration/simple", dependencies=[Depends(require_gm)])
 async def simple_calibration(body: dict = Body(...)):
     """Calibración simple: mapeo lineal de imagen a área de juego"""
     game_width = body.get("game_width", 1920)
@@ -846,7 +896,7 @@ async def get_miniature_assignments():
     """Obtiene todas las asignaciones de figuritas a personajes"""
     return {"assignments": game_state.miniature_assignments}
 
-@app.post("/api/miniature-assignments")
+@app.post("/api/miniature-assignments", dependencies=[Depends(require_gm)])
 async def assign_miniature_to_character(body: dict = Body(...)):
     """Asigna una figurita (track_id) a un personaje (character_id/sheet_id)"""
     track_id = body.get("track_id")
@@ -869,7 +919,7 @@ async def assign_miniature_to_character(body: dict = Body(...)):
 
     return {"status": "assigned", "assignments": assignments}
 
-@app.delete("/api/miniature-assignments/{track_id}")
+@app.delete("/api/miniature-assignments/{track_id}", dependencies=[Depends(require_gm)])
 async def unassign_miniature_from_character(track_id: int):
     """Desasigna una figurita de un personaje"""
     assignments = game_state.unassign_miniature(track_id)
@@ -1334,35 +1384,13 @@ async def stream_ip_camera(websocket: WebSocket, ip_url: str):
         camera_manager._ip_stream_active = False
 
 
-async def handle_markers_update(markers: list):
-    """Procesa actualización de marcadores detectados"""
-    detected_ids = set()
-    
-    for marker_data in markers:
-        marker = DetectedMarker(
-            marker_id=marker_data["id"],
-            position=Position(
-                x=marker_data["x"],
-                y=marker_data["y"],
-                rotation=marker_data.get("rotation", 0)
-            ),
-            corners=marker_data.get("corners", [])
-        )
-        detected_ids.add(marker.marker_id)
-        await game_state.add_character_from_marker(marker)
-    
-    # Eliminar personajes cuyos marcadores ya no se detectan
-    current_markers = {
-        char.marker_id for char in game_state.state.characters.values()
-    }
-    lost_markers = current_markers - detected_ids
-    
-    for marker_id in lost_markers:
-        await game_state.remove_character_by_marker(marker_id)
-
 @app.websocket("/ws/admin")
 async def websocket_admin(websocket: WebSocket):
     """WebSocket para panel de administración"""
+    if GM_SECRET and websocket.cookies.get("gm_session") != GM_SECRET:
+        await websocket.close(code=4401)
+        return
+
     await ws_manager.connect_admin(websocket)
     
     try:

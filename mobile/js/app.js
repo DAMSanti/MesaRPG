@@ -59,9 +59,12 @@ class MobileApp {
         // Guardar nombre
         localStorage.setItem('mesarpg_name', this.playerName);
         
-        // Generar ID único (o recuperar el guardado)
-        this.playerId = localStorage.getItem('mesarpg_player_id') || 
-                        'player_' + Math.random().toString(36).substr(2, 9);
+        // Generar ID único (o recuperar el guardado). Actúa como credencial de sesión
+        // del jugador (identifica su ficha ante el servidor), así que debe ser difícil
+        // de adivinar: se usa crypto.randomUUID() cuando está disponible (contextos
+        // seguros/HTTPS) en vez de Math.random(), que no es apto para esto.
+        this.playerId = localStorage.getItem('mesarpg_player_id') ||
+                        'player_' + (window.crypto?.randomUUID?.() || Math.random().toString(36).substr(2, 9));
         localStorage.setItem('mesarpg_player_id', this.playerId);
         
         // Conectar al servidor

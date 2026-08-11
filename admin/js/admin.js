@@ -21,13 +21,40 @@ let detectedMiniatures = [];  // Figuritas detectadas por cámara (tracks)
 let miniatureAssignments = {};  // { trackId: characterId }
 
 // DOM Ready
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+    await ensureGmSession();
     initTabs();
     initTokenCategoryTabs();
     loadGameSystems();
     loadTokenLibrary();
     connectWebSocket();
 });
+
+// ==================== Sesión de GM (opcional) ====================
+// Si el servidor tiene GM_SECRET configurado (despliegues expuestos a Internet,
+// ver docs/DEPLOY.md), pide la contraseña una vez; el navegador la recuerda
+// via cookie de sesión y no hace falta tocar el resto de fetch() del panel.
+async function ensureGmSession() {
+    try {
+        const status = await fetch('/api/admin/session').then(r => r.json());
+        if (!status.gm_required || status.authenticated) return;
+
+        while (true) {
+            const secret = prompt('Este servidor requiere la contraseña de GM para administrar la partida:');
+            if (secret === null) return; // el usuario canceló; seguirá sin permisos de escritura
+
+            const response = await fetch('/api/admin/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ secret })
+            });
+            if (response.ok) return;
+            alert('Contraseña incorrecta');
+        }
+    } catch (error) {
+        console.error('Error comprobando sesión de GM:', error);
+    }
+}
 
 // ==================== Tab Navigation ====================
 function initTabs() {
