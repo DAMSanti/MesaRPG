@@ -1264,20 +1264,25 @@ class GameRenderer {
     
     cameraToScreen(pos) {
         /**
-         * Convierte coordenadas de la cámara a coordenadas de pantalla.
-         * Asume que la cámara cubre todo el display.
+         * Convierte coordenadas de la cámara (píxeles del frame procesado por YOLO)
+         * a coordenadas de pantalla, y aplica la calibración manual (offset/escala)
+         * que el GM ajusta desde el panel de calibración.
          */
         const canvasWidth = this.mapCanvas.width;
         const canvasHeight = this.mapCanvas.height;
-        
-        // Las coordenadas vienen en píxeles del frame de la cámara
-        // Asumimos resolución de cámara de 1280x720 (ajustar si es diferente)
-        const cameraWidth = 1280;
-        const cameraHeight = 720;
-        
+
+        // Resolución real del frame que procesó el servidor (enviada junto a cada
+        // actualización de posiciones). Si aún no se conoce, se asume 1280x720
+        // como valor de partida razonable hasta que llegue el primer frame.
+        const cameraWidth = this.cameraFrameSize?.width || 1280;
+        const cameraHeight = this.cameraFrameSize?.height || 720;
+
+        const normalizedX = (pos.x / cameraWidth) * canvasWidth;
+        const normalizedY = (pos.y / cameraHeight) * canvasHeight;
+
         return {
-            x: (pos.x / cameraWidth) * canvasWidth,
-            y: (pos.y / cameraHeight) * canvasHeight
+            x: (normalizedX * this.calibration.scaleX) + this.calibration.offsetX,
+            y: (normalizedY * this.calibration.scaleY) + this.calibration.offsetY
         };
     }
     

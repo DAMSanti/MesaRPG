@@ -521,7 +521,17 @@ class MesaRPGApp {
     
     handleMiniaturePositions(payload) {
         const miniatures = payload.miniatures || [];
-        
+
+        // Dimensiones reales del frame de cámara procesado (si el servidor las envía),
+        // para que el renderer mapee coordenadas de cámara a pantalla correctamente
+        // en vez de asumir una resolución fija.
+        if (payload.frame_size && payload.frame_size.width && payload.frame_size.height) {
+            this.state.cameraFrameSize = payload.frame_size;
+            if (window.gameRenderer) {
+                window.gameRenderer.cameraFrameSize = payload.frame_size;
+            }
+        }
+
         // Guardar posiciones de miniaturas en el estado
         this.state.miniatures = {};
         miniatures.forEach(m => {

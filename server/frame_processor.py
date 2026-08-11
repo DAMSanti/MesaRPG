@@ -71,6 +71,11 @@ class FrameProcessor:
         self._process_count = 0
         self._last_fps_time = time.time()
         self._fps = 0
+
+        # Dimensiones reales del último frame procesado (para que el display
+        # pueda mapear coordenadas de cámara a pantalla sin asumir una resolución fija)
+        self.frame_width = 0
+        self.frame_height = 0
         
         # Cargar modelo si está disponible
         if YOLO_AVAILABLE:
@@ -215,6 +220,8 @@ class FrameProcessor:
             return frame_base64, []
         
         h, w = frame.shape[:2]
+        self.frame_width = w
+        self.frame_height = h
         detections = []
         
         # Info de debug en frame
@@ -382,6 +389,10 @@ class FrameProcessor:
     def get_tracks(self) -> List[Dict]:
         """Retorna los tracks actuales"""
         return self.last_tracks
+
+    def get_frame_size(self) -> Dict:
+        """Dimensiones (px) del último frame procesado, para mapear coordenadas en el display"""
+        return {"width": self.frame_width, "height": self.frame_height}
     
     def _remove_duplicates(self, detections: List[Dict], iou_threshold: float = 0.5) -> List[Dict]:
         """

@@ -1119,10 +1119,10 @@ async def websocket_camera(websocket: WebSocket):
             processed_frame, tracks = await loop.run_in_executor(
                 None, frame_processor.process_frame, frame_base64
             )
-            
+
             # Enviar posiciones de miniaturas al display
             if tracks:
-                await ws_manager.send_miniature_positions(tracks)
+                await ws_manager.send_miniature_positions(tracks, frame_processor.get_frame_size())
             
             # Enviar resultado al admin
             await send_json_safe(websocket, {
@@ -1294,10 +1294,10 @@ async def stream_ip_camera(websocket: WebSocket, ip_url: str):
             
             # Procesar con YOLO + tracking
             processed_frame, tracks = frame_processor.process_frame(frame_base64)
-            
+
             # Enviar posiciones de miniaturas al display
             if tracks:
-                await ws_manager.send_miniature_positions(tracks)
+                await ws_manager.send_miniature_positions(tracks, frame_processor.get_frame_size())
             
             # Enviar al admin
             try:

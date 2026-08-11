@@ -161,12 +161,17 @@ class ConnectionManager:
         }
         await self.broadcast_to_displays(message)
     
-    async def send_miniature_positions(self, miniatures: list):
-        """Envía posiciones de miniaturas a todos los displays y admins"""
+    async def send_miniature_positions(self, miniatures: list, frame_size: Optional[dict] = None):
+        """Envía posiciones de miniaturas a todos los displays y admins.
+
+        frame_size (si se conoce) permite al display mapear las coordenadas de
+        cámara a coordenadas de pantalla sin asumir una resolución fija.
+        """
         message = {
             "type": "miniature_positions",
             "payload": {
                 "miniatures": miniatures,
+                "frame_size": frame_size,
                 "timestamp": datetime.now().isoformat()
             }
         }
