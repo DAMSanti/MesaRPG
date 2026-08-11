@@ -1447,25 +1447,35 @@ async def handle_admin_message(websocket: WebSocket, message: dict):
 
 # === Main ===
 if __name__ == "__main__":
+    # NOTA: este bloque solo se alcanza si el módulo se ejecuta como
+    # `python -m server.main` (con "server" resuelto como paquete). Ejecutar
+    # `python server/main.py` directamente NO funciona: los imports relativos
+    # de arriba (`from .models import ...`) fallan antes de llegar aquí porque
+    # Python trata el script como top-level, no como parte del paquete "server".
+    # Usa `python run_server.py` desde la raíz del proyecto (recomendado) o
+    # `python -m uvicorn server.main:app` - ver README.md.
     import socket
-    
+
+    host = os.environ.get("SERVER_HOST", "0.0.0.0")
+    port = int(os.environ.get("SERVER_PORT", 8020))
+
     # Obtener IP local para mostrar
     hostname = socket.gethostname()
     local_ip = socket.gethostbyname(hostname)
-    
+
     print("\n" + "="*50)
     print("🎲 MesaRPG - Servidor")
     print("="*50)
-    print(f"📺 Pantalla:  http://{local_ip}:8000/display")
-    print(f"📱 Móvil:     http://{local_ip}:8000/mobile")
-    print(f"🎮 Admin:     http://{local_ip}:8000/admin")
-    print(f"📚 API Docs:  http://{local_ip}:8000/docs")
+    print(f"📺 Pantalla:  http://{local_ip}:{port}/display")
+    print(f"📱 Móvil:     http://{local_ip}:{port}/mobile")
+    print(f"🎮 Admin:     http://{local_ip}:{port}/admin")
+    print(f"📚 API Docs:  http://{local_ip}:{port}/docs")
     print("="*50 + "\n")
-    
+
     uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
+        "server.main:app",
+        host=host,
+        port=port,
         reload=True,
         reload_dirs=[str(BASE_DIR / "server")]
     )
