@@ -1,24 +1,29 @@
 # MesaRPG - Dependencias del Servidor
 # Instalar con: pip install -r requirements.txt
+#
+# Rangos acotados al siguiente major por encima de la version minima probada,
+# para permitir parches/minors pero no bumps mayores sin revisar. No sustituye
+# a un lockfile real (pip-compile / pip freeze contra un entorno probado) - ver
+# ROADMAP.md Fase 2 si se quiere ese nivel de reproducibilidad exacta.
 
 # Framework web
-fastapi>=0.104.0
-uvicorn[standard]>=0.24.0
+fastapi>=0.104.0,<1.0.0
+uvicorn[standard]>=0.24.0,<1.0.0
 
 # WebSockets
-websockets>=12.0
+websockets>=12.0,<17.0
 
 # Procesamiento numérico
-numpy>=1.26.0
+numpy>=1.26.0,<3.0.0
 
 # Visión por computadora para tracking de miniaturas
-opencv-python-headless>=4.8.0
+opencv-python-headless>=4.8.0,<6.0.0
 
 # Detección de objetos con YOLO
-ultralytics>=8.0.0
+ultralytics>=8.0.0,<9.0.0
 
 # Aceleración de inferencia con OpenVINO
-openvino>=2024.0.0
+openvino>=2024.0.0,<2027.0.0
 
 # Modelos de datos
-pydantic>=2.5.0
+pydantic>=2.5.0,<3.0.0
