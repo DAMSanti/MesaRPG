@@ -29,6 +29,7 @@ class GameStateManager:
         self.character_templates: Dict[int, dict] = {}  # marker_id -> template
         self.game_systems: Dict[str, dict] = {}  # Sistemas de juego disponibles
         self.cooldowns: Dict[str, Dict[str, int]] = {}  # character_id -> {ability_id: turns_left}
+        self.miniature_assignments: Dict[int, str] = {}  # track_id (cámara) -> sheet_id
         self.callbacks: List[Callable] = []
         
         # Cargar configuración
@@ -252,6 +253,20 @@ class GameStateManager:
             "marker_id": old_marker_id
         })
         return True
+
+    # === Asignación de miniaturas detectadas por cámara a fichas ===
+    # Única fuente de verdad para track_id (YOLO) -> sheet_id. Antes vivía como
+    # diccionario global suelto en main.py, desconectado del resto del estado.
+
+    def assign_miniature(self, track_id: int, sheet_id: str) -> Dict[int, str]:
+        """Asigna una miniatura detectada (track_id) a una ficha de personaje"""
+        self.miniature_assignments[track_id] = sheet_id
+        return self.miniature_assignments
+
+    def unassign_miniature(self, track_id: int) -> Dict[int, str]:
+        """Quita la asignación de una miniatura detectada"""
+        self.miniature_assignments.pop(track_id, None)
+        return self.miniature_assignments
 
     def get_player_sheet(self, player_id: str) -> Optional[CharacterSheet]:
         """Obtiene la ficha de un jugador"""
