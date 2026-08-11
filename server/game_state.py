@@ -407,8 +407,12 @@ class GameStateManager:
         self.state.players[player_id].character_id = character_id
         return True
     
-    # === Gestión de Personajes ===
-    
+    # === Gestión de Personajes (sistema legacy por marcador ArUco) ===
+    # DEPRECADO: el sistema soportado es el de fichas dinámicas (CharacterSheet,
+    # ver más abajo assign_token_to_sheet). Estos dos métodos solo los usan hoy
+    # los endpoints /api/debug/* (main.py), para crear personajes de prueba sin
+    # cámara ni ficha. No forman parte del flujo normal de juego.
+
     async def add_character_from_marker(self, marker: DetectedMarker) -> Optional[Character]:
         """Crea o actualiza un personaje basado en un marcador detectado"""
         marker_id = marker.marker_id
@@ -476,13 +480,6 @@ class GameStateManager:
                 "character_id": to_remove,
                 "name": char.name
             })
-    
-    def get_character_by_marker(self, marker_id: int) -> Optional[Character]:
-        """Obtiene un personaje por su ID de marcador"""
-        for char in self.state.characters.values():
-            if char.marker_id == marker_id:
-                return char
-        return None
     
     # === Sistema de Combate ===
     
