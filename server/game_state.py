@@ -231,7 +231,28 @@ class GameStateManager:
             "token_visual": token_visual
         })
         return True
-    
+
+    async def remove_token_from_sheet(self, sheet_id: str) -> bool:
+        """Quita el token/marcador de una ficha en juego y la devuelve a estado APPROVED"""
+        sheet = self.state.character_sheets.get(sheet_id)
+        if not sheet or sheet.status != CharacterStatus.IN_GAME:
+            return False
+
+        old_marker_id = sheet.marker_id
+        sheet.marker_id = None
+        sheet.token_visual = None
+        sheet.status = CharacterStatus.APPROVED
+
+        # Devolver el marcador al pool de disponibles (legacy ArUco)
+        if old_marker_id is not None and old_marker_id not in self.state.available_markers:
+            self.state.available_markers.append(old_marker_id)
+
+        await self._notify_change("token_removed", {
+            "sheet": self._serialize_sheet(sheet),
+            "marker_id": old_marker_id
+        })
+        return True
+
     def get_player_sheet(self, player_id: str) -> Optional[CharacterSheet]:
         """Obtiene la ficha de un jugador"""
         for sheet in self.state.character_sheets.values():

@@ -37,6 +37,10 @@ class GameRenderer {
         
         // Contador para IDs únicos de tokens locales
         this.localTokenCounter = 0;
+
+        // Índice de tokens visuales (id -> ruta de archivo), para resolver token_visual
+        this.tokenLibrary = null;
+        this.loadTokenLibrary();
         
         // Calibración inicial (sin transformación)
         this.calibration = {
@@ -853,6 +857,43 @@ class GameRenderer {
         }
     }
     
+    async loadTokenLibrary() {
+        /**
+         * Carga el índice de tokens visuales (assets/markers/tokens.json) y construye
+         * un mapa id -> ruta de archivo. token_visual en las fichas guarda solo el id
+         * del token, no una ruta de imagen, así que hay que resolverlo contra este índice.
+         */
+        try {
+            const response = await fetch('/assets/markers/tokens.json');
+            const data = await response.json();
+            const allTokens = [
+                ...(data.dnd || []),
+                ...(data.battletech || []),
+                ...(data.generic || [])
+            ];
+            this.tokenLibrary = {};
+            allTokens.forEach(token => {
+                this.tokenLibrary[token.id] = token.file;
+            });
+        } catch (error) {
+            console.warn('No se pudo cargar el índice de tokens:', error);
+            this.tokenLibrary = {};
+        }
+
+        // Si ya se habían creado tokens de miniatura antes de que cargara el índice
+        // (condición de carrera al arrancar), recrearlos para que muestren la imagen correcta.
+        if (this.miniatureAssignments && this.miniatureCharacters) {
+            this.updateMiniatureAssignments(this.miniatureAssignments, this.miniatureCharacters);
+        }
+    }
+
+    resolveTokenImage(tokenVisualId) {
+        /** Convierte un id de token_visual en la ruta de imagen real, o null si no se conoce. */
+        if (!tokenVisualId) return null;
+        const file = this.tokenLibrary?.[tokenVisualId];
+        return file ? `/assets/markers/${file}` : null;
+    }
+
     createToken(id, char) {
         console.log('🎭 Creando token:', char.name, 'contenedor:', this.tokensContainer);
         
@@ -1252,7 +1293,7 @@ class GameRenderer {
         const hp = character?.data?.hp || character?.hp;
         const maxHp = character?.data?.max_hp || character?.max_hp;
         const charClass = character?.data?.class || character?.class || '';
-        const tokenVisual = character?.token_visual;  // Imagen del token asignada por el admin
+        const tokenVisual = this.resolveTokenImage(character?.token_visual);  // Imagen del token asignada por el admin
         
         // Calcular porcentaje de HP para la barra
         const hpPercent = (hp && maxHp) ? Math.round((hp / maxHp) * 100) : 100;

@@ -181,7 +181,7 @@ class GameState(BaseModel):
     action_history: List[GameAction] = []
     is_combat: bool = False
     initiative_order: List[str] = []
-    current_map: str = "default"
+    current_map: Optional[Dict[str, Any]] = None  # Datos completos del mapa proyectado (None = ninguno aún)
     settings: Dict[str, Any] = {}
     available_markers: List[int] = list(range(1, 51))  # Marcadores disponibles (1-50)
 

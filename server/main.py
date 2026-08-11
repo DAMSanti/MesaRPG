@@ -549,6 +549,14 @@ async def assign_token(sheet_id: str, body: dict = Body(...)):
         raise HTTPException(status_code=400, detail="No se pudo asignar el token")
     return {"status": "success", "marker_id": marker_id, "token_visual": token_visual}
 
+@app.post("/api/sheets/{sheet_id}/remove-token")
+async def remove_token(sheet_id: str):
+    """Quita el token asignado a una ficha, dejándola en estado APPROVED (solo GM)"""
+    success = await game_state.remove_token_from_sheet(sheet_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="No se pudo quitar el token")
+    return {"status": "success"}
+
 @app.get("/api/markers/available")
 async def get_available_markers():
     """Obtiene los marcadores disponibles para asignar"""

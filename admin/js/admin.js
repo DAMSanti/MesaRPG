@@ -130,6 +130,13 @@ function handleMessage(data) {
             const tokenSheet = data.sheet || data.payload?.sheet;
             logAction('Token', `Token #${data.marker_id || data.payload?.marker_id} asignado a ${tokenSheet?.character_name || 'Personaje'}`);
             break;
+        case 'token_removed':
+            loadApprovedSheets();
+            loadAvailableMarkers();
+            loadCharacters();
+            const untokenedSheet = data.sheet || data.payload?.sheet;
+            logAction('Token', `Token quitado de ${untokenedSheet?.character_name || 'Personaje'}`);
+            break;
         case 'character_added':
             loadCharacters();
             logAction('Personaje', `${data.character?.name || data.payload?.name || 'Personaje'} añadido a la partida`);

@@ -215,6 +215,7 @@ class MobileApp {
             case 'sheet_approved':
             case 'sheet_rejected':
             case 'token_assigned':
+            case 'token_removed':
                 this.loadMySheet();
                 break;
                 
