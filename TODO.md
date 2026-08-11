@@ -2,23 +2,23 @@
 
 ## 🔥 PRIORITARIOS (Usuario)
 
-- [ ] **1. No hay forma de conectar cámara a la partida** - Falta integración para tracking de miniaturas en tiempo real
+- [x] **1. No hay forma de conectar cámara a la partida** - ARREGLADO (2026-08-11): pipeline YOLO/OpenVINO decidido como soportado, posiciones ya llegan al display con la resolución real de cámara + calibración aplicada. Ver ROADMAP.md Fase 1 y docs/CAMERA.md
 - [x] **2. No se pueden asignar tokens a jugadores** - ~~El flujo de asignación no funciona~~ ARREGLADO: quitada validación ArUco
 - [x] **3. Tokens de sistema no cargan automáticamente** - ~~Hay que cambiar de pestaña~~ ARREGLADO: se llama renderTokenGallery() automáticamente
-- [ ] **4. Revampear sistema de creación de mapas** - Mejorar toda la experiencia del editor de mapas
-- [ ] **5. Mapas no se pasan al display** - No hay forma de enviar el mapa creado a la pantalla de visualización
+- [ ] **4. Revampear sistema de creación de mapas** - Mejorar toda la experiencia del editor de mapas (ver ROADMAP.md Fase 4)
+- [ ] **5. Mapas no se pasan al display** - No hay forma de enviar el mapa creado a la pantalla de visualización (revisar tras fix de `current_map`, ver ROADMAP.md Fase 0)
 
 ## 🐛 BUGS / PROBLEMAS
 
-- [ ] **Display no muestra tokens visuales** - El display usa el sistema antiguo de marcadores, no renderiza los tokens SVG
-- [ ] **Flujo incompleto fichas → tokens** - Cuando asignas un token, el jugador en móvil no ve su token asignado
-- [ ] **No hay forma de quitar/reasignar tokens** - `removeToken()` existe pero puede no liberar el estado correctamente
-- [ ] **WebSocket no sincroniza token_visual** - El campo se guarda pero puede no propagarse a todas las pantallas
-- [ ] **Fichas aprobadas sin "en juego"** - Lógica de filtrado mezcla `approved` e `in_game`, puede causar confusión
+- [x] **Display no muestra tokens visuales** - ARREGLADO (2026-08-11): `renderer.js` usaba el id de `token_visual` como URL de imagen directamente; ahora se resuelve contra `assets/markers/tokens.json`
+- [x] **Flujo incompleto fichas → tokens** - Verificado (2026-08-11): el móvil ya reflejaba el token asignado correctamente; no era un bug real
+- [x] **No hay forma de quitar/reasignar tokens** - ARREGLADO (2026-08-11): faltaba el endpoint `POST /api/sheets/{id}/remove-token` en el backend (el admin ya lo llamaba)
+- [x] **WebSocket no sincroniza token_visual** - Verificado (2026-08-11): ya se propagaba correctamente; el síntoma visible era el bug de renderizado de arriba
+- [x] **Fichas aprobadas sin "en juego"** - Verificado (2026-08-11): el filtrado mezclado es intencional y correcto, no era un bug
 
 ## 🔧 MEJORAS RECOMENDADAS
 
-- [ ] **Display sin mapa cargado por defecto** - El display arranca vacío, debería cargar el mapa activo
+- [x] **Display sin mapa cargado por defecto** - ARREGLADO (2026-08-11): `current_map` tenía como default un id de mapa ("default") que nunca existe; ahora es `None` hasta que el GM proyecta un mapa real
 - [ ] **No hay persistencia de sesión** - Si el servidor reinicia, se pierden fichas y tokens
 - [ ] **Falta indicador de jugador activo** - En admin/display no se ve claramente quién tiene el turno
 - [ ] **Sin sistema de chat/comunicación** - Los jugadores no pueden comunicarse entre sí
@@ -46,4 +46,4 @@
 
 ---
 
-*Última actualización: 4 Dic 2025*
+*Última actualización: 11 Ago 2026 — Fase 0 y Fase 1 de ROADMAP.md completadas*
