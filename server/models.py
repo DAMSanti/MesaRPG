@@ -77,8 +77,8 @@ class CharacterSheet(BaseModel):
 class Character(BaseModel):
     """Modelo de personaje en juego (derivado de CharacterSheet)"""
     id: str
-    sheet_id: str  # Referencia a la ficha
-    marker_id: int
+    sheet_id: Optional[str] = None  # Referencia a la ficha (None para personajes legacy sin ficha)
+    marker_id: Optional[int] = None  # None para personajes creados a mano desde el display (sin miniatura física)
     name: str
     character_class: str = Field(alias="class", default="")
     hp: int = 10
