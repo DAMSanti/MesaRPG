@@ -165,6 +165,84 @@ crontab -e
 0 3 * * * cd /opt/mesarpg/deploy && docker compose -f docker-compose.prod.yml run --rm certbot renew && docker compose -f docker-compose.prod.yml restart nginx
 ```
 
+## 🤝 Servidor compartido con otro proyecto (ej. Oracle Cloud + Sprinta)
+
+Si ya tienes otro proyecto Docker en el mismo servidor con su propio nginx
+ocupando los puertos 80/443 (por ejemplo Sprinta, con `sprinta-web` +
+`sprinta-certbot`), **no uses** `deploy/docker-compose.prod.yml` de MesaRPG
+tal cual: su nginx intentaría publicar esos mismos puertos y el `docker
+compose up` fallaría. En su lugar, MesaRPG se cuelga del nginx que ya existe,
+enrutado por un subdominio propio (ej. `rpgvision.duckdns.org` si ya usas
+DuckDNS para el otro proyecto — añade el subdominio nuevo desde la misma
+cuenta, gratis, apuntando a la misma IP).
+
+Usa `deploy/docker-compose.oracle.yml`: levanta solo la app MesaRPG, sin
+publicar el puerto 8000 al host, conectada a una red Docker externa (`edge`)
+compartida con el nginx del otro proyecto.
+
+### Pasos
+
+1. **DNS**: crea el subdominio (`rpgvision.duckdns.org` o el que uses) apuntando
+   a la IP pública del servidor. Espera a que propague.
+
+2. **Red compartida** (una vez en el servidor):
+   ```bash
+   docker network create edge
+   ```
+
+3. **Copiar MesaRPG al servidor** (mismo patrón que el otro proyecto):
+   ```bash
+   scp -r ./MesaRPG/* usuario@IP_SERVIDOR:/opt/mesarpg/
+   ```
+   En `/opt/mesarpg`, copia `.env.example` a `.env` y rellena, como mínimo:
+   - `GM_SECRET`: obligatorio en la práctica al estar el servidor expuesto a
+     Internet (protege `/admin`).
+   - `CORS_ORIGINS=https://rpgvision.duckdns.org`
+   - `DEBUG=false`, `PRODUCTION=true`
+
+4. **Añadir MesaRPG al nginx del otro proyecto**: en su `nginx.conf`, añade un
+   nuevo `server_name` para `rpgvision.duckdns.org` que haga `proxy_pass` a
+   `http://mesarpg:8000` (usa como plantilla `deploy/nginx.conf` de este
+   repo — sobre todo el `location /ws/` con los headers de upgrade, MesaRPG
+   depende de WebSocket para que display/mobile se actualicen en vivo). Une
+   también su servicio de nginx a la red `edge` (`networks: [default, edge]`)
+   para que pueda resolver el contenedor `mesarpg` por nombre.
+
+5. **Arrancar MesaRPG**:
+   ```bash
+   cd /opt/mesarpg/deploy
+   docker compose -f docker-compose.oracle.yml up -d --build
+   ```
+
+6. **Certificado SSL para el nuevo subdominio**: si el nginx del otro proyecto
+   referencia `ssl_certificate` para `rpgvision.duckdns.org` antes de que exista,
+   no arrancará. Genera primero un certificado autofirmado temporal en esa
+   misma ruta (usa el volumen de certbot del otro proyecto, ajusta el nombre
+   con `docker volume ls`):
+   ```bash
+   docker run --rm -v <proyecto>_certbot-etc:/etc/letsencrypt alpine sh -c "
+     apk add --no-cache openssl &&
+     mkdir -p /etc/letsencrypt/live/rpgvision.duckdns.org &&
+     openssl req -x509 -nodes -newkey rsa:4096 -days 1 \
+       -keyout /etc/letsencrypt/live/rpgvision.duckdns.org/privkey.pem \
+       -out /etc/letsencrypt/live/rpgvision.duckdns.org/fullchain.pem \
+       -subj '/CN=rpgvision.duckdns.org'"
+   ```
+   Reinicia el nginx del otro proyecto para que arranque con ese cert dummy,
+   luego pide el real vía webroot (usando su propio contenedor certbot, con
+   `-d rpgvision.duckdns.org`), y reinicia nginx una última vez para que cargue
+   el certificado definitivo. A partir de ahí, deja que el bucle de renovación
+   automática del otro proyecto incluya también este dominio.
+
+### Verificación
+
+- `docker ps`: el contenedor `mesarpg` está `Up` junto a los del otro proyecto.
+- `docker network inspect edge`: aparecen tanto `mesarpg` como el nginx compartido.
+- `https://rpgvision.duckdns.org/api/state` responde 200.
+- `/display`, `/admin` (con login de `GM_SECRET`) y `/mobile` cargan y el
+  WebSocket conecta (si no, revisa el `location /ws/` del nginx compartido).
+- El otro proyecto sigue respondiendo igual que antes (regresión).
+
 ## 📱 Uso para los Usuarios Finales
 
 ### Para el Game Master

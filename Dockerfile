@@ -34,7 +34,13 @@ WORKDIR /app
 # Copiar requirements primero para aprovechar cache
 COPY server/requirements.txt .
 
-# Instalar dependencias Python
+# ultralytics arrastra torch/torchvision, que por defecto instalan las ruedas con
+# todo el stack CUDA (varios GB) aunque este contenedor no tiene GPU y la inferencia
+# real va por OpenVINO en modo CPU (ver OV_DEVICE arriba). Instalamos antes la rueda
+# CPU-only para que el resto de la instalación la reutilice en vez de traerse CUDA.
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cpu
+
+# Instalar el resto de dependencias Python
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copiar modelos YOLO (cambian poco, bueno para caché)
