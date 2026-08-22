@@ -1,0 +1,200 @@
+.first-person-view {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: var(--bg-deep);
+  /* Electric blue, dedicated to this cockpit HUD rather than the app's
+     usual --accent teal — high-contrast glow so the frame/ladders stay
+     legible against a bright sky or dark tiles alike. */
+  --fp-hud-blue: #1fc8ff;
+}
+
+.fp-canvas-wrap {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
+.fp-hud-frame {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  filter:
+    drop-shadow(0 0 2px rgba(31, 200, 255, 0.95))
+    drop-shadow(0 0 8px rgba(31, 200, 255, 0.6));
+}
+
+.fp-topbar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 13px;
+  background: rgba(18, 33, 31, 0.75);
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.fp-chassis {
+  color: var(--accent-2);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.fp-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fp-close:hover {
+  color: var(--fp-hud-blue);
+}
+
+/* "It's on you right now" — initiative not yet rolled, or your turn to
+   move — deliberately louder and more central than the phase pills
+   (which show the round's state generically to everyone); this is
+   personal and time-sensitive, meant to be impossible to miss even
+   glancing at the HUD mid-conversation. */
+.fp-turn-alert {
+  position: absolute;
+  top: 108px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 12;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--warning, #ffb020);
+  background: rgba(18, 33, 31, 0.85);
+  border: 1px solid var(--warning, #ffb020);
+  border-radius: 6px;
+  padding: 8px 20px;
+  text-shadow: 0 0 8px rgba(255, 176, 32, 0.8);
+  box-shadow: 0 0 12px rgba(255, 176, 32, 0.5);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fp-turn-alert {
+    animation: fp-target-pulse 1s ease-in-out infinite;
+  }
+}
+
+.fp-phase-row {
+  position: absolute;
+  top: 64px;
+  left: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fp-phase-pill {
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: rgba(18, 33, 31, 0.75);
+  color: var(--text-secondary);
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.fp-phase-pill.active {
+  border-color: var(--fp-hud-blue);
+  color: var(--fp-hud-blue);
+  box-shadow: 0 0 6px var(--fp-hud-blue);
+}
+
+button.fp-phase-pill.clickable {
+  cursor: pointer;
+  animation: fp-target-pulse 1.4s ease-in-out infinite;
+}
+
+button.fp-phase-pill.clickable:hover {
+  background: rgba(31, 200, 255, 0.2);
+}
+
+.fp-phase-note {
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.fp-loading {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+}
+
+.fp-enemy-label {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 11;
+  display: none;
+  pointer-events: none;
+  text-align: center;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.fp-target-lock {
+  filter: drop-shadow(0 0 5px var(--danger));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fp-target-lock {
+    animation: fp-target-pulse 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes fp-target-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+.fp-enemy-caption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+}
+
+.fp-enemy-name {
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+}
+
+.fp-enemy-distance {
+  color: var(--danger);
+  opacity: 0.8;
+  font-size: 10px;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+}

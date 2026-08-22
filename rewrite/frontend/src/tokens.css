@@ -1,0 +1,63 @@
+/* Shared design tokens — every view's *.css should reference these instead
+ * of repeating hex values (ROADMAP.md S4). One palette, one place to tune it. */
+:root {
+  --bg: #12211f;
+  --bg-deep: #0f1a18;
+  --panel: #172725;
+  --surface-hover: #1c3a3a;
+  --border: #2c4247;
+
+  --text: #eaf3f1;
+  --text-secondary: #a9c0bb;
+  --text-muted: #8a9490;
+
+  --accent: #7fd4c8;
+  --accent-2: #e3a765;
+  --danger: #e35d5d;
+
+  --wood: #7a4a2a;
+  --wood-dark: #3a2c18;
+
+  --font-body: 'Segoe UI', system-ui, sans-serif;
+
+  --nav-height: 52px;
+}
+
+/* Scrollbars styled to match the rest of the UI instead of the OS
+ * default — applies everywhere (sidebar card lists, modals, etc.), not
+ * just one view, since every scrollable area should look the same. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--bg-deep);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-deep);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 6px;
+  border: 2px solid var(--bg-deep);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--accent);
+}
+
+/* PilotForm's dice-color picker — shared across GMView/PlayerView, keep
+ * it compact like the number inputs it sits next to in the same row. */
+.pilot-color-picker input[type='color'] {
+  width: 32px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  cursor: pointer;
+}

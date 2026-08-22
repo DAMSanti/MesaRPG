@@ -1,0 +1,53 @@
+.mech-import-selector {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mech-import-selector input {
+  width: 100%;
+}
+
+.mech-import-selector .hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.mech-import-selector .hint.error {
+  color: var(--danger);
+}
+
+.mech-import-results {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.mech-import-results button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mech-import-results button:hover {
+  background: var(--accent);
+  color: var(--bg);
+}

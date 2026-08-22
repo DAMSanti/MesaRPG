@@ -1,0 +1,98 @@
+.hub-view {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  padding: 40px 20px;
+  max-width: 520px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.hub-view h1 {
+  font-size: 24px;
+  color: var(--accent);
+  margin: 0 0 4px;
+}
+
+.hub-view .sub {
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin: 0 0 28px;
+}
+
+.hub-view a {
+  color: var(--accent);
+}
+
+.hub-options {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.hub-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 22px;
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+
+.hub-card.disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hub-card:hover {
+  border-color: var(--accent);
+}
+
+.hub-icon {
+  font-size: 30px;
+}
+
+.hub-label {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hub-desc {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+
+.hub-session-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.switch-campaign {
+  display: inline-block;
+  font-size: 12px;
+  text-decoration: underline;
+}
+
+.end-session {
+  background: none;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 6px;
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.end-session:hover {
+  background: var(--danger);
+  color: var(--bg);
+}

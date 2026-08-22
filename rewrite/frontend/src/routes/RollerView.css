@@ -1,0 +1,79 @@
+.roller-view {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  padding: 20px;
+  max-width: 420px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.roller-view h1 {
+  font-size: 20px;
+  color: var(--accent);
+}
+
+.roller-view .hint {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wood);
+}
+
+.status-dot.on {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.dice-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dice-grid button {
+  padding: 22px 0;
+  font-size: 18px;
+  font-weight: 600;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.dice-grid button:active {
+  background: var(--surface-hover);
+  border-color: var(--accent);
+}
+
+.dice-grid button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.last-roll {
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+.last-roll strong {
+  color: var(--accent-2);
+}

@@ -1,0 +1,136 @@
+.map-editor {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  padding: 16px 20px 40px;
+}
+
+.map-editor header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.map-editor h1 {
+  font-size: 16px;
+  color: var(--accent);
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  margin: 0;
+}
+
+.map-editor .row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.map-editor input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 6px 9px;
+  font-size: 13px;
+}
+
+.map-editor button {
+  background: var(--surface-hover);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.map-editor button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.map-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 14px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.map-list button.active {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.grid-type-tag {
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+}
+
+.mode-row button.active {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+}
+
+.ghost-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.project-row {
+  justify-content: space-between;
+  align-items: center;
+}
+
+.editing-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.project-button {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.project-button:disabled {
+  color: var(--accent);
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+.canvas-wrap {
+  width: 100%;
+  height: 55vh;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.presets {
+  margin-top: 12px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.selected-label {
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-right: 4px;
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}

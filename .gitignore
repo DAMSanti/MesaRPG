@@ -72,3 +72,15 @@ secrets.json
 
 # Modelos YOLO (muy grandes, se descargan automáticamente)
 *.pt
+
+# Rewrite (stack nuevo, ver rewrite/README.md)
+rewrite/frontend/node_modules/
+rewrite/frontend/dist/
+rewrite/backend/venv/
+rewrite/backend/data/*.db
+rewrite/backend/*.db
+
+# Manuales de reglas con copyright (Catalyst Game Labs) usados como
+# referencia local durante el desarrollo — no se versionan.
+rewrite/*.pdf
+rewrite/*BattleTech*.txt

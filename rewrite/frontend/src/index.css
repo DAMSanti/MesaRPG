@@ -1,0 +1,61 @@
+@import './tokens.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  min-height: 100vh;
+}
+
+body {
+  font-family: var(--font-body);
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* Shared error/loading/step-label states (ROADMAP.md S4) — every view that
+ * calls the API uses these instead of failing silently. */
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--wood-dark);
+  border: 1px solid var(--danger);
+  color: var(--accent-2);
+  border-radius: 5px;
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 10px 0;
+}
+
+.error-banner button {
+  background: none;
+  border: none;
+  color: var(--accent-2);
+  font-size: 15px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.loading {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+  margin: 8px 0;
+}
+
+.step-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 14px 0 6px;
+}

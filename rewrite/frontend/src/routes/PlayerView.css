@@ -1,0 +1,266 @@
+.player-view {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  padding: 20px 24px 60px;
+}
+
+.player-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  width: 100%;
+  padding: 8px 16px;
+  margin: -20px -24px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.player-tabs button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  min-height: 0;
+}
+
+.player-tabs button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.player-tabs button.active {
+  background: var(--surface-hover);
+  color: var(--accent);
+}
+
+.player-tabs-campaign {
+  margin-left: auto;
+  color: var(--accent-2);
+  font-size: 12px;
+}
+
+.player-view h1 {
+  font-size: 20px;
+  color: var(--accent);
+  margin: 0;
+  display: inline-block;
+  margin-right: 10px;
+}
+
+.player-view .sub {
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
+.player-view .hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  font-style: italic;
+}
+
+.round-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.acted-tag {
+  color: var(--accent);
+}
+
+.initiative-pending {
+  color: #f5c542;
+  font-weight: 600;
+}
+
+.status-banner {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.status-banner.status-pending {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.status-banner.status-rejected {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.status-banner button {
+  margin-left: 6px;
+}
+
+.status-tag {
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 3px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.status-tag.status-pending {
+  color: var(--accent-2);
+  border: 1px solid var(--accent-2);
+}
+
+.status-tag.status-rejected {
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+
+.act-button {
+  padding: 4px 10px;
+  font-size: 12px;
+  min-height: 0;
+}
+
+.player-view section {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.player-view h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin: 0 0 10px;
+}
+
+.pilot-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+button {
+  background: var(--surface-hover);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 10px 14px;
+  font-size: 14px;
+  min-height: 40px;
+  cursor: pointer;
+}
+
+input,
+select {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 16px;
+  min-height: 38px;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.loc-table {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.loc-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.loc-name {
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.loc-cell .zero {
+  color: var(--danger);
+}
+
+.loc-cell input,
+.edit-stats input {
+  width: 34px;
+  padding: 1px 3px;
+  font-size: 12px;
+  text-align: center;
+  background: var(--bg);
+}
+
+.edit-stats input {
+  width: 30px;
+}
+
+/* Same card look as the GM's sidebar mech list (GMView.css) — a target
+   is a card, click it to open the attack panel (AttackPanel), no inline
+   weapon/range/side selectors sitting in the list itself anymore. */
+.card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.entity-card {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.entity-card-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.log {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.log li:first-child {
+  color: var(--accent-2);
+}

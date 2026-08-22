@@ -1,0 +1,94 @@
+.table-view {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-deep);
+}
+
+.hud {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--text-secondary);
+  background: rgba(18, 33, 31, 0.75);
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--wood);
+}
+
+.status-dot.on {
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent);
+}
+
+.roll-badge {
+  margin-left: 8px;
+  padding: 3px 10px;
+  border-radius: 4px;
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.roll-badge strong {
+  color: var(--accent-2);
+}
+
+.phase-badge {
+  font-weight: 600;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  box-shadow: 0 0 6px rgba(127, 212, 200, 0.4);
+}
+
+.reveal-badge {
+  background: var(--wood-dark);
+  color: var(--accent-2);
+  font-weight: 600;
+}
+
+.hud-nav {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+}
+
+.los-debug {
+  position: absolute;
+  top: 62px;
+  left: 16px;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 12px;
+  color: #39ff8f;
+  background: rgba(18, 33, 31, 0.75);
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid #39ff8f55;
+}
+
+.los-debug select {
+  background: var(--surface-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: inherit;
+  font-size: inherit;
+}

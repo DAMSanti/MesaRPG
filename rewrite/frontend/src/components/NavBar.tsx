@@ -1,0 +1,49 @@
+import './NavBar.css'
+
+export type NavPath = '/' | '/gm' | '/mapeditor' | '/player'
+export type NavLink = { path: NavPath; label: string; icon: string }
+
+export const LINKS: readonly NavLink[] = [
+  { path: '/', label: 'Mesa', icon: '🖥️' },
+  { path: '/gm', label: 'GM', icon: '🎛️' },
+  { path: '/mapeditor', label: 'Mapas', icon: '🗺️' },
+  { path: '/player', label: 'Jugador', icon: '🧑‍🚀' },
+] as const
+
+/**
+ * Persistent nav between mesa/GM/editor/jugador (ROADMAP.md S4) — GM/staff
+ * facing only. Players never see this: they only ever open the link the GM
+ * already shared with `?campaign=` baked in, never pick a role or campaign
+ * themselves (see PlayerView/RollerView).
+ *
+ * `links` defaults to the full set above — pass a shorter/relabeled list
+ * to trim it for one view (e.g. GMView hides Mesa/Jugador) without
+ * affecting any other consumer.
+ */
+export function NavBar({
+  campaignId,
+  current,
+  variant = 'bar',
+  links = LINKS,
+}: {
+  campaignId: number
+  current: NavPath
+  variant?: 'bar' | 'overlay'
+  links?: readonly NavLink[]
+}) {
+  return (
+    <nav className={`nav-bar ${variant}`}>
+      {links.map((l) => (
+        <a
+          key={l.path}
+          href={`${l.path}?campaign=${campaignId}`}
+          className={current === l.path ? 'active' : ''}
+        >
+          <span className="nav-icon">{l.icon}</span>
+          <span className="nav-label">{l.label}</span>
+        </a>
+      ))}
+      <a className="nav-campaign" href="/campaigns?next=/hub">↺ campaña</a>
+    </nav>
+  )
+}
