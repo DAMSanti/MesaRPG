@@ -74,11 +74,14 @@ def update_tile(
     elevation: int | None = None,
     blocks_los: bool | None = None,
     terrain: str | None = None,
+    los_points: int | None = None,
 ) -> dict | None:
     """Editor de mapas (ROADMAP.md S1/S4): repintar una casilla ya existente."""
     fields = {
         k: v
-        for k, v in {"elevation": elevation, "blocks_los": blocks_los, "terrain": terrain}.items()
+        for k, v in {
+            "elevation": elevation, "blocks_los": blocks_los, "terrain": terrain, "los_points": los_points,
+        }.items()
         if v is not None
     }
     with db.connect() as conn:
@@ -97,16 +100,23 @@ def update_tile(
 
 
 def tiles_lookup(map_id: int) -> dict[tuple[int, int], dict]:
-    """(q, r) -> {"elevation": int, "blocks_los": bool} — what hexgrid/squaregrid has_los expects."""
+    """(q, r) -> {"elevation": int, "blocks_los": bool, "los_points": int,
+    "terrain": str} — what hexgrid/squaregrid has_los expects (the first
+    three), plus terrain for callers (app/combat.py's resolve_attack) that
+    also need to know what's actually underfoot, e.g. a to-hit terrain
+    bonus — one lookup shared instead of a second query for the same
+    tiles."""
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT q, r, elevation, blocks_los FROM hex_tiles WHERE map_id = ?",
+            "SELECT q, r, elevation, blocks_los, los_points, terrain FROM hex_tiles WHERE map_id = ?",
             (map_id,),
         ).fetchall()
         return {
             (row["q"], row["r"]): {
                 "elevation": row["elevation"],
                 "blocks_los": bool(row["blocks_los"]),
+                "los_points": row["los_points"],
+                "terrain": row["terrain"],
             }
             for row in rows
         }
@@ -120,7 +130,7 @@ def _get(conn, map_id: int) -> dict | None:
     if not map_row:
         return None
     tile_rows = conn.execute(
-        "SELECT q, r, elevation, blocks_los, terrain FROM hex_tiles WHERE map_id = ?",
+        "SELECT q, r, elevation, blocks_los, los_points, terrain FROM hex_tiles WHERE map_id = ?",
         (map_id,),
     ).fetchall()
     result = dict(map_row)

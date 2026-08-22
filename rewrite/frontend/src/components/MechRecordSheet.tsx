@@ -78,8 +78,9 @@ interface PipRowProps {
 // each point lost. `current` is how many are still intact, so only the
 // pips from `current` onward are filled. Click a hollow (intact) pip to
 // mark damage down through it; click a filled (damaged) pip to restore up
-// through it (undo/GM correction). readOnly (creation preview) renders
-// every pip hollow (nothing damaged yet) and none of them clickable.
+// through it (undo/GM correction). previewFullHealth (creation preview)
+// renders every pip hollow (nothing damaged yet, no real mech to read a
+// current value from); readOnly independently makes them non-clickable.
 // Used for the heat-sink count, which (unlike armor/structure) has no
 // anatomical position on the sheet.
 function PipRow({ max, current, onClick }: PipRowProps) {
@@ -266,7 +267,21 @@ interface Props {
     'chassis' | 'model' | 'tonnage' | 'walk_mp' | 'run_mp' | 'jump_mp' | 'locations' | 'weapons' | 'heat_sinks' | 'heat_current' | 'criticals'
   >
   pilot?: { id?: number; gunnery: number; piloting: number; hits?: number } | null
+  /** No click-to-edit — pips/weapon rows/criticals render inert. Doesn't
+   * by itself change WHAT is shown, only whether it's interactive; see
+   * previewFullHealth for the (previously conflated) other half. */
   readOnly?: boolean
+  /** This mech isn't real yet (mech-creation "Vista previa de la hoja",
+   * before it's even saved) — armor/structure/heat show at full/zero
+   * instead of mech.locations' own current values, since there IS no
+   * real current state yet to show. Was previously implied by readOnly
+   * itself, which silently forced this same full-health mockup onto
+   * every OTHER readOnly view too (GMView's "Ver ficha" among them) —
+   * that's what made an already-damaged mech's sheet always render as
+   * pristine there, no matter how stale or fresh the data actually was.
+   * Defaults to false — a normal read-only VIEW of a real mech (GMView's
+   * own case) wants real numbers, just without click handlers. */
+  previewFullHealth?: boolean
   weaponCatalog?: Record<string, WeaponStats>
   selectedWeaponId?: number | null
   onArmorChange?: (location: string, value: number) => void
@@ -375,12 +390,19 @@ function CriticalHitBlock({
  * per location (every slot always rendered — `-Empty-` where the actual
  * equipment layout isn't known yet, real item names for mechs imported
  * from the public MTF database, see app/mech_import.py), and a Heat
- * Scale. `readOnly` renders a full-health preview (used while filling in
- * a new ficha); otherwise pips/weapon rows are click-to-act, for playing
- * the same way you'd use a paper sheet (ROADMAP.md Fase R3). */
+ * Scale. `readOnly` drops every click handler (a plain view, no editing);
+ * `previewFullHealth` separately renders full armor/structure/zero heat
+ * regardless of the real mech.locations values (mech-creation's "Vista
+ * previa de la hoja", before it's even saved — there IS no real current
+ * state yet). These two used to be the same prop, which meant a normal
+ * read-only VIEW of a real, already-damaged mech (GMView's "Ver ficha")
+ * silently rendered as pristine no matter how damaged it actually was —
+ * split apart once that bug was found. Otherwise (neither flag) pips/
+ * weapon rows are click-to-act, for playing the same way you'd use a
+ * paper sheet (ROADMAP.md Fase R3). */
 export function MechRecordSheet({
-  mech, pilot, readOnly = false, weaponCatalog, selectedWeaponId, onArmorChange, onArmorRearChange,
-  onStructureChange, onSelectWeapon, onPilotHitsChange, onToggleCritical,
+  mech, pilot, readOnly = false, previewFullHealth = false, weaponCatalog, selectedWeaponId, onArmorChange,
+  onArmorRearChange, onStructureChange, onSelectWeapon, onPilotHitsChange, onToggleCritical,
 }: Props) {
   const byLoc = Object.fromEntries(mech.locations.map((l) => [l.location, l]))
   const get = (loc: string) => byLoc[loc]
@@ -400,7 +422,7 @@ export function MechRecordSheet({
       const l = get(loc)
       if (!l) return null
       const max = l.armor_max
-      const current = readOnly ? max : l.armor_current
+      const current = previewFullHealth ? max : l.armor_current
       return { loc, max, current }
     })
     .filter((x): x is { loc: MechLocationCode; max: number; current: number } => x !== null)
@@ -428,7 +450,7 @@ export function MechRecordSheet({
       const l = get(loc)
       if (!l) return null
       const max = l.structure_max
-      const current = readOnly ? max : l.structure_current
+      const current = previewFullHealth ? max : l.structure_current
       return { loc, max, current }
     })
     .filter((x): x is { loc: MechLocationCode; max: number; current: number } => x !== null)
@@ -454,7 +476,7 @@ export function MechRecordSheet({
   const rearLocs = rearLocations.map((loc) => {
     const l = get(loc)!
     const max = l.armor_rear_max!
-    const current = readOnly ? max : (l.armor_rear_current ?? 0)
+    const current = previewFullHealth ? max : (l.armor_rear_current ?? 0)
     return { loc, max, current }
   })
 
@@ -614,7 +636,7 @@ export function MechRecordSheet({
               <div className="info-row"><strong>{mech.heat_sinks}</strong></div>
               <PipRow max={mech.heat_sinks} current={mech.heat_sinks} />
             </div>
-            <HeatScale current={readOnly ? 0 : mech.heat_current} />
+            <HeatScale current={previewFullHealth ? 0 : mech.heat_current} />
           </div>
         </div>
       </div>

@@ -572,8 +572,10 @@ def get_maps(campaign_id: int) -> list[dict]:
 @app.get("/api/terrain-types")
 def get_terrain_types() -> dict:
     return {
-        name: {"elevation": e, "blocks_los": b, "move_cost": mapgen.TERRAIN_MOVE_COST[name]}
-        for name, (e, b) in mapgen.TERRAIN_DEFAULTS.items()
+        name: {
+            "elevation": e, "blocks_los": b, "los_points": p, "move_cost": mapgen.TERRAIN_MOVE_COST[name],
+        }
+        for name, (e, b, p) in mapgen.TERRAIN_DEFAULTS.items()
     }
 
 
@@ -625,6 +627,7 @@ class TilePatchIn(BaseModel):
     elevation: int | None = None
     blocks_los: bool | None = None
     terrain: str | None = None
+    los_points: int | None = None
 
 
 @app.patch("/api/maps/{map_id}/tiles/{q}/{r}")
@@ -800,38 +803,59 @@ def get_unit_visible_enemies(unit_id: int) -> list[dict]:
 
 
 class AttackIn(BaseModel):
-    target_mech_id: int
-    gunnery: int
+    # Derived from the attacker's own pilot when attacker_unit_id is given
+    # and this is omitted — see combat.resolve_attack's docstring. Only
+    # needed explicitly for the legacy manual (no unit ids) path.
+    gunnery: int | None = None
+    # attacker_unit_id/target_unit_id (both required together) switch on
+    # real server-side validation in combat.resolve_attack (LOS, weapon
+    # range, real side/movement) — target_mech_id/range_bracket/side then
+    # become optional overrides the server mostly ignores in favor of the
+    # real computed value; see resolve_attack's own docstring. Omitting
+    # both IDs keeps the legacy fully-manual path.
+    attacker_unit_id: int | None = None
+    target_unit_id: int | None = None
+    target_mech_id: int | None = None
     damage: int | None = None
     weapon_id: int | None = None
-    attacker_movement: str = "stationary"
-    target_hexes_moved: int = 0
-    target_jumped: bool = False
-    range_bracket: str = "short"
-    side: str = "front"
+    attacker_movement: str | None = None
+    target_hexes_moved: int | None = None
+    target_jumped: bool | None = None
+    range_bracket: str | None = None
+    side: str | None = None
     other_modifiers: int = 0
 
 
 @app.post("/api/campaigns/{campaign_id}/attack")
 async def attack(campaign_id: int, body: AttackIn) -> dict:
-    _require_campaign(campaign_id)
+    campaign = _require_campaign(campaign_id)
     try:
         result = combat.resolve_attack(campaign_id=campaign_id, **body.model_dump())
-    except combat.OutOfAmmo as exc:
-        raise HTTPException(422, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
     await manager.broadcast(campaign_id, {"type": "attack_result", **result})
+    # A shot changes heat/ammo (always) and armor/structure (on a hit) —
+    # every connected client needs to see that on the mech sheet, not just
+    # whichever GM screen happened to trigger it (GMView's own
+    # submitAttackFromPanel already refetches locally after this returns,
+    # which is why this bug was easy to miss). Same visibility_update +
+    # round_updated pairing app/main.py's move-with-mp already broadcasts.
+    if campaign["active_map_id"] is not None:
+        await _broadcast_visibility(campaign_id, campaign["active_map_id"])
+    await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
     return result
 
 
 @app.post("/api/campaigns/{campaign_id}/undo")
 async def undo(campaign_id: int) -> dict:
-    _require_campaign(campaign_id)
+    campaign = _require_campaign(campaign_id)
     result = combat.undo_last_action(campaign_id)
     if not result:
         raise HTTPException(404, "No action to undo")
     await manager.broadcast(campaign_id, {"type": "action_undone", **result})
+    # Reverts armor/structure too — same live-sheet fix as /attack above.
+    if campaign["active_map_id"] is not None:
+        await _broadcast_visibility(campaign_id, campaign["active_map_id"])
     return result
 
 

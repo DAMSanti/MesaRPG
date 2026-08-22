@@ -7,7 +7,7 @@ import { PilotForm } from '../components/PilotForm'
 import { MechLocationsGrid } from '../components/MechLocationsGrid'
 import { MechRecordSheet } from '../components/MechRecordSheet'
 import { MechImportSelector } from '../components/MechImportSelector'
-import { AttackPanel } from '../components/AttackPanel'
+import { WeaponVolleyPanel } from '../components/WeaponVolleyPanel'
 import { FirstPersonView } from '../components/FirstPersonView'
 import {
   buildMechLocationsPayload, emptyLocationsForm, locationsFormFromMechLocationIn, previewMechFromLocationsForm,
@@ -33,7 +33,6 @@ import {
   updateMechCritical,
   updateMechLocation,
   updatePilot,
-  type AttackIn,
   type Campaign,
   type Mech,
   type MechImportData,
@@ -70,6 +69,7 @@ export function PlayerView() {
   const [log, setLog] = useState<string[]>([])
   const [weaponId, setWeaponId] = useState<number | ''>('')
   const [selectedTarget, setSelectedTarget] = useState<Unit | null>(null)
+  const [firingVolley, setFiringVolley] = useState(false)
   const [joinName, setJoinName] = useState('')
   const [joinCallsign, setJoinCallsign] = useState('')
   const [joinGunnery, setJoinGunnery] = useState(4)
@@ -119,6 +119,23 @@ export function PlayerView() {
     getWeaponCatalog().then(setWeaponCatalog).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId, mapId, lastAttack, visibility])
+
+  // Every resolved attack in the campaign, GM or any player's — see
+  // GMView's identical fix for why (logging only from this client's own
+  // submitWeaponVolley meant nobody else's shots ever showed up here).
+  // Declared up here (using setLog directly, not the pushLog helper
+  // defined further down) so this hook runs before this component's own
+  // early returns below — a hook declared after them would be called
+  // conditionally, which React doesn't allow.
+  useEffect(() => {
+    if (!lastAttack) return
+    const targetChassis = mechs.find((m) => m.id === lastAttack.target_mech_id)?.chassis ?? `mech #${lastAttack.target_mech_id}`
+    const line = lastAttack.hit
+      ? `${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: impacto en ${lastAttack.location}${lastAttack.mech_destroyed ? ' — ¡DESTRUIDO!' : ''} (tirada ${lastAttack.roll})`
+      : `${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: fallo (tirada ${lastAttack.roll} vs ${lastAttack.target_number})`
+    setLog((l) => [line, ...l].slice(0, 8))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAttack])
 
   const importJoinMech = (data: MechImportData) => {
     setJoinChassis(data.chassis)
@@ -240,6 +257,7 @@ export function PlayerView() {
             })}
             pilot={{ gunnery: joinGunnery, piloting: joinPiloting }}
             readOnly
+            previewFullHealth
           />
           <button onClick={join} disabled={!joinName || !joinChassis}>Crear ficha</button>
         </section>
@@ -344,20 +362,30 @@ export function PlayerView() {
     }
   }
 
-  const submitAttackFromPanel = async (body: AttackIn) => {
-    if (!campaignId) return
-    try {
-      const result = await attack(campaignId, body)
-      pushLog(
-        result.hit
-          ? `${result.weapon_name ?? 'Ataque'} — impacto en ${result.location}${result.mech_destroyed ? ' — ¡DESTRUIDO!' : ''} (tirada ${result.roll})`
-          : `${result.weapon_name ?? 'Ataque'} — fallo (tirada ${result.roll} vs ${result.target_number})`,
-      )
-      setSelectedTarget(null)
-      refetch()
-    } catch {
-      setError('No se pudo resolver el ataque (¿sin munición?).')
+  // Same sequential "fire every toggled weapon against this fixed
+  // target" flow as GMView's own submitWeaponVolley — see its comment
+  // for why sequential (heat/ammo ordering) and why one weapon failing
+  // doesn't abort the rest. The hit/miss line itself isn't pushed here —
+  // see the lastAttack effect below, same "log every broadcast, not just
+  // the ones this client happened to fire" fix as GMView's own.
+  const submitWeaponVolley = async (weaponIds: number[]) => {
+    if (!campaignId || !myUnit || !selectedTarget) return
+    setFiringVolley(true)
+    for (const weaponId of weaponIds) {
+      try {
+        await attack(campaignId, {
+          attacker_unit_id: myUnit.id,
+          target_unit_id: selectedTarget.id,
+          weapon_id: weaponId,
+        })
+      } catch {
+        pushLog('Un arma no pudo disparar (fuera de alcance, sin munición o sin línea de visión).')
+      }
     }
+    if (pilot) await markRoundActed(campaignId, pilot.id).catch(() => {})
+    setFiringVolley(false)
+    setSelectedTarget(null)
+    refetch()
   }
 
   return (
@@ -499,16 +527,14 @@ export function PlayerView() {
         </>
       )}
 
-      {selectedTarget && myUnit && (
-        <AttackPanel
-          attacker={myUnit}
-          attackerMech={myMech ?? null}
+      {selectedTarget && myUnit && myMech && (
+        <WeaponVolleyPanel
+          attackerMech={myMech}
           target={selectedTarget}
           targetMech={mechForUnit(selectedTarget)}
-          pilots={pilots}
           weaponCatalog={weaponCatalog}
-          roundState={roundState}
-          onConfirm={submitAttackFromPanel}
+          firing={firingVolley}
+          onFire={submitWeaponVolley}
           onClose={() => setSelectedTarget(null)}
         />
       )}

@@ -4,8 +4,8 @@ import * as THREE from 'three'
 import { HexMap } from './HexMap'
 import { MODEL_CHEST_FRACTION, MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
 import {
-  getMap, getUnitVisibleEnemies, requestInitiative,
-  type Mech, type MapData, type RoundState, type Unit, type VisibleEnemy,
+  attack, getMap, getUnitVisibleEnemies, getWeaponCatalog, markRoundActed, requestInitiative,
+  type Mech, type MapData, type RoundState, type Unit, type VisibleEnemy, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
@@ -239,11 +239,88 @@ function TargetLockIcon() {
   )
 }
 
-// Iniciativa and Movimiento are real, tracked phases now (see turns.py's
-// movement_order/moved_pilot_ids) — the engine still has no real Weapon/
-// Physical/Heat phase structure (turns.py's own docstring: out of scope
-// for v1), so those three stay a best-effort guess derived from
-// "rolled" + "acted", same as before.
+/** Bottom-center HUD panel that appears once a detected enemy has been
+ * tapped (see FirstPersonView's selectedTargetId) — the cockpit
+ * equivalent of GMView/PlayerView's desktop WeaponVolleyPanel: one
+ * toggle per mounted weapon, FIRE to send the volley. Same underlying
+ * per-weapon /attack loop (FirstPersonView's own fireVolley), just
+ * drawn in the HUD's cyan/monospace language instead of a floating
+ * panel, since this is a cockpit readout, not a dialog box. */
+function WeaponHud({
+  mech, weaponCatalog, targetLabel, firing, onFire, onClose,
+}: {
+  mech: Mech | null
+  weaponCatalog: Record<string, WeaponStats>
+  targetLabel: string
+  firing: boolean
+  onFire: (weaponIds: number[]) => void
+  onClose: () => void
+}) {
+  const weapons = mech?.weapons ?? []
+  const [selected, setSelected] = useState<Set<number>>(
+    () => new Set(weapons.filter((w) => w.ammo_remaining !== 0).map((w) => w.id)),
+  )
+  const toggle = (weaponId: number) => {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(weaponId)) next.delete(weaponId)
+      else next.add(weaponId)
+      return next
+    })
+  }
+
+  return (
+    <div className="fp-weapon-hud">
+      <div className="fp-weapon-hud-header">
+        <span>OBJETIVO: {targetLabel}</span>
+        <button className="fp-weapon-hud-close" onClick={onClose} disabled={firing}>×</button>
+      </div>
+      {weapons.length === 0 ? (
+        <div className="fp-weapon-hud-empty">sin armas montadas</div>
+      ) : (
+        <ul className="fp-weapon-hud-list">
+          {weapons.map((w) => {
+            const stats = weaponCatalog[w.weapon_name]
+            const outOfAmmo = w.ammo_remaining === 0
+            const on = selected.has(w.id) && !outOfAmmo
+            return (
+              <li key={w.id} className={`fp-weapon-hud-row${outOfAmmo ? ' out-of-ammo' : ''}`}>
+                <button
+                  type="button"
+                  className={`fp-weapon-toggle${on ? ' on' : ''}`}
+                  role="switch"
+                  aria-checked={on}
+                  disabled={outOfAmmo || firing}
+                  onClick={() => toggle(w.id)}
+                >
+                  <span className="fp-weapon-toggle-thumb" />
+                </button>
+                <span className="fp-weapon-hud-name">{w.weapon_name}</span>
+                <span className="fp-weapon-hud-stats">
+                  {stats ? `${stats.short}/${stats.medium}/${stats.long}` : '—'}
+                  {w.ammo_remaining != null && ` · ${w.ammo_remaining}`}
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+      <button
+        className="fp-weapon-hud-fire"
+        disabled={selected.size === 0 || firing}
+        onClick={() => onFire([...selected])}
+      >
+        {firing ? 'DISPARANDO…' : 'FIRE'}
+      </button>
+    </div>
+  )
+}
+
+// Iniciativa, Movimiento, Distancia and Melee are all real, tracked
+// phases now (see turns.py's movement_order/moved_pilot_ids/
+// ranged_target_pilot_ids/melee_target_pilot_ids) — Heat still has no
+// real phase of its own (dissipation happens once per round instead, see
+// turns.py's own docstring), so that pill stays purely cosmetic.
 type Phase = 'iniciativa' | 'movimiento' | 'distancia' | 'melee' | 'heat'
 const PHASES: { key: Phase; label: string }[] = [
   { key: 'iniciativa', label: 'Iniciativa' },
@@ -271,24 +348,35 @@ export function FirstPersonView({
 }) {
   const [map, setMap] = useState<MapData | null>(null)
   const [enemies, setEnemies] = useState<VisibleEnemy[]>([])
+  const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
   const labelRefs = useRef<Record<number, HTMLDivElement | null>>({})
 
   // Self-contained fetch — PlayerView itself never loads map tile
-  // geometry today (it only needs unit positions for AttackPanel), so
-  // this loads its own copy rather than adding that dependency to
-  // PlayerView's own refetch cycle for a modal that's rarely open.
+  // geometry today (it only needs unit positions for its own
+  // WeaponVolleyPanel flow), so this loads its own copy rather than
+  // adding that dependency to PlayerView's own refetch cycle for a modal
+  // that's rarely open. weaponCatalog rides along here too (fetched
+  // once, doesn't need the visibility-triggered refresh the other two
+  // get) so this cockpit's own weapon-toggle HUD can show heat/range per
+  // weapon without PlayerView needing to pass its own copy down.
   useEffect(() => {
     let cancelled = false
-    Promise.all([getMap(unit.map_id), getUnitVisibleEnemies(unit.id)]).then(([m, e]) => {
+    Promise.all([getMap(unit.map_id), getUnitVisibleEnemies(unit.id), getWeaponCatalog()]).then(([m, e, w]) => {
       if (!cancelled) {
         setMap(m)
         setEnemies(e)
+        setWeaponCatalog(w)
       }
     })
     return () => {
       cancelled = true
     }
   }, [unit.map_id, unit.id, visibility])
+
+  // Which detected enemy this pilot has tapped as their target this
+  // volley — cleared on close, on a new selection, or once Fire! resolves.
+  const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null)
+  const [firingVolley, setFiringVolley] = useState(false)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -299,7 +387,6 @@ export function FirstPersonView({
   }, [onClose])
 
   const rolled = roundState?.rolls.some((r) => r.kind === 'pilot' && r.pilot_id === unit.pilot_id) ?? false
-  const acted = unit.pilot_id != null && (roundState?.acted_pilot_ids.includes(unit.pilot_id) ?? false)
   // The round's own global phase (same currentPhase TableView/GMView
   // show) — NOT "is it literally my own turn within the movement
   // queue." A pilot who's already rolled but is waiting behind others
@@ -318,9 +405,11 @@ export function FirstPersonView({
       ? new Set(['movimiento'])
       : phase === 'initiative'
         ? new Set(['iniciativa'])
-        : !acted
-          ? new Set(['distancia', 'melee'])
-          : new Set()
+        : phase === 'ranged'
+          ? new Set(['distancia'])
+          : phase === 'melee'
+            ? new Set(['melee'])
+            : new Set()
 
   // The Iniciativa pill doubles as the roll button when it's this
   // pilot's turn to throw — "un botón de iniciativa, por así decirlo" —
@@ -329,6 +418,55 @@ export function FirstPersonView({
   const rollMyInitiative = () => {
     if (rolled || unit.pilot_id == null) return
     requestInitiative(unit.campaign_id, unit.pilot_id).catch(() => {})
+  }
+
+  // Same gate GMView's own canAct uses (ranged/melee phase, not yet
+  // acted) — tapping a detected enemy to bring up the weapon HUD is only
+  // meaningful when there's actually something to fire this turn.
+  const acted = unit.pilot_id != null && (roundState?.acted_pilot_ids.includes(unit.pilot_id) ?? false)
+  const canAttack = (phase === 'ranged' || phase === 'melee') && !acted
+  const selectedTarget = enemies.find((e) => e.unit_id === selectedTargetId) ?? null
+
+  // Real reach, not just "detected" — same range/adjacency rule GMView's
+  // own targetableHexes uses. Every detected enemy stays tappable
+  // (canAttack alone gates that, matching the server's own permissive
+  // "advisory, not blocking" stance — a rejected weapon just silently
+  // doesn't fire), but only a genuinely reachable one gets the glow, so
+  // the reticle itself communicates whether there's any real point
+  // tapping this particular contact right now.
+  const maxWeaponRange = Math.max(
+    0,
+    ...(mech?.weapons ?? [])
+      .filter((w) => w.ammo_remaining !== 0)
+      .map((w) => weaponCatalog[w.weapon_name]?.long ?? 0),
+  )
+  const isReachable = (enemy: VisibleEnemy) => (phase === 'melee' ? enemy.distance <= 1 : enemy.distance <= maxWeaponRange)
+
+  // Sequential /attack calls, one per toggled weapon, same volley
+  // pattern as GMView/PlayerView's own submitWeaponVolley — mirrored
+  // here instead of shared because this one drives HUD-styled JSX below
+  // rather than the desktop WeaponVolleyPanel component.
+  const fireVolley = async (weaponIds: number[]) => {
+    if (selectedTargetId == null) return
+    setFiringVolley(true)
+    for (const weaponId of weaponIds) {
+      try {
+        await attack(unit.campaign_id, {
+          attacker_unit_id: unit.id,
+          target_unit_id: selectedTargetId,
+          weapon_id: weaponId,
+        })
+      } catch {
+        // A rejected weapon (out of range/no ammo/no LOS) just doesn't
+        // fire — the rest of the volley still goes out. No in-cockpit
+        // log to write it to (unlike GMView/PlayerView's pushLog), so
+        // this is silently skipped from here; the shot's absence in the
+        // attack_result broadcast is the only record.
+      }
+    }
+    if (unit.pilot_id != null) await markRoundActed(unit.campaign_id, unit.pilot_id).catch(() => {})
+    setFiringVolley(false)
+    setSelectedTargetId(null)
   }
 
   const camera = useMemo(() => {
@@ -368,6 +506,13 @@ export function FirstPersonView({
 
   return (
     <div className="first-person-view">
+      {/* Purely decorative "watching this on a screen" pass — faint
+          scanlines + a slight vignette, static (no flicker/scan sweep),
+          low enough opacity to read as texture rather than noise. Sits
+          above everything else (z-index in the CSS) since the ask was
+          for the whole feed to read as viewed through a monitor, HUD
+          included, not just the 3D canvas underneath it. */}
+      <div className="fp-crt-overlay" />
       <HudFrame heat={mech?.heat_current ?? 0} nearestDistance={nearestDistance} />
 
       <div className="fp-topbar">
@@ -396,7 +541,7 @@ export function FirstPersonView({
             </span>
           ),
         )}
-        <span className="fp-phase-note">(distancia/melee/heat: estimado)</span>
+        <span className="fp-phase-note">(heat: estimado)</span>
       </div>
 
       {!map || !camera ? (
@@ -433,7 +578,8 @@ export function FirstPersonView({
               ref={(el) => {
                 labelRefs.current[enemy.unit_id] = el
               }}
-              className="fp-enemy-label"
+              className={`fp-enemy-label${canAttack ? ' targetable' : ''}${canAttack && isReachable(enemy) ? ' in-range' : ''}${selectedTargetId === enemy.unit_id ? ' selected' : ''}`}
+              onClick={canAttack ? () => setSelectedTargetId(enemy.unit_id) : undefined}
             >
               <TargetLockIcon />
               <div className="fp-enemy-caption">
@@ -442,6 +588,16 @@ export function FirstPersonView({
               </div>
             </div>
           ))}
+          {selectedTarget && (
+            <WeaponHud
+              mech={mech}
+              weaponCatalog={weaponCatalog}
+              targetLabel={`${selectedTarget.chassis ?? '?'} ${selectedTarget.model ?? ''}`}
+              firing={firingVolley}
+              onFire={fireVolley}
+              onClose={() => setSelectedTargetId(null)}
+            />
+          )}
         </>
       )}
     </div>

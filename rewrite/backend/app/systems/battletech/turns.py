@@ -43,7 +43,7 @@ without a full phase-by-phase turn structure.
 import json
 import random
 
-from ... import campaigns, db, mechs, pilots
+from ... import campaigns, db, mechs, pilots, units, weapons
 
 # NPCs are non-aggressive by definition (ROADMAP.md S2 follow-up) — they
 # never participate in combat initiative, in either mode.
@@ -254,6 +254,61 @@ def _movement_order(campaign_id: int, mode: str, rolls: list[dict]) -> list[int]
     return [p["id"] for p in sorted(combat_pilots, key=lambda p: (total_by_faction[p["faction"]], p["id"]))]
 
 
+# ---- ranged/melee phase gating ("se activa sola... solo si algún mech
+# tiene alcance y en LoS algún mech al que pueda atacar") -----------------
+
+
+def _combat_pilots_with_targets(map_id: int | None, target_check) -> list[int]:
+    """Every combat pilot with a live unit+mech on the given map whose
+    mech currently has at least one enemy satisfying target_check(mech,
+    enemies) — enemies is units.visible_enemies_from_unit's own result
+    (facing-cone + LOS + real distance, already built for the 1st-person
+    HUD), reused here rather than re-deriving the same geometry. None/no
+    active map -> nobody has anything (mirrors movement.py's own "no map,
+    nothing reachable" handling)."""
+    if map_id is None:
+        return []
+    result = []
+    for u in units.list_units(map_id):
+        if u["pilot_id"] is None or u["mech_id"] is None:
+            continue
+        mech = mechs.get_mech(u["mech_id"])
+        if mech is None:
+            continue
+        enemies = units.visible_enemies_from_unit(u["id"]) or []
+        if target_check(mech, enemies):
+            result.append(u["pilot_id"])
+    return result
+
+
+def _pilots_with_ranged_targets(map_id: int | None) -> list[int]:
+    """A pilot "has a ranged target" if some mounted weapon that still has
+    ammo (or never needed any — ammo_remaining is None for energy
+    weapons) could reach some visible enemy within its own long-range
+    bracket. Only weapon ranges matter here, not to-hit odds — this gates
+    whether the phase exists at all, not whether a shot would land."""
+    def check(mech: dict, enemies: list[dict]) -> bool:
+        long_ranges = [
+            weapons.get_weapon(w["weapon_name"])["long"]
+            for w in mech["weapons"]
+            if w["ammo_remaining"] != 0
+        ]
+        if not long_ranges:
+            return False
+        max_range = max(long_ranges)
+        return any(e["distance"] <= max_range for e in enemies)
+
+    return _combat_pilots_with_targets(map_id, check)
+
+
+def _pilots_with_melee_targets(map_id: int | None) -> list[int]:
+    """A pilot "has a melee target" if some enemy is standing adjacent
+    (distance 1) — physical attacks need no weapon/ammo/range check, just
+    proximity (and enemies is already filtered by facing-cone/LOS, both
+    trivially satisfied at distance 1)."""
+    return _combat_pilots_with_targets(map_id, lambda mech, enemies: any(e["distance"] <= 1 for e in enemies))
+
+
 def _get(conn, campaign_id: int, mode: str) -> dict:
     round_row = conn.execute(
         "SELECT round_number FROM bt_rounds WHERE campaign_id = ?",
@@ -294,6 +349,24 @@ def _get(conn, campaign_id: int, mode: str) -> dict:
         (campaign_id,),
     ).fetchall()
     moves = [dict(r) for r in move_rows]
+    movement_order = _movement_order(campaign_id, mode, rolls)
+    moved_pilot_ids = [m["pilot_id"] for m in moves]
+
+    # Ranged/melee target scans (real LOS/range/adjacency, see
+    # _pilots_with_ranged_targets/_pilots_with_melee_targets above) only
+    # run once movement has actually finished — cheap insurance against
+    # doing per-pilot LOS work on every round-state fetch during a phase
+    # where the answer can't matter yet, and it also means these two
+    # lists start truthfully empty (never "ranged phase" before there's
+    # even a real movement_order).
+    movement_done = len(movement_order) > 0 and all(pid in moved_pilot_ids for pid in movement_order)
+    ranged_target_pilot_ids: list[int] = []
+    melee_target_pilot_ids: list[int] = []
+    if movement_done:
+        campaign = campaigns.get_campaign(campaign_id)
+        active_map_id = campaign["active_map_id"] if campaign else None
+        ranged_target_pilot_ids = _pilots_with_ranged_targets(active_map_id)
+        melee_target_pilot_ids = _pilots_with_melee_targets(active_map_id)
 
     return {
         "campaign_id": campaign_id,
@@ -301,11 +374,16 @@ def _get(conn, campaign_id: int, mode: str) -> dict:
         "mode": mode,
         "rolls": rolls,
         "acted_pilot_ids": [r["pilot_id"] for r in acted_rows],
-        "movement_order": _movement_order(campaign_id, mode, rolls),
-        "moved_pilot_ids": [m["pilot_id"] for m in moves],
+        "movement_order": movement_order,
+        "moved_pilot_ids": moved_pilot_ids,
         # Real recorded movement per pilot this round — AttackPanel reads
         # this to pre-fill attacker_movement/target_hexes_moved instead
         # of the GM guessing them (see app/combat.py's
         # ATTACKER_MOVEMENT_MOD/target_movement_mod).
         "moves": moves,
+        # Live (recomputed every fetch, not "as of when movement ended" —
+        # mechs move/die during these phases too) — see rounds.ts's
+        # currentPhase for how these two decide 'ranged'/'melee'/'other'.
+        "ranged_target_pilot_ids": ranged_target_pilot_ids,
+        "melee_target_pilot_ids": melee_target_pilot_ids,
     }

@@ -221,8 +221,8 @@ select {
 }
 
 /* Same card look as the GM's sidebar mech list (GMView.css) — a target
-   is a card, click it to open the attack panel (AttackPanel), no inline
-   weapon/range/side selectors sitting in the list itself anymore. */
+   is a card, click it to open the weapon-toggle panel (WeaponVolleyPanel),
+   no inline weapon/range/side selectors sitting in the list itself. */
 .card-list {
   display: flex;
   flex-direction: column;

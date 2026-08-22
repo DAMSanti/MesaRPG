@@ -44,7 +44,8 @@ function quaternionFromY(angle: number): { x: number; y: number; z: number; w: n
 }
 
 function Tile({
-  tile, lookup, losHighlighted, dragHighlighted, needsInitiativeHighlighted, activeMoverHighlighted, moveHighlighted, physics,
+  tile, lookup, losHighlighted, dragHighlighted, needsInitiativeHighlighted, activeMoverHighlighted, moveHighlighted,
+  targetableHighlighted, physics,
   onPointerMove, onPointerUp,
 }: {
   tile: HexTileData
@@ -67,6 +68,15 @@ function Tile({
    * same LosDebugOverlay technique. Clicking it is handled by the
    * caller's own onTileClick, same as every other tile click. */
   moveHighlighted: boolean
+  /** The unit standing here is a valid target for the attack currently
+   * being declared — populated once the attacker is picked (GMView's
+   * pickingTargetFor), filtered client-side against real weapon range
+   * (ranged phase) or adjacency (melee phase) using the same
+   * visible-enemies data FirstPersonView already fetches. Danger-red
+   * wash, same LosDebugOverlay technique — distinct from moveHighlighted
+   * (blue) and activeMoverHighlighted (amber) so the three never read as
+   * the same kind of hex. */
+  targetableHighlighted: boolean
   /** Give this tile a real physics collider matching its own hex/height
    * (TableView only, for the initiative dice to land and roll across
    * the actual board instead of a flat invisible floor) — must only be
@@ -118,7 +128,7 @@ function Tile({
       {tile.terrain === 'road' && (
         <RoadMarkings q={tile.q} r={tile.r} height={height} lookup={lookup} gridType="hex" worldPos={hexToWorld} />
       )}
-      {physics && (tile.terrain === 'forest' || tile.terrain === 'building') ? (
+      {physics && (tile.terrain === 'forest' || tile.terrain === 'light_forest' || tile.terrain === 'building') ? (
         <RigidBody type="fixed" colliders="hull">
           <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} />
         </RigidBody>
@@ -130,6 +140,7 @@ function Tile({
       {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.08} />}
       {activeMoverHighlighted && <LosDebugOverlay height={height} color="#ffb020" opacity={0.5} y={height + 0.1} />}
       {moveHighlighted && <LosDebugOverlay height={height} color="#4a9eff" opacity={0.4} y={height + 0.12} />}
+      {targetableHighlighted && <LosDebugOverlay height={height} color="#e35d5d" opacity={0.45} y={height + 0.14} />}
     </group>
   )
 }
@@ -391,7 +402,8 @@ interface DragState {
 }
 
 export function HexMap({
-  map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, moveHighlightHexes, walkPaths, physics,
+  map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
+  moveHighlightHexes, targetableHexes, walkPaths, physics,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
 }: {
   map: MapData
@@ -406,9 +418,19 @@ export function HexMap({
    * (rounds.ts's activeMoverPilotId) — their unit's tile gets the amber
    * wash. null/omitted highlights nothing. */
   activeMoverPilotId?: number | null
+  /** Pilot ids who may act right now during the ranged/melee phases
+   * (rounds.ts's activeAttackPilotIds) — same amber wash as
+   * activeMoverPilotId, just a set instead of a single id since more
+   * than one pilot can simultaneously still have a real target. */
+  activeAttackerPilotIds?: Set<number>
   /** Hexes the current mover can reach this movement phase, as "q,r"
    * keys — see app/systems/battletech/movement.py::reachable_hexes. */
   moveHighlightHexes?: Set<string>
+  /** Hexes holding a valid target for the attack currently being
+   * declared (real weapon range / adjacency, not just "an enemy is
+   * there") — danger-red wash, "q,r" keys, same technique as
+   * moveHighlightHexes. */
+  targetableHexes?: Set<string>
   /** The real hex-by-hex route for any unit currently mid-move this
    * movement phase, keyed by unit id (movement.py's ReachableHex.path,
    * captured by the caller at the moment it initiated the move — see
@@ -446,7 +468,9 @@ export function HexMap({
       .map((u) => `${u.q},${u.r}`),
   )
   const activeMoverTiles = new Set(
-    visibleUnits.filter((u) => u.pilot_id != null && u.pilot_id === activeMoverPilotId).map((u) => `${u.q},${u.r}`),
+    visibleUnits
+      .filter((u) => u.pilot_id != null && (u.pilot_id === activeMoverPilotId || (activeAttackerPilotIds?.has(u.pilot_id) ?? false)))
+      .map((u) => `${u.q},${u.r}`),
   )
 
   const dragRef = useRef<DragState | null>(null)
@@ -509,6 +533,7 @@ export function HexMap({
           needsInitiativeHighlighted={needsInitiativeTiles.has(`${tile.q},${tile.r}`)}
           activeMoverHighlighted={activeMoverTiles.has(`${tile.q},${tile.r}`)}
           moveHighlighted={moveHighlightHexes?.has(`${tile.q},${tile.r}`) ?? false}
+          targetableHighlighted={targetableHexes?.has(`${tile.q},${tile.r}`) ?? false}
           physics={physics}
           onPointerMove={(e) => {
             if (!dragRef.current) return

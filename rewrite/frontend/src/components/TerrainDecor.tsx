@@ -70,10 +70,15 @@ function GrassTufts({ q, r }: { q: number; r: number }) {
  * unlike Math.random which would reshuffle on every re-render) so a
  * cluster of trees or buildings doesn't look like one model copy-pasted. */
 export function TerrainDecor({ terrain, height, q, r }: { terrain: string; height: number; q: number; r: number }) {
-  if (terrain === 'forest') {
+  if (terrain === 'forest' || terrain === 'light_forest') {
     const seed = hashTile(q, r, 'forest-decor')
     const kind = seed % 3
-    const scale = 0.85 + ((seed >>> 3) % 100) / 100 * 0.4
+    // Same tree model for both tiers — light_forest just renders it
+    // smaller/sparser-reading (thinner canopy = shorter tree), rather
+    // than needing its own geometry for what's mechanically the same
+    // "one tree per tile" decoration.
+    const sizeMul = terrain === 'light_forest' ? 0.7 : 1
+    const scale = (0.85 + ((seed >>> 3) % 100) / 100 * 0.4) * sizeMul
     return (
       <>
         <group position={[0, height, 0]} scale={scale}>

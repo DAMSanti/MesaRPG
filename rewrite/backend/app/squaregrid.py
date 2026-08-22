@@ -37,6 +37,9 @@ def line(a: Cell, b: Cell) -> list[Cell]:
     return cells
 
 
+_LOS_BLOCK_POINTS = 3
+
+
 def has_los(
     observer: Cell,
     observer_elevation: int,
@@ -44,8 +47,11 @@ def has_los(
     target_elevation: int,
     tiles: dict[tuple[int, int], dict],
 ) -> bool:
-    """tiles maps (x, y) -> {"elevation": int, "blocks_los": bool}."""
+    """tiles maps (x, y) -> {"elevation": int, "blocks_los": bool,
+    "los_points": int}. Mirrors hexgrid.py's has_los — see its own doc
+    comment for the woods-accumulation rule (3+ points blocks)."""
     path = line(observer, target)
+    woods_points = 0
     for c in path[1:-1]:
         tile = tiles.get((c.x, c.y))
         if tile is None:
@@ -53,5 +59,8 @@ def has_los(
         if tile.get("blocks_los"):
             return False
         if tile["elevation"] > observer_elevation and tile["elevation"] > target_elevation:
+            return False
+        woods_points += tile.get("los_points", 0)
+        if woods_points >= _LOS_BLOCK_POINTS:
             return False
     return True

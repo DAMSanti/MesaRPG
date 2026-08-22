@@ -237,6 +237,12 @@ def init_db() -> None:
         _ensure_column(conn, "campaigns", "system", "TEXT NOT NULL DEFAULT 'battletech'")
         _ensure_column(conn, "maps", "grid_type", "TEXT NOT NULL DEFAULT 'hex'")
         _ensure_column(conn, "hex_tiles", "terrain", "TEXT NOT NULL DEFAULT 'plains'")
+        # Woods/jungle LoS accumulation (app/hexgrid.py's has_los) — how many
+        # of the "3+ points blocks LOS" total this tile contributes when
+        # intervening, distinct from blocks_los (a hard, single-hex block).
+        # Same "stored per-tile, defaulted from terrain, GM-overridable"
+        # pattern blocks_los already uses.
+        _ensure_column(conn, "hex_tiles", "los_points", "INTEGER NOT NULL DEFAULT 0")
         # Maps are now sized by width x height (a rectangle) instead of a
         # radius (a hexagon-of-hexes) — ROADMAP.md S1, requested directly by
         # the user. `radius` stays in the schema (SQLite can't cheaply drop

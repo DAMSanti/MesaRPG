@@ -51,3 +51,40 @@ def test_los_sees_over_a_hill_lower_than_both_observer_and_target():
 def test_los_missing_tile_data_does_not_block():
     # An untracked hex (outside the map, e.g.) shouldn't silently block sight.
     assert has_los(Hex(0, 0), 0, Hex(5, 0), 0, tiles={}) is True
+
+
+def test_los_clear_through_a_single_hex_of_light_woods():
+    tiles = {(1, 0): {"elevation": 0, "blocks_los": False, "los_points": 1}}
+    assert has_los(Hex(0, 0), 0, Hex(2, 0), 0, tiles) is True
+
+
+def test_los_clear_through_two_hexes_of_light_woods():
+    tiles = {
+        (1, 0): {"elevation": 0, "blocks_los": False, "los_points": 1},
+        (2, 0): {"elevation": 0, "blocks_los": False, "los_points": 1},
+    }
+    assert has_los(Hex(0, 0), 0, Hex(3, 0), 0, tiles) is True
+
+
+def test_los_blocked_by_three_hexes_of_light_woods():
+    tiles = {
+        (1, 0): {"elevation": 0, "blocks_los": False, "los_points": 1},
+        (2, 0): {"elevation": 0, "blocks_los": False, "los_points": 1},
+        (3, 0): {"elevation": 0, "blocks_los": False, "los_points": 1},
+    }
+    assert has_los(Hex(0, 0), 0, Hex(4, 0), 0, tiles) is False
+
+
+def test_los_blocked_by_a_single_hex_of_heavy_woods_plus_light():
+    # 2 (heavy) + 1 (light) = 3, hits the block threshold from a mix.
+    tiles = {
+        (1, 0): {"elevation": 0, "blocks_los": False, "los_points": 2},
+        (2, 0): {"elevation": 0, "blocks_los": False, "los_points": 1},
+    }
+    assert has_los(Hex(0, 0), 0, Hex(3, 0), 0, tiles) is False
+
+
+def test_los_clear_through_a_single_hex_of_heavy_woods():
+    # 2 points alone isn't enough to reach the 3-point threshold.
+    tiles = {(1, 0): {"elevation": 0, "blocks_los": False, "los_points": 2}}
+    assert has_los(Hex(0, 0), 0, Hex(2, 0), 0, tiles) is True

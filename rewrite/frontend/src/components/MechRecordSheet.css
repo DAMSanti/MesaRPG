@@ -24,14 +24,36 @@
   display: grid;
   grid-template-columns: minmax(360px, 1.15fr) minmax(320px, 1fr);
   gap: 12px;
-  overflow-x: auto;
+  /* Explicit rather than trusting this to just naturally be as wide as
+     its two grid columns want, the same "state it directly instead of
+     hoping it adds up through several boxes" fix as .modal's own
+     width: max-content, since this is the deepest, most authoritative
+     place to say it. */
+  width: max-content;
+  /* NOT overflow-x: auto here (was, before) — a scroll container stops
+     reporting its true content width to its own ancestors' shrink-to-fit
+     sizing, which was silently capping .modal's width far below what
+     this sheet actually needs regardless of .modal's own max-width —
+     the classic cause of "content clipped with no visible way to reach
+     it". Left overflow at its default (visible) so this sheet's real
+     width propagates up to .modal, whose own overflow-x: auto is the
+     single, single scroll boundary that should ever kick in — only if
+     even that fails to fit on a very narrow window. */
 }
 
 .sheet-col-left, .sheet-col-right {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  min-width: 0;
+  /* NOT min-width: 0 here anymore (was, before) — that explicitly opts a
+     grid item OUT of its default min-content floor, which is exactly
+     what let a column shrink smaller than the diagrams/tables inside it
+     actually need once nothing inside was scrolling internally anymore
+     to compensate. Without it, these columns (and the grid tracks they
+     sit in) correctly claim at least their content's real minimum width,
+     which is the other half of what makes .mech-record-sheet's own
+     shrink-to-fit sizing (see its own comment) come out right — content
+     was bleeding past its own panel borders without this. */
 }
 
 .data-panel, .diagram-panel {
@@ -220,15 +242,21 @@
   padding-bottom: 2px;
 }
 
+/* No overflow-x: auto here anymore (was, before) — same reasoning as
+   .mech-record-sheet's own comment: a scroll container hides its true
+   content width from its ancestors' shrink-to-fit sizing, so nesting
+   THIS scroll container inside that outer one meant even after fixing
+   the outer one, these panels stayed clipped to a narrow box regardless
+   — two scroll regions silently fighting each other, neither obvious
+   from the outside. Letting every panel report its own real width now
+   makes .modal itself grow to fit everything (up to its own max-width,
+   where ITS single overflow-x: auto is the one real scrollbar left) —
+   see .mech-record-sheet's own comment for the rest of this chain.
+   Widths below follow each diagram's own viewBox aspect ratio
+   (mechSheetGeometry.ts), not a shared square, and stay display:block
+   with a fixed pixel width regardless of this wrapper's own styling. */
 .sheet-scroll {
-  overflow-x: auto;
 }
-
-/* Wider than the panel on purpose, same as the real sheet is a wide
-   landscape page — .sheet-scroll lets you swipe/scroll sideways to see
-   the rest, rather than squeezing narrow armor bands (CT) into
-   illegibility to force a narrow fit. Widths follow each diagram's own
-   viewBox aspect ratio (mechSheetGeometry.ts), not a shared square. */
 .mech-armor-svg {
   display: block;
   width: 460px;

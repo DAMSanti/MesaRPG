@@ -15,6 +15,34 @@
   z-index: 0;
 }
 
+/* "Viewed through a screen" pass — kept deliberately subtle and fully
+   static (no flicker/scan-sweep animation, no color shift) per explicit
+   request ("no quiero que sea molesto"): faint horizontal lines read as
+   texture rather than a distraction, and the vignette just gently draws
+   the eye back to center. Sits above the HUD too (highest z-index in
+   this view), since the whole feed is meant to read as watched on a
+   monitor, not just the 3D canvas underneath it.
+   Plain (normal) alpha compositing, deliberately NOT mix-blend-mode —
+   blending against the WebGL <canvas> underneath was unreliable enough
+   across GPU-compositing paths that it rendered as effectively nothing
+   the first time this was tried; opaque-ish black layers reliably darken
+   regardless of what's painted behind them. */
+.fp-crt-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      rgba(0, 0, 0, 0.16) 0px,
+      rgba(0, 0, 0, 0.16) 1px,
+      transparent 1px,
+      transparent 3px
+    ),
+    radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.4) 100%);
+}
+
 .fp-hud-frame {
   position: absolute;
   inset: 0;
@@ -197,4 +225,164 @@ button.fp-phase-pill.clickable:hover {
   opacity: 0.8;
   font-size: 10px;
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+}
+
+/* Tappable target — only during the ranged/melee phase, before this
+   pilot has acted (see FirstPersonView's canAttack). Overrides the base
+   pointer-events:none (labels are otherwise decorative-only overlays). */
+.fp-enemy-label.targetable {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Extra glow only for a genuinely reachable target (real weapon range/
+   adjacency, not just "detected") — .targetable alone just makes every
+   detected contact tappable, matching the server's own permissive
+   stance; this is the visual cue for "there's a real reason to tap this
+   one right now". */
+.fp-enemy-label.in-range .fp-target-lock {
+  filter: drop-shadow(0 0 5px var(--danger)) drop-shadow(0 0 10px var(--danger));
+}
+
+.fp-enemy-label.selected .fp-target-lock {
+  filter: drop-shadow(0 0 5px var(--fp-hud-blue)) drop-shadow(0 0 12px var(--fp-hud-blue));
+}
+
+.fp-enemy-label.selected .fp-enemy-name,
+.fp-enemy-label.selected .fp-enemy-distance {
+  color: var(--fp-hud-blue);
+}
+
+/* Weapon-toggle HUD — bottom-center, appears once a target is tapped.
+   Same cyan/monospace cockpit language as .fp-topbar/.fp-phase-row
+   rather than a floating dialog, since this is a HUD readout. */
+.fp-weapon-hud {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  width: min(420px, calc(100% - 32px));
+  background: rgba(18, 33, 31, 0.9);
+  border: 1px solid var(--fp-hud-blue);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  box-shadow: 0 0 16px rgba(31, 200, 255, 0.35);
+}
+
+.fp-weapon-hud-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--fp-hud-blue);
+  font-size: 12px;
+  letter-spacing: 0.03em;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+}
+
+.fp-weapon-hud-close {
+  background: none;
+  border: none;
+  color: var(--fp-hud-blue);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.fp-weapon-hud-empty {
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 4px 0;
+}
+
+.fp-weapon-hud-list {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.fp-weapon-hud-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.fp-weapon-hud-row.out-of-ammo {
+  opacity: 0.5;
+}
+
+.fp-weapon-hud-name {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.fp-weapon-hud-stats {
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.fp-weapon-toggle {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: 9px;
+  border: 1px solid var(--fp-hud-blue);
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.fp-weapon-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.fp-weapon-toggle.on {
+  background: var(--fp-hud-blue);
+}
+
+.fp-weapon-toggle-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--fp-hud-blue);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.fp-weapon-toggle.on .fp-weapon-toggle-thumb {
+  transform: translateX(16px);
+  background: var(--bg-deep);
+}
+
+.fp-weapon-hud-fire {
+  width: 100%;
+  background: var(--danger);
+  color: var(--text);
+  border: none;
+  border-radius: 4px;
+  padding: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+}
+
+.fp-weapon-hud-fire:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

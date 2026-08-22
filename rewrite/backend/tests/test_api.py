@@ -102,6 +102,99 @@ def test_attack_against_unknown_campaign_404s():
         assert res.status_code == 404
 
 
+def _place_two_units_via_api(c, width=10, height=6):
+    locations = [
+        {"location": "HD", "armor_max": 9, "structure_max": 3},
+        {"location": "CT", "armor_max": 47, "armor_rear_max": 12, "structure_max": 31},
+        {"location": "LT", "armor_max": 32, "armor_rear_max": 10, "structure_max": 21},
+        {"location": "RT", "armor_max": 32, "armor_rear_max": 10, "structure_max": 21},
+        {"location": "LA", "armor_max": 34, "structure_max": 17},
+        {"location": "RA", "armor_max": 34, "structure_max": 17},
+        {"location": "LL", "armor_max": 41, "structure_max": 21},
+        {"location": "RL", "armor_max": 41, "structure_max": 21},
+    ]
+    camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+    m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": width, "height": height}).json()
+    c.post(f"/api/campaigns/{camp['id']}/active-map", json={"map_id": m["id"]})
+    attacker_mech = c.post(
+        f"/api/campaigns/{camp['id']}/mechs",
+        json={"chassis": "Attacker", "tonnage": 50, "walk_mp": 4, "run_mp": 6, "locations": locations},
+    ).json()
+    target_mech = c.post(
+        f"/api/campaigns/{camp['id']}/mechs",
+        json={"chassis": "Target", "tonnage": 50, "walk_mp": 4, "run_mp": 6, "locations": locations},
+    ).json()
+    attacker_unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "mech_id": attacker_mech["id"]}).json()
+    target_unit = c.post(
+        f"/api/maps/{m['id']}/units", json={"q": 2, "r": 0, "mech_id": target_mech["id"], "facing_deg": 180}
+    ).json()
+    return camp, m, attacker_mech, target_mech, attacker_unit, target_unit
+
+
+def test_attack_with_real_units_but_no_los_422s():
+    with client() as c:
+        camp, m, _, _, attacker_unit, target_unit = _place_two_units_via_api(c)
+        c.patch(f"/api/maps/{m['id']}/tiles/1/0", json={"terrain": "building", "blocks_los": True})
+
+        res = c.post(
+            f"/api/campaigns/{camp['id']}/attack",
+            json={"damage": 5, "attacker_unit_id": attacker_unit["id"], "target_unit_id": target_unit["id"]},
+        )
+        assert res.status_code == 422
+
+
+def test_attack_with_real_units_derives_gunnery_from_the_attackers_pilot():
+    with client() as c:
+        locations = [
+            {"location": "HD", "armor_max": 9, "structure_max": 3},
+            {"location": "CT", "armor_max": 47, "armor_rear_max": 12, "structure_max": 31},
+            {"location": "LT", "armor_max": 32, "armor_rear_max": 10, "structure_max": 21},
+            {"location": "RT", "armor_max": 32, "armor_rear_max": 10, "structure_max": 21},
+            {"location": "LA", "armor_max": 34, "structure_max": 17},
+            {"location": "RA", "armor_max": 34, "structure_max": 17},
+            {"location": "LL", "armor_max": 41, "structure_max": 21},
+            {"location": "RL", "armor_max": 41, "structure_max": 21},
+        ]
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 10, "height": 6}).json()
+        c.post(f"/api/campaigns/{camp['id']}/active-map", json={"map_id": m["id"]})
+        pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Ace", "gunnery": 1}).json()
+        attacker_mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={"chassis": "Attacker", "tonnage": 50, "walk_mp": 4, "run_mp": 6, "locations": locations},
+        ).json()
+        target_mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={"chassis": "Target", "tonnage": 50, "walk_mp": 4, "run_mp": 6, "locations": locations},
+        ).json()
+        attacker_unit = c.post(
+            f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "mech_id": attacker_mech["id"], "pilot_id": pilot["id"]}
+        ).json()
+        target_unit = c.post(
+            f"/api/maps/{m['id']}/units", json={"q": 2, "r": 0, "mech_id": target_mech["id"], "facing_deg": 180}
+        ).json()
+
+        result = c.post(
+            f"/api/campaigns/{camp['id']}/attack",
+            json={"damage": 5, "attacker_unit_id": attacker_unit["id"], "target_unit_id": target_unit["id"]},
+        ).json()
+        # gunnery 1 (from the pilot, not passed explicitly), stationary,
+        # no target movement, short range (distance 2) -> target_number 1.
+        assert result["target_number"] == 1
+
+
+def test_attack_broadcasts_visibility_update_and_round_updated():
+    with client() as c:
+        camp, m, _, _, attacker_unit, target_unit = _place_two_units_via_api(c)
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            c.post(
+                f"/api/campaigns/{camp['id']}/attack",
+                json={"gunnery": 0, "damage": 5, "attacker_unit_id": attacker_unit["id"], "target_unit_id": target_unit["id"]},
+            )
+            types = {ws.receive_json()["type"] for _ in range(3)}
+            assert types == {"attack_result", "visibility_update", "round_updated"}
+
+
 def test_pilot_patch_updates_only_given_field():
     with client() as c:
         camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
@@ -461,6 +554,7 @@ def test_round_endpoints_start_act_and_broadcast():
         assert initial == {
             "campaign_id": camp["id"], "round_number": 0, "mode": "team", "rolls": [], "acted_pilot_ids": [],
             "movement_order": [], "moved_pilot_ids": [], "moves": [],
+            "ranged_target_pilot_ids": [], "melee_target_pilot_ids": [],
         }
 
         with c.websocket_connect(f"/ws/{camp['id']}") as ws:

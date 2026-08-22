@@ -32,14 +32,18 @@ def test_generate_map_has_width_times_height_tiles(campaign):
 def test_generate_grasslands_map_is_plains_dominant(campaign):
     m = mapgen.generate_map(campaign["id"], "unused", width=10, height=8, biome="grasslands")
     terrains = [t["terrain"] for t in m["tiles"]]
-    assert set(terrains) <= {"plains", "hills", "forest", "road"}
+    assert set(terrains) <= {"plains", "hills", "forest", "light_forest", "road"}
     assert terrains.count("plains") > len(terrains) / 2
 
 
 def test_generate_forest_map_is_forest_dominant(campaign):
     m = mapgen.generate_map(campaign["id"], "Forest Test", width=10, height=8, biome="forest")
     terrains = [t["terrain"] for t in m["tiles"]]
-    assert terrains.count("forest") > len(terrains) / 2
+    # "forest" the biome now seeds a mix of both woods tiers (see
+    # generate_map's own light/heavy split comment) — dominance is over
+    # woods in general, not the "forest" (heavy) key specifically.
+    woods_count = terrains.count("forest") + terrains.count("light_forest")
+    assert woods_count > len(terrains) / 2
 
 
 def test_generate_river_map_has_water(campaign):
@@ -128,8 +132,18 @@ def test_generate_unknown_biome_raises(campaign):
 def test_generated_tiles_have_terrain_consistent_blocks_los(campaign):
     m = mapgen.generate_map(campaign["id"], "Consistency Test", width=8, height=6, biome="forest")
     for tile in m["tiles"]:
-        _, expected_blocks = mapgen.TERRAIN_DEFAULTS[tile["terrain"]]
+        _, expected_blocks, expected_points = mapgen.TERRAIN_DEFAULTS[tile["terrain"]]
         assert tile["blocks_los"] == expected_blocks
+        assert tile["los_points"] == expected_points
+
+
+def test_forest_biome_generates_both_light_and_heavy_woods(campaign):
+    # Wide/tall enough that the 40% light-forest split (see generate_map's
+    # own comment) reliably produces at least one of each tier.
+    m = mapgen.generate_map(campaign["id"], "Woods Mix", width=16, height=12, biome="forest")
+    terrains = {t["terrain"] for t in m["tiles"]}
+    assert "forest" in terrains
+    assert "light_forest" in terrains
 
 
 def test_generate_map_respects_campaign_grid_type():

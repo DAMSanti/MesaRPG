@@ -1,11 +1,22 @@
 """Axial hex-grid math: distance and line-of-sight tracing.
 
 Simplified LoS on purpose (ROADMAP.md Fase R1): a hex blocks sight if it's
-flagged `blocks_los` (dense terrain), OR its elevation is higher than
-BOTH the observer's and the target's elevation (a hill in between blocks
-the view). Official Total Warfare LoS has more nuance (partial cover,
-intervening elevation exactly at eye level, etc.) — this is the testable
-core, not the final word; revisit once Fase R2 rules research is done.
+flagged `blocks_los` (dense terrain — hills, buildings, water), OR its
+elevation is higher than BOTH the observer's and the target's elevation (a
+hill in between blocks the view). Official Total Warfare LoS has more
+nuance (partial cover, intervening elevation exactly at eye level, etc.) —
+this is the testable core, not the final word.
+
+Woods/jungle are the one terrain that does NOT hard-block on a single hex —
+verified against the manual's own text: "Three or more points of
+intervening woods/jungle block LOS. Light woods/jungle is worth 1 point,
+and heavy woods/jungle is worth 2 points." So `los_points` accumulates
+across every intervening hex (same exclusion of both endpoints as
+`blocks_los`) and LoS is blocked once the total reaches 3, regardless of
+how many hexes that took — one heavy + one light (2+1=3) blocks exactly
+like two heavy (2+2=4) or three light (1+1+1=3). A tile with no
+`los_points` key (every non-woods terrain, and every existing test
+fixture written before this existed) contributes 0.
 """
 
 from dataclasses import dataclass
@@ -60,6 +71,9 @@ def line(a: Hex, b: Hex) -> list[Hex]:
     return hexes
 
 
+_LOS_BLOCK_POINTS = 3
+
+
 def has_los(
     observer: Hex,
     observer_elevation: int,
@@ -67,8 +81,11 @@ def has_los(
     target_elevation: int,
     tiles: dict[tuple[int, int], dict],
 ) -> bool:
-    """tiles maps (q, r) -> {"elevation": int, "blocks_los": bool}."""
+    """tiles maps (q, r) -> {"elevation": int, "blocks_los": bool,
+    "los_points": int}. `los_points` is optional (defaults to 0) so tiles
+    dicts built before woods-accumulation existed keep working unchanged."""
     path = line(observer, target)
+    woods_points = 0
     for h in path[1:-1]:  # endpoints never block their own sightline
         tile = tiles.get((h.q, h.r))
         if tile is None:
@@ -76,5 +93,8 @@ def has_los(
         if tile.get("blocks_los"):
             return False
         if tile["elevation"] > observer_elevation and tile["elevation"] > target_elevation:
+            return False
+        woods_points += tile.get("los_points", 0)
+        if woods_points >= _LOS_BLOCK_POINTS:
             return False
     return True

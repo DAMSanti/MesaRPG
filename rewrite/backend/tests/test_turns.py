@@ -303,3 +303,105 @@ def test_marking_a_pilot_from_a_different_campaign_acted_is_independent(campaign
     turns.mark_acted(other_campaign["id"], other_pilot["id"])
     assert turns.get_round(campaign["id"])["acted_pilot_ids"] == [pilot["id"]]
     assert turns.get_round(other_campaign["id"])["acted_pilot_ids"] == [other_pilot["id"]]
+
+
+# ---- ranged/melee target gating ("se activa sola... solo si algún mech
+# tiene alcance y en LoS algún mech al que pueda atacar") -----------------
+
+
+def _two_mechs_movement_complete(campaign, distance_apart, weapon=None):
+    """Individual-mode round, both pilots rolled and moved (so
+    movement_order is fully covered — the precondition for
+    ranged_target_pilot_ids/melee_target_pilot_ids to compute at all) —
+    two mechs `distance_apart` hexes apart on a flat, empty map, attacker
+    optionally carrying one weapon."""
+    from app import campaigns as campaigns_module, maps, units as units_module
+    from app.systems.battletech import movement
+
+    campaigns_module.set_initiative_mode(campaign["id"], "individual")
+    attacker_pilot = pilots.create_pilot(campaign["id"], "Attacker", faction="player")
+    target_pilot = pilots.create_pilot(campaign["id"], "Target", faction="enemy")
+    m = maps.create_map(campaign["id"], "Range Test", width=20, height=6)
+    campaigns_module.set_active_map(campaign["id"], m["id"])
+    attacker_mech = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Attacker", tonnage=50, walk_mp=4, run_mp=6,
+        pilot_id=attacker_pilot["id"], locations=ATLAS_LOCATIONS,
+    )
+    target_mech = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Target", tonnage=50, walk_mp=4, run_mp=6,
+        pilot_id=target_pilot["id"], locations=ATLAS_LOCATIONS,
+    )
+    if weapon:
+        mechs.add_weapon(attacker_mech["id"], weapon, "RT")
+    attacker_unit = units_module.create_unit(
+        campaign["id"], m["id"], q=0, r=0, mech_id=attacker_mech["id"], pilot_id=attacker_pilot["id"],
+    )
+    units_module.create_unit(
+        campaign["id"], m["id"], q=distance_apart, r=0, mech_id=target_mech["id"], pilot_id=target_pilot["id"],
+        facing_deg=180,
+    )
+
+    turns.start_round(campaign["id"])
+    turns.report_pilot_initiative(campaign["id"], attacker_pilot["id"], 5)
+    turns.report_pilot_initiative(campaign["id"], target_pilot["id"], 8)
+    # Both pilots must show up in moved_pilot_ids for movement_order to be
+    # considered fully covered — a 0-hex "move" (turn in place) still
+    # counts as this pilot's move for the round.
+    movement.execute_move(campaign["id"], attacker_unit["id"], 0, 0, "walk")
+    movement.execute_move(
+        campaign["id"], next(u for u in units_module.list_units(m["id"]) if u["pilot_id"] == target_pilot["id"])["id"],
+        distance_apart, 0, "walk",
+    )
+    return attacker_pilot, target_pilot
+
+
+def test_ranged_target_pilot_ids_empty_before_movement_finishes(campaign):
+    from app import campaigns as campaigns_module, maps, units as units_module
+
+    campaigns_module.set_initiative_mode(campaign["id"], "individual")
+    a = pilots.create_pilot(campaign["id"], "A", faction="player")
+    pilots.create_pilot(campaign["id"], "B", faction="enemy")
+    turns.start_round(campaign["id"])
+    turns.report_pilot_initiative(campaign["id"], a["id"], 5)
+    # B hasn't rolled yet -> movement_order is still empty.
+    state = turns.get_round(campaign["id"])
+    assert state["ranged_target_pilot_ids"] == []
+    assert state["melee_target_pilot_ids"] == []
+
+
+def test_ranged_target_pilot_ids_empty_when_no_weapon_in_range(campaign):
+    _two_mechs_movement_complete(campaign, distance_apart=10, weapon="Small Laser")  # long range 3
+    state = turns.get_round(campaign["id"])
+    assert state["ranged_target_pilot_ids"] == []
+
+
+def test_ranged_target_pilot_ids_populated_when_a_weapon_is_in_range(campaign):
+    attacker_pilot, _ = _two_mechs_movement_complete(campaign, distance_apart=5, weapon="Medium Laser")  # long range 9
+    state = turns.get_round(campaign["id"])
+    assert state["ranged_target_pilot_ids"] == [attacker_pilot["id"]]
+
+
+def test_ranged_target_pilot_ids_empty_without_ammo(campaign):
+    from app import mechs as mechs_module
+
+    attacker_pilot, _ = _two_mechs_movement_complete(campaign, distance_apart=2, weapon="AC/20")
+    mech = mechs_module.get_mech(next(
+        m for m in mechs_module.list_mechs(campaign["id"]) if m["pilot_id"] == attacker_pilot["id"]
+    )["id"])
+    mechs_module.use_ammo(mech["weapons"][0]["id"])
+    for _ in range(4):
+        mechs_module.use_ammo(mech["weapons"][0]["id"])
+    state = turns.get_round(campaign["id"])
+    assert state["ranged_target_pilot_ids"] == []
+
+
+def test_melee_target_pilot_ids_empty_when_not_adjacent(campaign):
+    _two_mechs_movement_complete(campaign, distance_apart=2)
+    state = turns.get_round(campaign["id"])
+    assert state["melee_target_pilot_ids"] == []
+
+
+def test_melee_target_pilot_ids_populated_when_adjacent(campaign):
+    attacker_pilot, target_pilot = _two_mechs_movement_complete(campaign, distance_apart=1)
+    state = turns.get_round(campaign["id"])
+    assert set(state["melee_target_pilot_ids"]) == {attacker_pilot["id"], target_pilot["id"]}

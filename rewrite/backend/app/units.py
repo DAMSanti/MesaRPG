@@ -47,6 +47,28 @@ def _within_facing_arc(dx: float, dz: float, facing_deg: float, arc_deg: float) 
     return abs(diff) <= arc_deg / 2
 
 
+def attack_side(attacker: dict, target: dict, grid_type: str) -> str:
+    """Which of the target's 4 hit-location quadrants (front/left/right/
+    rear — app/combat.py's HIT_LOCATION_TABLES) the attacker is actually
+    firing from, based on real positions and the target's own facing_deg
+    — server-side port of hexMath.ts's attackSide (same 4x90° quadrant
+    heuristic, same angle convention as _within_facing_arc above). Was
+    previously only computed client-side as an editable *suggestion*;
+    this is the authoritative version app/combat.py's resolve_attack uses
+    once real attacker_unit_id/target_unit_id are given."""
+    dx, dz = _world_delta(target["q"], target["r"], attacker["q"], attacker["r"], grid_type)
+    if dx == 0 and dz == 0:
+        return "front"
+    angle_deg = math.degrees(math.atan2(dz, dx))
+    relative = (angle_deg - target["facing_deg"] + 180) % 360 - 180
+    abs_relative = abs(relative)
+    if abs_relative <= 45:
+        return "front"
+    if abs_relative >= 135:
+        return "rear"
+    return "left" if relative > 0 else "right"
+
+
 def create_unit(
     campaign_id: int,
     map_id: int,

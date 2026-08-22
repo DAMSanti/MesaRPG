@@ -47,3 +47,16 @@ def test_los_blocked_by_terrain_flag():
 def test_los_sees_over_a_lower_hill():
     tiles = {(1, 0): {"elevation": 2, "blocks_los": False}, (2, 0): {"elevation": 0, "blocks_los": False}}
     assert has_los(Cell(0, 0), 3, Cell(3, 0), 3, tiles) is True
+
+
+def test_los_blocked_by_three_points_of_woods():
+    tiles = {
+        (1, 0): {"elevation": 0, "blocks_los": False, "los_points": 2},
+        (2, 0): {"elevation": 0, "blocks_los": False, "los_points": 1},
+    }
+    assert has_los(Cell(0, 0), 0, Cell(3, 0), 0, tiles) is False
+
+
+def test_los_clear_under_the_three_point_woods_threshold():
+    tiles = {(1, 0): {"elevation": 0, "blocks_los": False, "los_points": 2}}
+    assert has_los(Cell(0, 0), 0, Cell(2, 0), 0, tiles) is True

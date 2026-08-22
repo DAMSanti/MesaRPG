@@ -13,7 +13,7 @@ import { TableBackground } from '../components/TableBackground'
 import { UnitContextMenu } from '../components/UnitContextMenu'
 import { FacingPicker } from '../components/FacingPicker'
 import { DropdownMenu } from '../components/DropdownMenu'
-import { AttackPanel } from '../components/AttackPanel'
+import { WeaponVolleyPanel } from '../components/WeaponVolleyPanel'
 import { Modal } from '../components/Modal'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Tooltip } from '../components/Tooltip'
@@ -22,7 +22,7 @@ import { MECH_CHASSIS_ASSETS } from '../mechAssets'
 import { FACTION_COLORS, FACTION_LABELS, NEUTRAL_UNIT_COLOR, type Faction } from '../factions'
 import { suggestPilotColor } from '../pilotColors'
 import {
-  activeMoverPilotId, activeTurnPilotIds, currentPhase, formatRoll, PHASE_LABELS, pilotsNeedingInitiative,
+  activeAttackPilotIds, activeMoverPilotId, currentPhase, formatRoll, PHASE_LABELS, pilotsNeedingInitiative,
 } from '../rounds'
 import { mapCenter, worldToHex } from '../hexMath'
 import {
@@ -38,6 +38,7 @@ import {
   deleteMech,
   deletePilot,
   getMechImport,
+  getUnitVisibleEnemies,
   getWeaponCatalog,
   listCampaigns,
   listMechChassis,
@@ -56,7 +57,6 @@ import {
   undoLastAction,
   updateMech,
   updatePilot,
-  type AttackIn,
   type Campaign,
   type InitiativeMode,
   type Mech,
@@ -66,6 +66,7 @@ import {
   type Pilot,
   type ReachableHex,
   type Unit,
+  type VisibleEnemy,
   type WeaponStats,
 } from '../api'
 import './GMView.css'
@@ -111,7 +112,51 @@ export function GMView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId])
 
+  // useMapState's own map/units already refetch on every visibility_update
+  // (broadcast on every unit move — see its own doc comment), but `mechs`
+  // is separate local state here, only ever refreshed at explicit GM
+  // action points otherwise. That left the mech sheet (heat, armor,
+  // MP penalties) showing stale data after anything that changes a mech
+  // without the GM personally triggering a refetch — a movement-phase
+  // move generating heat, most visibly (the sheet's HeatScale/penalties
+  // never moved off 0 until some unrelated click happened to refetch).
+  // PlayerView already refetches its own mechs on this same trigger.
+  // lastAttack is ALSO a trigger here, not just visibility — a hit
+  // updates armor/heat, but a MISS still changes heat (see combat.py's
+  // resolve_attack: heat is added whether the shot lands or not) with no
+  // damage at all, meaning attack_result can arrive with no accompanying
+  // visibility_update semantically tied to armor (visibility_update
+  // fires on every attack regardless, but relying on a single trigger
+  // for two different reasons this state needs refreshing was fragile).
+  // PlayerView's own equivalent effect already includes both — this
+  // brings GMView in line with it.
+  useEffect(() => {
+    if (visibility || lastAttack) refetch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visibility, lastAttack])
+
   const pushLog = (line: string) => setLog((l) => [line, ...l].slice(0, 12))
+
+  // Every resolved attack, logged from the attack_result broadcast
+  // itself rather than from whichever local flow happened to fire it —
+  // the GM's own submitWeaponVolley used to push this line directly,
+  // which meant an attack a PLAYER made (PlayerView's own volley, or the
+  // 1st-person HUD's) never showed up in the GM's registry at all, since
+  // nothing here ran for a shot GMView didn't personally initiate. This
+  // fires for literally every attack in the campaign, GM or player.
+  useEffect(() => {
+    if (!lastAttack) return
+    const targetChassis = mechs.find((m) => m.id === lastAttack.target_mech_id)?.chassis ?? `mech #${lastAttack.target_mech_id}`
+    if (lastAttack.hit) {
+      pushLog(
+        `${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: impacto en ${lastAttack.location}${lastAttack.critical ? ' (¡crítico!)' : ''} — tirada ${lastAttack.roll} vs ${lastAttack.target_number}` +
+          (lastAttack.mech_destroyed ? ' — MECH DESTRUIDO' : ''),
+      )
+    } else {
+      pushLog(`${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: fallo — tirada ${lastAttack.roll} vs ${lastAttack.target_number}`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAttack])
 
   // ---- pilot form (now lives inside a modal opened from the sidebar's
   // "+" button, not an always-visible inline section) ----
@@ -323,17 +368,14 @@ export function GMView() {
     }
   }
 
-  // ---- mapa interactivo: clic en un mech → menú (Atacar/Mover, solo en
-  // su turno per rounds.ts's activeTurnPilotIds), o arrastrarlo libremente
-  // (sin gating — el GM siempre puede reposicionar la miniatura). ----
-  const activePilotIds = roundState ? activeTurnPilotIds(roundState, pilots) : new Set<number>()
-  // activeTurnPilotIds itself has no concept of phase (it's pure
-  // initiative-order + acted tracking) — without this extra check,
-  // "Atacar" read as available the instant initiative was in, even
-  // while the round was still in the movement phase. Real Total Warfare
-  // order: movement fully resolves for everyone before any attacks.
+  // ---- mapa interactivo: clic en un mech → menú (Atacar, solo si ese
+  // piloto todavía tiene un objetivo real esta fase — rounds.ts's
+  // activeAttackPilotIds, NO el orden de iniciativa: un piloto sin
+  // objetivo (sin alcance/LoS/munición) nunca bloquea el turno de nadie,
+  // ver su propio comentario), o arrastrarlo libremente (sin gating — el
+  // GM siempre puede reposicionar la miniatura). ----
   const canAct = (unit: Unit) =>
-    unit.pilot_id != null && activePilotIds.has(unit.pilot_id) && roundState != null && currentPhase(roundState) === 'other'
+    unit.pilot_id != null && roundState != null && activeAttackPilotIds(roundState).has(unit.pilot_id)
   const mechForUnit = (unit: Unit) => mechs.find((m) => m.id === unit.mech_id) ?? null
 
   // ---- iniciativa manual por piloto (modo individual únicamente — modo
@@ -382,6 +424,47 @@ export function GMView() {
   const [menu, setMenu] = useState<{ unit: Unit; x: number; y: number } | null>(null)
   const [isDraggingUnit, setIsDraggingUnit] = useState(false)
   const [pickingTargetFor, setPickingTargetFor] = useState<number | null>(null)
+  // Every enemy this specific attacker can currently detect (facing cone
+  // + LOS — same data FirstPersonView's own HUD already fetches), before
+  // narrowing to which of those are actually valid targets (real weapon
+  // range for ranged, adjacency for melee — see targetableHexes below).
+  // Refetched fresh each time a new attacker starts picking a target.
+  const [targetableEnemies, setTargetableEnemies] = useState<VisibleEnemy[]>([])
+  useEffect(() => {
+    if (pickingTargetFor == null) {
+      setTargetableEnemies([])
+      return
+    }
+    let cancelled = false
+    getUnitVisibleEnemies(pickingTargetFor).then((enemies) => {
+      if (!cancelled) setTargetableEnemies(enemies)
+    }).catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [pickingTargetFor])
+  // Danger-red tile wash (HexMap's targetableHexes prop) — narrows
+  // targetableEnemies down to whoever's actually reachable: real weapon
+  // long-range (any mounted weapon still carrying ammo) during the
+  // ranged phase, plain adjacency during melee. The server is still the
+  // real authority (a rejected shot still 422s) — this is a preview, not
+  // a second source of truth.
+  const targetableHexes = (() => {
+    if (pickingTargetFor == null || !roundState) return new Set<string>()
+    const attackerMech = mechs.find((m) => m.id === units.find((u) => u.id === pickingTargetFor)?.mech_id)
+    const phase = currentPhase(roundState)
+    const filtered =
+      phase === 'melee'
+        ? targetableEnemies.filter((e) => e.distance <= 1)
+        : targetableEnemies.filter((e) => {
+            const longRanges = (attackerMech?.weapons ?? [])
+              .filter((w) => w.ammo_remaining !== 0)
+              .map((w) => weaponCatalog[w.weapon_name]?.long ?? 0)
+            const maxRange = longRanges.length > 0 ? Math.max(...longRanges) : 0
+            return e.distance <= maxRange
+          })
+    return new Set(filtered.map((e) => `${e.q},${e.r}`))
+  })()
   const [attackPanel, setAttackPanel] = useState<{ attacker: Unit; target: Unit } | null>(null)
   // A unit was just dropped (dragged on the map, or dragged in from the
   // sidebar) — before actually committing the move, let the GM pick
@@ -454,7 +537,15 @@ export function GMView() {
   // normal DOM element, not something r3f's canvas raycasting ever sees)
   // — a CameraBridge rendered inside the Canvas hands back a
   // screen→ground raycast function once r3f's camera is ready. ----
-  const [viewingMech, setViewingMech] = useState<Mech | null>(null)
+  // An id, not a snapshot Mech object — "Ver ficha" used to stash the
+  // Mech object itself, which then never picked up later changes (heat,
+  // armor/structure from an attack) since it kept pointing at the stale
+  // object even after `mechs` refetched with fresh data under a new
+  // array reference. Deriving the live mech from `mechs` on every render
+  // (viewingMech below) means the open sheet modal always reflects
+  // whatever `mechs` currently holds.
+  const [viewingMechId, setViewingMechId] = useState<number | null>(null)
+  const viewingMech = viewingMechId != null ? mechs.find((m) => m.id === viewingMechId) ?? null : null
   const [pilotMenu, setPilotMenu] = useState<{ pilot: Pilot; x: number; y: number } | null>(null)
   const [mechMenu, setMechMenu] = useState<{ mech: Mech; x: number; y: number } | null>(null)
   const [draggingSidebarMech, setDraggingSidebarMech] = useState<Mech | null>(null)
@@ -664,24 +755,39 @@ export function GMView() {
     setPendingFacing({ kind: 'move', unit, q, r, x: clientX, y: clientY })
   }
 
-  const submitAttackFromPanel = async (body: AttackIn) => {
+  // Volley = every weapon toggled on in WeaponVolleyPanel, fired one at a
+  // time against the same fixed attacker/target — sequential (not
+  // Promise.all) on purpose: each shot's heat has to land before the
+  // next one's to-hit penalty is computed (see combat.py's own
+  // resolve_attack docstring), and a rejected shot (out of range/no LOS
+  // for THAT weapon specifically) shouldn't abort the rest of the
+  // volley, just get logged and skipped.
+  //
+  // The hit/miss line itself is NOT pushed here — see the lastAttack
+  // effect below, which logs every attack_result broadcast regardless of
+  // who fired it. Logging it here too used to double it up for the GM's
+  // own shots, and (the actual bug report) meant a PLAYER's attack never
+  // appeared in the GM's registry at all, since nothing here ever ran
+  // for a shot GMView didn't itself initiate.
+  const [firingVolley, setFiringVolley] = useState(false)
+  const submitWeaponVolley = async (weaponIds: number[]) => {
     if (!campaignId || !attackPanel) return
-    try {
-      const result = await attack(campaignId, body)
-      if (result.hit) {
-        pushLog(
-          `${result.weapon_name ?? 'Ataque'} — impacto en ${result.location}${result.critical ? ' (¡crítico!)' : ''} — tirada ${result.roll} vs ${result.target_number}` +
-            (result.mech_destroyed ? ' — MECH DESTRUIDO' : ''),
-        )
-      } else {
-        pushLog(`${result.weapon_name ?? 'Ataque'} — fallo — tirada ${result.roll} vs ${result.target_number}`)
+    setFiringVolley(true)
+    for (const weaponId of weaponIds) {
+      try {
+        await attack(campaignId, {
+          attacker_unit_id: attackPanel.attacker.id,
+          target_unit_id: attackPanel.target.id,
+          weapon_id: weaponId,
+        })
+      } catch {
+        pushLog(`Un arma no pudo disparar (fuera de alcance, sin munición o sin línea de visión).`)
       }
-      if (attackPanel.attacker.pilot_id != null) await submitMarkActed(attackPanel.attacker.pilot_id)
-      setAttackPanel(null)
-      refetch()
-    } catch {
-      setError('No se pudo resolver el ataque (¿sin munición?).')
     }
+    if (attackPanel.attacker.pilot_id != null) await submitMarkActed(attackPanel.attacker.pilot_id)
+    setFiringVolley(false)
+    setAttackPanel(null)
+    refetch()
   }
 
   if (campaignId == null) return <div className="gm-view">preparando campaña…</div>
@@ -795,7 +901,9 @@ export function GMView() {
                   units={units}
                   needsInitiativePilotIds={needsInitiativePilotIds}
                   activeMoverPilotId={activeMover}
+                  activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState) : undefined}
                   moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
+                  targetableHexes={targetableHexes}
                   walkPaths={walkPaths}
                   onUnitClick={onUnitClick}
                   onTileClick={onTileClick}
@@ -944,7 +1052,7 @@ export function GMView() {
       )}
 
       {viewingMech && (
-        <Modal title={`${viewingMech.chassis} ${viewingMech.model ?? ''}`.trim()} onClose={() => setViewingMech(null)}>
+        <Modal title={`${viewingMech.chassis} ${viewingMech.model ?? ''}`.trim()} onClose={() => setViewingMechId(null)}>
           <MechRecordSheet mech={viewingMech} weaponCatalog={weaponCatalog} readOnly />
         </Modal>
       )}
@@ -958,7 +1066,7 @@ export function GMView() {
             title={`${mechMenu.mech.chassis} ${mechMenu.mech.model ?? ''}`.trim()}
             onClose={() => setMechMenu(null)}
           >
-            <button onClick={() => { setViewingMech(mechMenu.mech); setMechMenu(null) }}>Ver ficha</button>
+            <button onClick={() => { setViewingMechId(mechMenu.mech.id); setMechMenu(null) }}>Ver ficha</button>
             {showRollInitiative && (
               <button
                 disabled={!needsInitiative(menuPilot!.id)}
@@ -1055,16 +1163,14 @@ export function GMView() {
         )
       })()}
 
-      {attackPanel && (
-        <AttackPanel
-          attacker={attackPanel.attacker}
-          attackerMech={mechForUnit(attackPanel.attacker)}
+      {attackPanel && mechForUnit(attackPanel.attacker) && (
+        <WeaponVolleyPanel
+          attackerMech={mechForUnit(attackPanel.attacker)!}
           target={attackPanel.target}
           targetMech={mechForUnit(attackPanel.target)}
-          pilots={pilots}
           weaponCatalog={weaponCatalog}
-          roundState={roundState}
-          onConfirm={submitAttackFromPanel}
+          firing={firingVolley}
+          onFire={submitWeaponVolley}
           onClose={() => setAttackPanel(null)}
         />
       )}

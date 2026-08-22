@@ -64,6 +64,10 @@ export interface HexTileData {
   r: number
   elevation: number
   blocks_los: boolean
+  /** Woods/jungle LoS-accumulation weight (app/hexgrid.py's has_los) —
+   * 0 for every terrain except forest (2, heavy) and light_forest (1) —
+   * see app/mapgen.py's TERRAIN_DEFAULTS for the full rationale. */
+  los_points: number
   terrain: string
 }
 
@@ -172,7 +176,7 @@ export const updateTile = (
   mapId: number,
   q: number,
   r: number,
-  body: Partial<{ elevation: number; blocks_los: boolean; terrain: string }>,
+  body: Partial<{ elevation: number; blocks_los: boolean; terrain: string; los_points: number }>,
 ) =>
   request<MapData>(`/api/maps/${mapId}/tiles/${q}/${r}`, {
     method: 'PATCH',
@@ -446,8 +450,20 @@ export const createUnit = (
 ) => request<Unit>(`/api/maps/${mapId}/units`, { method: 'POST', body: JSON.stringify(body) })
 
 export interface AttackIn {
-  target_mech_id: number
-  gunnery: number
+  // Derived server-side from the attacker's own pilot when
+  // attacker_unit_id is given and this is omitted — see
+  // app/combat.py's resolve_attack docstring. Only needed explicitly for
+  // the legacy manual (no unit ids) path.
+  gunnery?: number
+  // attacker_unit_id/target_unit_id (both, or neither) switch on real
+  // server-side validation — LOS, weapon range, real side/movement all
+  // computed from actual game state, ignoring range_bracket/side/
+  // attacker_movement/target_hexes_moved/target_jumped even if sent (see
+  // app/combat.py's resolve_attack docstring). Omitting both keeps the
+  // legacy fully-manual path, which DOES trust those fields as-is.
+  attacker_unit_id?: number
+  target_unit_id?: number
+  target_mech_id?: number
   // Either damage (legacy/manual) or weapon_id (looks damage up from the
   // catalog and consumes ammo) — see app/combat.py's resolve_attack.
   damage?: number
@@ -512,10 +528,20 @@ export interface RoundState {
    * _movement_order. */
   movement_order: number[]
   moved_pilot_ids: number[]
-  /** Real recorded movement per pilot this round — AttackPanel reads
-   * this to pre-fill attacker_movement/target_hexes_moved instead of
-   * the GM guessing them. */
+  /** Real recorded movement per pilot this round — app/combat.py's
+   * resolve_attack derives attacker_movement/target_hexes_moved from
+   * this same data server-side now (see its own docstring); kept here
+   * too since the GM's round-state chips still surface it. */
   moves: { pilot_id: number; unit_id: number; movement_type: MovementType; hexes_moved: number }[]
+  /** Pilot ids who, right now, have some mounted+loaded weapon in real
+   * range+LoS of some visible enemy — [] until movement has fully
+   * finished (see turns.py's own _get), and live-recomputed every fetch
+   * after that (mechs move/die during these phases too). */
+  ranged_target_pilot_ids: number[]
+  /** Same idea as ranged_target_pilot_ids but for adjacency (distance 1)
+   * — no weapon/ammo/range involved, physical attacks only need
+   * proximity. */
+  melee_target_pilot_ids: number[]
 }
 
 export const getRound = (campaignId: number) => request<RoundState>(`/api/campaigns/${campaignId}/round`)

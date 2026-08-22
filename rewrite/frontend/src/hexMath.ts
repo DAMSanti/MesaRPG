@@ -1,30 +1,6 @@
-import type { WeaponStats } from './api'
-
 export interface HexCoord {
   q: number
   r: number
-}
-
-// Mirrors app/hexgrid.py's distance() exactly — axial → cube coordinates,
-// Chebyshev distance in cube space. Keep in sync if that changes.
-export function hexDistance(a: HexCoord, b: HexCoord): number {
-  const ax = a.q, az = a.r, ay = -ax - az
-  const bx = b.q, bz = b.r, by = -bx - bz
-  return Math.max(Math.abs(ax - bx), Math.abs(ay - by), Math.abs(az - bz))
-}
-
-export type RangeBracket = 'short' | 'medium' | 'long'
-
-// Buckets a hex distance into the weapon's own short/medium/long
-// thresholds (each is the bracket's upper bound, same convention
-// app/weapons.py's WEAPON_CATALOG already uses) — null if out of range
-// entirely. No minimum-range penalty modeling, matching combat.py's
-// resolve_attack, which doesn't check it either.
-export function rangeBracket(distance: number, weapon: WeaponStats): RangeBracket | null {
-  if (distance <= weapon.short) return 'short'
-  if (distance <= weapon.medium) return 'medium'
-  if (distance <= weapon.long) return 'long'
-  return null
 }
 
 // Axial (pointy-top) → world x/z. The one authoritative copy — HexMap.tsx
@@ -72,29 +48,3 @@ export function mapCenter(tiles: HexCoord[]): [number, number] {
   return [(Math.min(...xs) + Math.max(...xs)) / 2, (Math.min(...zs) + Math.max(...zs)) / 2]
 }
 
-export type AttackSide = 'front' | 'left' | 'right' | 'rear'
-
-// Mirrors hexToWorld above so the attack-direction angle means the same
-// thing the facing convention already uses elsewhere (units.py's
-// _world_delta/_within_facing_arc: 0° = world +X, counter-clockwise).
-function worldDelta(from: HexCoord, to: HexCoord): [number, number] {
-  const [fx, fz] = hexToWorld(from.q, from.r)
-  const [tx, tz] = hexToWorld(to.q, to.r)
-  return [tx - fx, tz - fz]
-}
-
-// New v1 heuristic — there's no backend equivalent to mirror (only a
-// 180° front/rear LoS arc exists server-side, not a 4-way hit-location
-// side). Four 90° quadrants centered on the target's own facing_deg:
-// front/right/rear/left, in that clockwise order. Treated as a suggested
-// default in AttackPanel, not gospel — the GM can override it.
-export function attackSide(attacker: HexCoord, target: HexCoord & { facing_deg: number }): AttackSide {
-  const [dx, dz] = worldDelta(target, attacker)
-  if (dx === 0 && dz === 0) return 'front'
-  const angleDeg = (Math.atan2(dz, dx) * 180) / Math.PI
-  const relative = ((angleDeg - target.facing_deg + 180) % 360 + 360) % 360 - 180
-  const abs = Math.abs(relative)
-  if (abs <= 45) return 'front'
-  if (abs >= 135) return 'rear'
-  return relative > 0 ? 'left' : 'right'
-}

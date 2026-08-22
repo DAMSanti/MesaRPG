@@ -61,7 +61,7 @@ const getForestFloorTexture = () => loadPhotoTexture('/textures/forest-floor.jpg
  * visible gaps/overlaps at tile borders despite the texture itself
  * tiling seamlessly. */
 export function terrainRotation(terrain: string, q: number, r: number): number {
-  if (terrain !== 'plains' && terrain !== 'forest') return 0
+  if (terrain !== 'plains' && terrain !== 'forest' && terrain !== 'light_forest') return 0
   return (hashTile(q, r, 'photo-rotation') % 6) * (Math.PI / 3)
 }
 
@@ -117,12 +117,19 @@ export function terrainColor(terrain: string, elevation: number, q = 0, r = 0): 
     const lerp = (a: number, b: number) => Math.round(a + (b - a) * t)
     return `rgb(${lerp(from.r, to.r)}, ${lerp(from.g, to.g)}, ${lerp(from.b, to.b)})`
   }
-  if (terrain === 'plains' || terrain === 'forest') {
-    const base = terrain === 'forest' ? { r: 0x4a, g: 0x5c, b: 0x46 } : { r: 0xff, g: 0xff, b: 0xff }
+  if (terrain === 'plains' || terrain === 'forest' || terrain === 'light_forest') {
+    // light_forest gets a lighter multiply than forest's dense-canopy
+    // shadow — thinner canopy, more daylight reaching the ground — while
+    // still reading as the same photo terrain, not a distinct texture.
+    const base =
+      terrain === 'forest' ? { r: 0x4a, g: 0x5c, b: 0x46 } :
+      terrain === 'light_forest' ? { r: 0x7a, g: 0x8c, b: 0x70 } :
+      { r: 0xff, g: 0xff, b: 0xff }
     const jitter = 0.94 + (hashTile(q, r, 'photo-tint') % 1000 / 1000) * 0.12
     const scale = (c: number) => Math.max(0, Math.min(255, Math.round(c * jitter)))
     return `rgb(${scale(base.r)}, ${scale(base.g)}, ${scale(base.b)})`
   }
+  if (terrain === 'water_deep') return '#0c2530'
   return '#ffffff'
 }
 
@@ -495,10 +502,14 @@ function buildBuildingTexture(kind: number): THREE.CanvasTexture {
  * texture — same terrain, different tiles look slightly different. */
 export function terrainTexture(terrain: string, q: number, r: number): THREE.Texture {
   if (terrain === 'plains') return getGrassTexture()
-  if (terrain === 'forest') return getForestFloorTexture()
+  if (terrain === 'forest' || terrain === 'light_forest') return getForestFloorTexture()
   if (terrain === 'building') return buildBuildingTexture(buildingKind(q, r))
+  // water_deep reuses the same procedural drawWater pattern (DRAW lookup
+  // below) as water — the darker terrainColor() multiply above is what
+  // actually distinguishes it, not a separate texture.
+  const key = terrain === 'water_deep' ? 'water' : terrain
   const variant = hashTile(q, r, terrain) % VARIANTS
-  return buildBaseTexture(terrain, variant)
+  return buildBaseTexture(key, variant)
 }
 
 export function neighborCoords(q: number, r: number, gridType: 'hex' | 'square'): [number, number][] {

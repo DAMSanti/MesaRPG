@@ -1,0 +1,153 @@
+.weapon-volley-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.weapon-volley-panel {
+  position: fixed;
+  z-index: 41;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 14px;
+  min-width: 340px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+}
+
+.weapon-volley-title {
+  font-size: 13px;
+  color: var(--accent);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.weapon-volley-empty {
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 8px 0;
+}
+
+.weapon-volley-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.weapon-volley-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-deep);
+}
+
+.weapon-volley-row.out-of-ammo {
+  opacity: 0.5;
+}
+
+.weapon-volley-name {
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.weapon-volley-stats {
+  color: var(--text-secondary);
+  font-size: 10px;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Toggle switch — same rounded-pill/thumb language used nowhere else yet
+ * in this codebase (checked against the rest of the app before adding
+ * something new), so it's built from tokens.css's own palette rather
+ * than inventing a one-off color. */
+.weapon-toggle {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 0;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.weapon-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.weapon-toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.weapon-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text);
+  transition: transform 0.15s ease;
+}
+
+.weapon-toggle.on .weapon-toggle-thumb {
+  transform: translateX(18px);
+  background: var(--bg-deep);
+}
+
+.weapon-volley-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.weapon-volley-fire {
+  flex: 1;
+  background: var(--danger);
+  color: var(--text);
+  border: none;
+  border-radius: 6px;
+  padding: 8px 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.weapon-volley-fire:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.weapon-volley-fire:not(:disabled):hover {
+  filter: brightness(1.1);
+}

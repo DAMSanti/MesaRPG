@@ -197,3 +197,36 @@ def test_visible_enemies_from_unit_excludes_units_without_a_mech(campaign, pilot
 
 def test_visible_enemies_from_unknown_unit_is_none():
     assert units.visible_enemies_from_unit(999999) is None
+
+
+# ---- attack_side (server-side port of hexMath.ts's attackSide) --------
+
+
+def test_attack_side_is_front_when_target_faces_the_attacker():
+    target = {"q": 0, "r": 0, "facing_deg": 0}
+    attacker = {"q": 2, "r": 0}
+    assert units.attack_side(attacker, target, "hex") == "front"
+
+
+def test_attack_side_is_rear_when_target_faces_away_from_the_attacker():
+    target = {"q": 0, "r": 0, "facing_deg": 180}
+    attacker = {"q": 2, "r": 0}
+    assert units.attack_side(attacker, target, "hex") == "rear"
+
+
+def test_attack_side_is_right_when_attacker_is_off_the_targets_right_flank():
+    target = {"q": 0, "r": 0, "facing_deg": 90}
+    attacker = {"q": 2, "r": 0}
+    assert units.attack_side(attacker, target, "hex") == "right"
+
+
+def test_attack_side_is_left_when_attacker_is_off_the_targets_left_flank():
+    target = {"q": 0, "r": 0, "facing_deg": 270}
+    attacker = {"q": 2, "r": 0}
+    assert units.attack_side(attacker, target, "hex") == "left"
+
+
+def test_attack_side_defaults_to_front_when_attacker_and_target_share_a_hex():
+    target = {"q": 0, "r": 0, "facing_deg": 45}
+    attacker = {"q": 0, "r": 0}
+    assert units.attack_side(attacker, target, "hex") == "front"

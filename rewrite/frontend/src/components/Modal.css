@@ -15,10 +15,24 @@
   border: 1px solid var(--accent);
   border-radius: 8px;
   padding: 0;
+  /* Explicit max-content rather than trusting position:fixed's own
+     default shrink-to-fit sizing — in practice this box kept coming out
+     narrower than MechRecordSheet's real content wanted even after
+     fixing every overflow/min-width override standing in the way
+     further down the tree (see that component's own CSS comments), so
+     this states the intent unambiguously instead of hoping several
+     nested boxes' auto-sizing adds up correctly. */
+  width: max-content;
   min-width: 360px;
-  max-width: 90vw;
+  max-width: 95vw;
   max-height: 85vh;
   overflow-y: auto;
+  /* Explicit rather than relying on the CSS spec's own overflow-x
+     auto-promotion when only overflow-y is set — MechRecordSheet's own
+     two-column paper layout has a real minimum width (~750px+) that can
+     exceed the modal's own box on narrower windows, and content was
+     getting silently clipped with no way to reach it. */
+  overflow-x: auto;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
 }
 

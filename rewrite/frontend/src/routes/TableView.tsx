@@ -13,7 +13,7 @@ import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import { getUnitVisibleHexes, moveUnitWithMp, reportInitiative, type MovementType, type ReachableHex, type Unit } from '../api'
 import { useMapState } from '../useMapState'
-import { activeMoverPilotId, currentPhase, formatRolls, PHASE_LABELS, pilotsNeedingInitiative } from '../rounds'
+import { activeAttackPilotIds, activeMoverPilotId, currentPhase, formatRolls, PHASE_LABELS, pilotsNeedingInitiative } from '../rounds'
 import './TableView.css'
 
 // Debug-only LoS view (see HexMap's LosDebugOverlay + app/units.py's
@@ -316,6 +316,7 @@ export function TableView() {
                 losDebugHexes={losDebug.hexes}
                 needsInitiativePilotIds={pilotsNeedingInitiative(roundState, units)}
                 activeMoverPilotId={roundState ? activeMoverPilotId(roundState) : null}
+                activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState) : undefined}
                 moveHighlightHexes={activeMovement ? new Set(activeMovement.hexes.keys()) : undefined}
                 walkPaths={walkPaths}
                 onTileClick={onTableTileClick}

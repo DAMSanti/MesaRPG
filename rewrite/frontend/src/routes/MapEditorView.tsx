@@ -39,18 +39,24 @@ function worldPos(gridType: 'hex' | 'square', q: number, r: number): [number, nu
   return [SQRT3 * (q + r / 2), 1.5 * r]
 }
 
-const PRESETS: { name: string; terrain: string; elevation: number; blocks_los: boolean }[] = [
-  { name: 'Llanura', terrain: 'plains', elevation: 0, blocks_los: false },
-  { name: 'Colina', terrain: 'hills', elevation: 2, blocks_los: false },
-  { name: 'Bosque', terrain: 'forest', elevation: 0, blocks_los: true },
-  { name: 'Agua', terrain: 'water', elevation: 0, blocks_los: false },
-  { name: 'Carretera', terrain: 'road', elevation: 0, blocks_los: false },
-  { name: 'Rocoso', terrain: 'rough', elevation: 1, blocks_los: false },
-  { name: 'Escombros', terrain: 'rubble', elevation: 0, blocks_los: false },
-  { name: 'Peligro', terrain: 'hazards', elevation: 0, blocks_los: false },
-  { name: 'Edificio', terrain: 'building', elevation: 2, blocks_los: true },
-  { name: 'Pantano', terrain: 'swamp', elevation: 0, blocks_los: false },
-  { name: 'Nieve', terrain: 'snow', elevation: 0, blocks_los: false },
+const PRESETS: { name: string; terrain: string; elevation: number; blocks_los: boolean; los_points: number }[] = [
+  { name: 'Llanura', terrain: 'plains', elevation: 0, blocks_los: false, los_points: 0 },
+  { name: 'Colina', terrain: 'hills', elevation: 2, blocks_los: false, los_points: 0 },
+  // See app/mapgen.py's TERRAIN_DEFAULTS: "forest" is the heavy (2-point)
+  // tier — it kept its existing key/blocks_los=false-but-2-points meaning
+  // when the light/heavy split was added, rather than migrating every
+  // already-painted map; light_forest is the new, additive light tier.
+  { name: 'Bosque denso', terrain: 'forest', elevation: 0, blocks_los: false, los_points: 2 },
+  { name: 'Bosque ligero', terrain: 'light_forest', elevation: 0, blocks_los: false, los_points: 1 },
+  { name: 'Agua', terrain: 'water', elevation: 0, blocks_los: true, los_points: 0 },
+  { name: 'Agua profunda', terrain: 'water_deep', elevation: -1, blocks_los: true, los_points: 0 },
+  { name: 'Carretera', terrain: 'road', elevation: 0, blocks_los: false, los_points: 0 },
+  { name: 'Rocoso', terrain: 'rough', elevation: 1, blocks_los: false, los_points: 0 },
+  { name: 'Escombros', terrain: 'rubble', elevation: 0, blocks_los: false, los_points: 0 },
+  { name: 'Peligro', terrain: 'hazards', elevation: 0, blocks_los: false, los_points: 0 },
+  { name: 'Edificio', terrain: 'building', elevation: 2, blocks_los: true, los_points: 0 },
+  { name: 'Pantano', terrain: 'swamp', elevation: 0, blocks_los: false, los_points: 0 },
+  { name: 'Nieve', terrain: 'snow', elevation: 0, blocks_los: false, los_points: 0 },
 ]
 
 const BIOME_LABELS: Record<Biome, string> = {
@@ -222,7 +228,7 @@ export function MapEditorView() {
     refetch()
   }
 
-  const applyPreset = async (preset: { terrain: string; elevation: number; blocks_los: boolean }) => {
+  const applyPreset = async (preset: { terrain: string; elevation: number; blocks_los: boolean; los_points: number }) => {
     if (!map || !selected) return
     const updated = await updateTile(map.id, selected.q, selected.r, preset)
     setMap(updated)

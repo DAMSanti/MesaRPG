@@ -79,25 +79,66 @@ export function activeMoverPilotId(round: RoundState): number | null {
   return round.movement_order.find((id) => !moved.has(id)) ?? null
 }
 
+/** Who may actually attack right now, during the ranged/melee phases —
+ * deliberately NOT initiative order (activeTurnPilotIds above). A pilot
+ * with no real target (no range/LOS/ammo for ranged, nobody adjacent for
+ * melee) was jamming the whole phase before this existed: they were
+ * still "next" in strict initiative order, so activeTurnPilotIds kept
+ * pointing at them, nobody else's canAct passed, and the round could
+ * never move on since a pilot with nothing to shoot has no natural way
+ * to end up in acted_pilot_ids. Turn order for these two phases is
+ * instead just "anyone still holding a real target" — matches this
+ * engine's own documented stance that turn order is advisory, not
+ * blocking (see turns.py's module docstring), and needs no separate
+ * "skip" bookkeeping: a targetless pilot was simply never eligible. */
+export function activeAttackPilotIds(round: RoundState): Set<number> {
+  const phase = currentPhase(round)
+  const ids =
+    phase === 'ranged' ? round.ranged_target_pilot_ids
+      : phase === 'melee' ? round.melee_target_pilot_ids
+        : []
+  const acted = new Set(round.acted_pilot_ids)
+  return new Set(ids.filter((id) => !acted.has(id)))
+}
+
 /** The round's current global phase — requested directly so TableView,
  * GMView and the 1st-person HUD can all show the same clear "we're in
  * X phase" indicator instead of the change happening silently.
  * 'movement' becoming active is what auto-advances the movement phase:
  * movement_order only populates once everyone who's rolling this round
  * has (turns.py's _movement_order), so this flips the instant that
- * happens — no separate "start movement phase" step needed. */
-export type RoundPhase = 'none' | 'initiative' | 'movement' | 'other'
+ * happens — no separate "start movement phase" step needed.
+ *
+ * 'ranged'/'melee' work the same way, driven by the round's own
+ * ranged_target_pilot_ids/melee_target_pilot_ids (turns.py's
+ * _pilots_with_ranged_targets/_pilots_with_melee_targets — real LOS/
+ * weapon-range/adjacency, recomputed live): a phase with nobody left in
+ * its own not-yet-acted target list is skipped entirely, exactly as
+ * requested ("solo se activará si algún mech tiene alcance y en LoS
+ * algún mech al que pueda atacar") — movement can fall straight through
+ * to 'melee', or all the way to 'other', without 'ranged' ever showing. */
+export type RoundPhase = 'none' | 'initiative' | 'movement' | 'ranged' | 'melee' | 'other'
+
+function _pending(ids: number[], acted: number[]): boolean {
+  const actedSet = new Set(acted)
+  return ids.some((id) => !actedSet.has(id))
+}
 
 export function currentPhase(round: RoundState): RoundPhase {
   if (round.round_number === 0) return 'none'
   if (round.movement_order.length === 0) return 'initiative'
   const allMoved = round.movement_order.every((id) => round.moved_pilot_ids.includes(id))
-  return allMoved ? 'other' : 'movement'
+  if (!allMoved) return 'movement'
+  if (_pending(round.ranged_target_pilot_ids, round.acted_pilot_ids)) return 'ranged'
+  if (_pending(round.melee_target_pilot_ids, round.acted_pilot_ids)) return 'melee'
+  return 'other'
 }
 
 export const PHASE_LABELS: Record<RoundPhase, string> = {
   none: 'sin ronda',
   initiative: 'Iniciativa',
   movement: 'Movimiento',
-  other: 'Ataque / Calor',
+  ranged: 'Ataque a distancia',
+  melee: 'Combate a melee',
+  other: 'Fin de ronda',
 }

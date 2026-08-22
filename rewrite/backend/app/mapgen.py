@@ -18,21 +18,43 @@ import random
 
 from . import campaigns, db, maps
 
-# (elevation, blocks_los) — the mechanical meaning of each terrain label.
-# Generators may override elevation per-tile (hills/mountains/desert dunes
-# aren't a single fixed height); blocks_los always follows this table.
-TERRAIN_DEFAULTS: dict[str, tuple[int, bool]] = {
-    "plains": (0, False),
-    "hills": (2, False),
-    "forest": (0, True),
-    "water": (0, False),
-    "road": (0, False),
-    "rough": (1, False),
-    "rubble": (0, False),
-    "hazards": (0, False),
-    "building": (2, True),
-    "swamp": (0, False),
-    "snow": (0, False),
+# (elevation, blocks_los, los_points) — the mechanical meaning of each
+# terrain label. Generators may override elevation per-tile (hills/
+# mountains/desert dunes aren't a single fixed height); blocks_los/
+# los_points always follow this table.
+#
+# blocks_los is a hard, single-hex block (hills/buildings/water — the
+# Attack Modifiers Table's own wording: "one intervening hex blocks LOS"
+# for each of those). los_points is instead the woods/jungle rule, which
+# doesn't block on its own: "Three or more points of intervening woods/
+# jungle block LOS. Light woods/jungle is worth 1 point, and heavy
+# woods/jungle is worth 2 points" (see hexgrid.py's has_los for where
+# these accumulate). `forest` keeps its existing DB key/meaning — it was
+# always "the opaque one" (blocks_los=True) before this table had a
+# points column at all, so it stays the HEAVY tier (2 points) rather than
+# migrating every already-painted tile; `light_forest` is the new,
+# additive light tier. `water` (Depth 1) is corrected here to actually
+# block LOS per the rulebook ("intervening water blocks LOS unless both
+# attacker and target are submerged" — this app doesn't model submersion,
+# so it's simplified to "always blocks"); it did NOT block before this
+# table had a reason to get it right. `water_deep` (Depth 2) is new,
+# same hard block, deeper/costlier to enter — the further real-rule
+# nuance of "a 'Mech standing IN Depth 2 water is blind and invisible
+# itself" is NOT modeled (see app/combat.py's own out-of-scope list).
+TERRAIN_DEFAULTS: dict[str, tuple[int, bool, int]] = {
+    "plains": (0, False, 0),
+    "hills": (2, False, 0),
+    "forest": (0, False, 2),
+    "light_forest": (0, False, 1),
+    "water": (0, True, 0),
+    "water_deep": (-1, True, 0),
+    "road": (0, False, 0),
+    "rough": (1, False, 0),
+    "rubble": (0, False, 0),
+    "hazards": (0, False, 0),
+    "building": (2, True, 0),
+    "swamp": (0, False, 0),
+    "snow": (0, False, 0),
 }
 
 # MP cost to ENTER a hex of this terrain (app/systems/battletech/
@@ -47,7 +69,15 @@ TERRAIN_MOVE_COST: dict[str, int] = {
     "plains": 1,
     "hills": 1,
     "forest": 2,
+    "light_forest": 2,
     "water": 2,
+    # Deeper than Depth 1 — the manual's own "Common Misconceptions" section
+    # confirms entering Depth 1 water from a Level 0 hex costs 3 MP total
+    # (1 base + 1 for the level change + 1 for the water itself); this
+    # app's movement-cost model doesn't track per-level deltas into water
+    # (see movement.py's own documented simplification), so Depth 2 is
+    # given a flat, costlier entry price instead of trying to derive it.
+    "water_deep": 3,
     "road": 1,
     "rough": 2,
     "rubble": 2,
@@ -467,13 +497,21 @@ def generate_map(campaign_id: int, name: str, width: int, height: int, biome: st
         map_id = cur.lastrowid
         for c in coords:
             terrain = terrain_grid.get(c, "plains")
-            default_elev, blocks_los = TERRAIN_DEFAULTS[terrain]
+            # Every biome generator above only ever paints the single
+            # "forest" key (predating the light/heavy split) — rather than
+            # touching each of the ~10 biome functions individually, a
+            # fraction of those tiles downgrade to the light tier right
+            # here, so new maps get a mix of both without the generators
+            # needing to know the split exists at all.
+            if terrain == "forest" and rng.random() < 0.4:
+                terrain = "light_forest"
+            default_elev, blocks_los, los_points = TERRAIN_DEFAULTS[terrain]
             elevation = elevation_overrides.get(c, default_elev)
             conn.execute(
                 """
-                INSERT INTO hex_tiles (map_id, q, r, elevation, blocks_los, terrain)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO hex_tiles (map_id, q, r, elevation, blocks_los, los_points, terrain)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (map_id, c[0], c[1], elevation, blocks_los, terrain),
+                (map_id, c[0], c[1], elevation, blocks_los, los_points, terrain),
             )
         return maps._get(conn, map_id)
