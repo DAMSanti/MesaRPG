@@ -12,6 +12,15 @@
 #
 # Uso (en el servidor, dentro de ~/mesarpg-rewrite/rewrite):
 #   docker compose -f deploy/docker-compose.oracle.yml up -d --build
+#
+# Catálogo de mechs (mech_templates): el volumen mesarpg-rewrite-data arranca vacío (ver
+# comentario más abajo), así que /api/mech-catalog/* no devuelve nada hasta que se sincroniza
+# manualmente una vez contra la base pública de MegaMek — requiere que el propio contenedor
+# tenga salida a internet (helm-kore-fragment.s3.amazonaws.com), no el navegador del cliente:
+#   docker compose -f deploy/docker-compose.oracle.yml exec backend python -m scripts.sync_mech_catalog
+# Tarda varios minutos (cientos de unidades). Es resumible (--force para re-sincronizar todo) y
+# solo hace falta repetirlo si el volumen se recrea desde cero — un redeploy normal (up -d
+# --build) conserva el volumen y por tanto el catálogo ya sincronizado.
 name: mesarpg-rewrite
 
 services:
