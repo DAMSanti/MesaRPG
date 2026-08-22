@@ -8,7 +8,7 @@ import { useTableSocket } from '../ws'
 import { NavBar, type NavLink } from '../components/NavBar'
 import { PilotForm } from '../components/PilotForm'
 import { MechRecordSheet } from '../components/MechRecordSheet'
-import { HexMap } from '../components/HexMap'
+import { HexMap, type ActiveAttackVfx } from '../components/HexMap'
 import { TableBackground } from '../components/TableBackground'
 import { UnitContextMenu } from '../components/UnitContextMenu'
 import { FacingPicker } from '../components/FacingPicker'
@@ -155,6 +155,33 @@ export function GMView() {
     } else {
       pushLog(`${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: fallo — tirada ${lastAttack.roll} vs ${lastAttack.target_number}`)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAttack])
+
+  // Attack VFX (laser/PPC/tracer/missile/flamer) — only real board shots
+  // carry attacker_unit_id/target_unit_id (see combat.py's
+  // resolve_attack), so a narrative/manual attack with no real units
+  // just plays no animation. attackVfxSeq guarantees a fresh `id` per
+  // shot even if two attacks somehow resolve with identical roll/weapon,
+  // so HexMap always mounts a new AttackEffect instead of reusing one
+  // whose animation already finished.
+  const attackVfxSeq = useRef(0)
+  const [activeAttackVfx, setActiveAttackVfx] = useState<ActiveAttackVfx | null>(null)
+  useEffect(() => {
+    if (!lastAttack || lastAttack.attacker_unit_id == null || lastAttack.target_unit_id == null) return
+    const attackerUnit = units.find((u) => u.id === lastAttack.attacker_unit_id)
+    const targetUnit = units.find((u) => u.id === lastAttack.target_unit_id)
+    if (!attackerUnit || !targetUnit) return
+    attackVfxSeq.current += 1
+    setActiveAttackVfx({
+      id: `${attackVfxSeq.current}`,
+      attackerQ: attackerUnit.q,
+      attackerR: attackerUnit.r,
+      targetQ: targetUnit.q,
+      targetR: targetUnit.r,
+      weaponName: lastAttack.weapon_name ?? '',
+      hit: lastAttack.hit,
+    })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastAttack])
 
@@ -892,7 +919,13 @@ export function GMView() {
             <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
               <color attach="background" args={['#0f1a18']} />
               <ambientLight intensity={0.6} />
-              <directionalLight position={[4, 8, 3]} intensity={1.4} castShadow />
+              <directionalLight
+                position={[4, 8, 3]} intensity={1.4} castShadow
+                shadow-mapSize={[2048, 2048]}
+                shadow-camera-left={-30} shadow-camera-right={30}
+                shadow-camera-top={30} shadow-camera-bottom={-30}
+                shadow-camera-far={60}
+              />
               <TableBackground />
               <CameraBridge onReady={(fn) => { raycastToGroundRef.current = fn }} />
               <Suspense fallback={null}>
@@ -905,6 +938,8 @@ export function GMView() {
                   moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
                   targetableHexes={targetableHexes}
                   walkPaths={walkPaths}
+                  activeAttack={activeAttackVfx}
+                  onAttackEffectDone={() => setActiveAttackVfx(null)}
                   onUnitClick={onUnitClick}
                   onTileClick={onTileClick}
                   onUnitDragEnd={onUnitDragEnd}

@@ -30,6 +30,10 @@ export interface VisibilityUpdate {
 export interface AttackResult {
   type: 'attack_result'
   target_mech_id: number
+  // Only populated for real board attacks — see api.ts's AttackResult.
+  attacker_unit_id: number | null
+  target_unit_id: number | null
+  attacker_mech_id: number | null
   weapon_id: number | null
   weapon_name: string | null
   target_number: number

@@ -398,6 +398,13 @@ def resolve_attack(
 
     result = {
         "target_mech_id": target_mech_id,
+        "attacker_unit_id": attacker_unit_id,
+        "target_unit_id": target_unit_id,
+        "attacker_mech_id": (
+            real_attacker["mech_id"] if attacker_unit_id is not None
+            else mech_weapon["mech_id"] if mech_weapon is not None
+            else None
+        ),
         "weapon_id": weapon_id,
         "weapon_name": weapon_name,
         "target_number": target_number,

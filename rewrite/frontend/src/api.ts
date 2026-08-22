@@ -478,6 +478,12 @@ export interface AttackIn {
 
 export interface AttackResult {
   target_mech_id: number
+  // Only populated for real board attacks (attacker_unit_id/target_unit_id
+  // both given) — used purely for client-side attack VFX to resolve real
+  // attacker/target positions, absent for legacy narrative attacks.
+  attacker_unit_id: number | null
+  target_unit_id: number | null
+  attacker_mech_id: number | null
   weapon_id: number | null
   weapon_name: string | null
   target_number: number

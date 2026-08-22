@@ -4,6 +4,8 @@ Especificación técnica del estado actual del sistema. Este documento describe 
 
 > Generado a partir de una auditoría del código el 2026-08-10. Actualizado el 2026-08-11 tras completar las Fases 0, 1 y 2 del ROADMAP. Si el código cambia, este documento debe actualizarse junto con él.
 
+> ⚠️ **2026-08-14**: se decidió una **reescritura completa** del sistema (ver `VISION.md` y las Fases R0+ de `ROADMAP.md`). Todo lo que sigue describe el **prototipo anterior a esa decisión** — sigue siendo información real y útil (qué funcionaba, qué bugs se arreglaron, por qué se tomaron ciertas decisiones), pero ya **no es el destino de la arquitectura**. Para la arquitectura objetivo, ver `VISION.md` §3.
+
 ---
 
 ## 1. Visión general

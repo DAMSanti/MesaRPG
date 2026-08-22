@@ -1,11 +1,11 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { HexMap } from './HexMap'
+import { HexMap, type ActiveAttackVfx } from './HexMap'
 import { MODEL_CHEST_FRACTION, MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
 import {
   attack, getMap, getUnitVisibleEnemies, getWeaponCatalog, markRoundActed, requestInitiative,
-  type Mech, type MapData, type RoundState, type Unit, type VisibleEnemy, type WeaponStats,
+  type AttackResult, type Mech, type MapData, type RoundState, type Unit, type VisibleEnemy, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
@@ -331,7 +331,7 @@ const PHASES: { key: Phase; label: string }[] = [
 ]
 
 export function FirstPersonView({
-  unit, mech, units, roundState, visibility, onClose,
+  unit, mech, units, roundState, visibility, lastAttack, onClose,
 }: {
   unit: Unit
   mech: Mech | null
@@ -344,6 +344,12 @@ export function FirstPersonView({
    * position/facing without any extra wiring — only the enemies list
    * needed a live-refresh trigger. */
   visibility?: unknown
+  /** Also from useTableSocket, same broadcast GMView/TableView use to
+   * drive their own attack VFX — this cockpit has its own separate
+   * <Canvas>/<HexMap> tree (a different camera on the same live table,
+   * not a mirror of TableView's own canvas), so it needs this threaded
+   * through explicitly to play the laser/tracer/missile animation too. */
+  lastAttack?: AttackResult | null
   onClose: () => void
 }) {
   const [map, setMap] = useState<MapData | null>(null)
@@ -377,6 +383,29 @@ export function FirstPersonView({
   // volley — cleared on close, on a new selection, or once Fire! resolves.
   const [selectedTargetId, setSelectedTargetId] = useState<number | null>(null)
   const [firingVolley, setFiringVolley] = useState(false)
+
+  // Attack VFX — same derivation GMView/TableView do from their own
+  // lastAttack + units, mounted into THIS cockpit's own HexMap instead of
+  // theirs (see the lastAttack prop's own doc comment above).
+  const attackVfxSeq = useRef(0)
+  const [activeAttackVfx, setActiveAttackVfx] = useState<ActiveAttackVfx | null>(null)
+  useEffect(() => {
+    if (!lastAttack || lastAttack.attacker_unit_id == null || lastAttack.target_unit_id == null) return
+    const attackerUnit = units.find((u) => u.id === lastAttack.attacker_unit_id)
+    const targetUnit = units.find((u) => u.id === lastAttack.target_unit_id)
+    if (!attackerUnit || !targetUnit) return
+    attackVfxSeq.current += 1
+    setActiveAttackVfx({
+      id: `${attackVfxSeq.current}`,
+      attackerQ: attackerUnit.q,
+      attackerR: attackerUnit.r,
+      targetQ: targetUnit.q,
+      targetR: targetUnit.r,
+      weaponName: lastAttack.weapon_name ?? '',
+      hit: lastAttack.hit,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAttack])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -552,7 +581,13 @@ export function FirstPersonView({
             <Canvas shadows camera={{ fov: 70 }}>
               <SkyBackground />
               <ambientLight intensity={1.2} />
-              <directionalLight position={[4, 8, 3]} intensity={1.8} castShadow />
+              <directionalLight
+                position={[4, 8, 3]} intensity={1.8} castShadow
+                shadow-mapSize={[2048, 2048]}
+                shadow-camera-left={-30} shadow-camera-right={30}
+                shadow-camera-top={30} shadow-camera-bottom={-30}
+                shadow-camera-far={60}
+              />
               {/* A cockpit-mounted floodlight at the camera's own position —
                   the sun alone left mechs looking near-black at eye level,
                   where the fixed overhead light from TableView/GMView barely
@@ -561,7 +596,12 @@ export function FirstPersonView({
               <pointLight position={camera.position} intensity={12} distance={14} decay={1.5} />
               <FixedFirstPersonCam position={camera.position} lookAt={camera.lookAt} />
               <Suspense fallback={null}>
-                <HexMap map={map} units={sceneUnits} />
+                <HexMap
+                  map={map}
+                  units={sceneUnits}
+                  activeAttack={activeAttackVfx}
+                  onAttackEffectDone={() => setActiveAttackVfx(null)}
+                />
               </Suspense>
               <EnemyMarkersController
                 enemies={enemies}

@@ -546,6 +546,7 @@ export function PlayerView() {
           units={units}
           roundState={roundState}
           visibility={visibility}
+          lastAttack={lastAttack}
           onClose={() => setShowFirstPerson(false)}
         />
       )}

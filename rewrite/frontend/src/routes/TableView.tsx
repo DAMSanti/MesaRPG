@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber'
 import { Physics } from '@react-three/rapier'
 import { OrbitControls } from '@react-three/drei'
 import { Die } from '../components/Die'
-import { HexMap } from '../components/HexMap'
+import { HexMap, type ActiveAttackVfx } from '../components/HexMap'
 import { KillReplay } from '../components/KillReplay'
 import { TableBackground } from '../components/TableBackground'
 import { BoardWalls } from '../components/BoardWalls'
@@ -163,6 +163,29 @@ export function TableView() {
     }
   }, [lastAttack])
 
+  // Attack VFX — shared-table view gets the same laser/tracer/missile
+  // animation as GMView, derived the same way (see GMView's own
+  // activeAttackVfx doc comment).
+  const attackVfxSeq = useRef(0)
+  const [activeAttackVfx, setActiveAttackVfx] = useState<ActiveAttackVfx | null>(null)
+  useEffect(() => {
+    if (!lastAttack || lastAttack.attacker_unit_id == null || lastAttack.target_unit_id == null) return
+    const attackerUnit = units.find((u) => u.id === lastAttack.attacker_unit_id)
+    const targetUnit = units.find((u) => u.id === lastAttack.target_unit_id)
+    if (!attackerUnit || !targetUnit) return
+    attackVfxSeq.current += 1
+    setActiveAttackVfx({
+      id: `${attackVfxSeq.current}`,
+      attackerQ: attackerUnit.q,
+      attackerR: attackerUnit.r,
+      targetQ: targetUnit.q,
+      targetR: targetUnit.r,
+      weaponName: lastAttack.weapon_name ?? '',
+      hit: lastAttack.hit,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAttack])
+
   // GMView's/PlayerView's "Tirar iniciativa" button doesn't roll
   // anything itself anymore — it broadcasts "please throw dice for this
   // pilot" (initiative_roll_requested), and this is the one place that
@@ -304,7 +327,13 @@ export function TableView() {
       <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
         <color attach="background" args={['#0f1a18']} />
         <ambientLight intensity={0.6} />
-        <directionalLight position={[4, 8, 3]} intensity={1.4} castShadow />
+        <directionalLight
+          position={[4, 8, 3]} intensity={1.4} castShadow
+          shadow-mapSize={[2048, 2048]}
+          shadow-camera-left={-30} shadow-camera-right={30}
+          shadow-camera-top={30} shadow-camera-bottom={-30}
+          shadow-camera-far={60}
+        />
         <TableBackground />
         <Physics gravity={[0, -9.81, 0]}>
           {map && <BoardWalls map={map} clearLeftOf={THROW_ORIGIN_X} />}
@@ -319,6 +348,8 @@ export function TableView() {
                 activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState) : undefined}
                 moveHighlightHexes={activeMovement ? new Set(activeMovement.hexes.keys()) : undefined}
                 walkPaths={walkPaths}
+                activeAttack={activeAttackVfx}
+                onAttackEffectDone={() => setActiveAttackVfx(null)}
                 onTileClick={onTableTileClick}
                 physics
               />

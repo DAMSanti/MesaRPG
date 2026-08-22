@@ -31,6 +31,8 @@ const VARIANTS = 3
 // whole field of plains doesn't look like one image pasted in a grid.
 const GRASS_REPEAT = 3
 const FOREST_FLOOR_REPEAT = 4
+const DIRT_REPEAT = 3
+const ROAD_REPEAT = 2
 const photoTextures = new Map<string, THREE.Texture>()
 function loadPhotoTexture(url: string, repeat: number): THREE.Texture {
   const cached = photoTextures.get(url)
@@ -44,6 +46,21 @@ function loadPhotoTexture(url: string, repeat: number): THREE.Texture {
 }
 const getGrassTexture = () => loadPhotoTexture('/textures/grass.jpg', GRASS_REPEAT)
 const getForestFloorTexture = () => loadPhotoTexture('/textures/forest-floor.jpg', FOREST_FLOOR_REPEAT)
+const getDirtTexture = () => loadPhotoTexture('/textures/dirt.jpg', DIRT_REPEAT)
+// No baked-in centerline (that's RoadMarkings.tsx's job, painted per-tile
+// from real neighbor connections) — plain worn asphalt only.
+const getRoadTexture = () => loadPhotoTexture('/textures/road.jpg', ROAD_REPEAT)
+
+// Not every plains tile is a uniform lawn — a minority (roughly 1 in 5)
+// render as bare, pebbly earth instead (dirt.jpg), so a field reads as
+// patchy ground rather than one photo tiled everywhere. Exported so
+// terrainColor()'s brightness-jitter tint and any decoration logic that
+// cares (fewer grass tufts on a dirt patch, say) can agree with the
+// texture on which tiles are which, instead of re-deriving the same
+// hash independently and risking the two disagreeing.
+export function plainsGroundVariant(q: number, r: number): 'grass' | 'dirt' {
+  return hashTile(q, r, 'plains-ground') % 5 === 0 ? 'dirt' : 'grass'
+}
 
 /** Per-tile Y rotation (radians) for the photo terrains — cheap stand-in
  * for the procedural terrains' multiple baked variants: rotating the
@@ -60,8 +77,9 @@ const getForestFloorTexture = () => loadPhotoTexture('/textures/forest-floor.jpg
  * aligned edge-to-edge with its neighbors; anything finer would open
  * visible gaps/overlaps at tile borders despite the texture itself
  * tiling seamlessly. */
+const ROTATED_PHOTO_TERRAINS = new Set(['plains', 'forest', 'light_forest', 'road'])
 export function terrainRotation(terrain: string, q: number, r: number): number {
-  if (terrain !== 'plains' && terrain !== 'forest' && terrain !== 'light_forest') return 0
+  if (!ROTATED_PHOTO_TERRAINS.has(terrain)) return 0
   return (hashTile(q, r, 'photo-rotation') % 6) * (Math.PI / 3)
 }
 
@@ -190,22 +208,6 @@ function drawWater(ctx: CanvasRenderingContext2D, size: number, rng: () => numbe
     ctx.stroke()
   }
   speckles(ctx, size, rng, { count: 50, radius: [2, 5], color: 'rgba(255,255,255,0.25)', alpha: [0.2, 0.4] })
-}
-
-/** Plain asphalt, no baked-in centerline — the line markings are rendered
- * as separate small world-space meshes (`RoadMarkings`, computed from each
- * tile's actual neighbors) instead of drawn on this rotatable texture.
- * A pre-baked line only had 3 fixed orientations to rotate between and
- * couldn't represent a bend/dead-end/crossroads correctly at all — that
- * mismatch was the "las lineas no tienen coherencia" bug. */
-function drawRoad(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
-  ctx.fillStyle = '#3c3833'
-  ctx.fillRect(0, 0, size, size)
-  speckles(ctx, size, rng, { count: 600, radius: [0.5, 1.8], color: 'rgba(0,0,0,0.25)', alpha: [0.2, 0.5] })
-  speckles(ctx, size, rng, { count: 300, radius: [0.5, 1.5], color: 'rgba(255,255,255,0.12)', alpha: [0.2, 0.4] })
-  ctx.fillStyle = 'rgba(0,0,0,0.15)'
-  ctx.fillRect(0, 0, size * 0.06, size)
-  ctx.fillRect(size * 0.94, 0, size * 0.06, size)
 }
 
 function drawSwamp(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
@@ -433,7 +435,6 @@ function drawBuildingRuined(ctx: CanvasRenderingContext2D, size: number, rng: ()
 const DRAW: Record<string, (ctx: CanvasRenderingContext2D, size: number, rng: () => number) => void> = {
   hills: drawHills,
   water: drawWater,
-  road: drawRoad,
   rough: drawRough,
   rubble: drawRubble,
   hazards: drawHazards,
@@ -501,8 +502,9 @@ function buildBuildingTexture(kind: number): THREE.CanvasTexture {
 /** Deterministic per-tile variant (stable across renders) of a terrain's
  * texture — same terrain, different tiles look slightly different. */
 export function terrainTexture(terrain: string, q: number, r: number): THREE.Texture {
-  if (terrain === 'plains') return getGrassTexture()
+  if (terrain === 'plains') return plainsGroundVariant(q, r) === 'dirt' ? getDirtTexture() : getGrassTexture()
   if (terrain === 'forest' || terrain === 'light_forest') return getForestFloorTexture()
+  if (terrain === 'road') return getRoadTexture()
   if (terrain === 'building') return buildBuildingTexture(buildingKind(q, r))
   // water_deep reuses the same procedural drawWater pattern (DRAW lookup
   // below) as water — the darker terrainColor() multiply above is what

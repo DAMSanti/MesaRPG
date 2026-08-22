@@ -408,7 +408,13 @@ function Canvas3D({
     <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
       <color attach="background" args={['#0f1a18']} />
       <ambientLight intensity={0.7} />
-      <directionalLight position={[4, 8, 3]} intensity={1.2} castShadow />
+      <directionalLight
+        position={[4, 8, 3]} intensity={1.2} castShadow
+        shadow-mapSize={[2048, 2048]}
+        shadow-camera-left={-30} shadow-camera-right={30}
+        shadow-camera-top={30} shadow-camera-bottom={-30}
+        shadow-camera-far={60}
+      />
       <TableBackground />
       <group position={[-centerX, 0, -centerZ]}>
         {map.tiles.map((t) => (

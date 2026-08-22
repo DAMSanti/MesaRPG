@@ -94,6 +94,40 @@ def test_structure_for_tonnage_matches_atlas_fixture_conftest():
         assert mech_import.structure_for_tonnage(100, loc) == expected
 
 
+def test_parse_mtf_field_keys_are_case_insensitive():
+    # The real bug report: "Awesome AWS-11V.mtf" (a newer Record Sheets
+    # 3150-era file) spells "Config:Biped" capitalized but "mass:80",
+    # "walk mp:3", "jump mp:0" and "LA armor:26" all lowercase — the SAME
+    # file mixes both conventions. A case-sensitive fields.get("Mass")
+    # missed all of these and silently defaulted tonnage/movement/armor
+    # to 0/empty, while weapons/criticals (parsed straight off the raw
+    # lines, not through this dict) still came out fully populated —
+    # producing a mech with a complete weapons loadout on an entirely
+    # blank record sheet (GM-reported: selecting it showed an empty sheet).
+    lowercase_text = (
+        FIXTURE
+        .replace("Mass:100", "mass:100")
+        .replace("Walk MP:3", "walk mp:3")
+        .replace("Jump MP:0", "jump mp:0")
+        .replace("Heat Sinks:20 Single", "heat sinks:20 Single")
+        .replace("LA Armor:34", "LA armor:34")
+        .replace("RA Armor:34", "RA armor:34")
+        .replace("LT Armor:32", "LT armor:32")
+        .replace("RT Armor:32", "RT armor:32")
+        .replace("CT Armor:47", "CT armor:47")
+        .replace("HD Armor:9", "HD armor:9")
+        .replace("LL Armor:41", "LL armor:41")
+        .replace("RL Armor:41", "RL armor:41")
+    )
+    parsed = mech_import.parse_mtf(lowercase_text)
+    assert parsed["tonnage"] == 100
+    assert parsed["walk_mp"] == 3
+    assert parsed["heat_sinks"] == 20
+    locations = {loc["location"]: loc for loc in parsed["locations"]}
+    assert locations["CT"]["armor_max"] == 47
+    assert locations["HD"]["armor_max"] == 9
+
+
 def test_parse_mtf_rejects_a_quad():
     # Our whole data model (MECH_LOCATIONS, the fixed critical-slot
     # template) assumes 8 biped locations — a Quad's MTF uses different

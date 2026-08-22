@@ -265,31 +265,42 @@ def parse_mtf(text: str) -> dict:
     chassis = lines[1].strip()
     model = lines[2].strip() if len(lines) > 2 else ""
 
+    # Keys are lowercased on both write and read below — older-format
+    # files spell these "Mass"/"Walk MP"/"LA Armor", but some newer
+    # Record Sheets-era files spell the very same fields "mass"/
+    # "walk mp"/"LA armor" (and inconsistently: the SAME file can mix
+    # "Config:Biped" with "mass:80" and "LA armor:26"). A case-sensitive
+    # lookup against only the capitalized spelling silently missed every
+    # one of these — tonnage/movement/armor all quietly defaulted to
+    # 0/empty while weapons/criticals (parsed separately below, straight
+    # off the raw lines rather than through this dict) still came out
+    # fully populated, producing a mech with a complete weapons loadout
+    # sitting on an entirely blank record sheet.
     fields: dict[str, str] = {}
     for line in lines:
         if ":" in line:
             key, _, value = line.partition(":")
-            fields.setdefault(key.strip(), value.strip())
+            fields.setdefault(key.strip().lower(), value.strip())
 
-    if fields.get("Config", "").strip() != "Biped":
-        raise NotBiped(f"{chassis} {model} is {fields.get('Config', 'unknown config')!r}, not Biped")
+    if fields.get("config", "").strip().lower() != "biped":
+        raise NotBiped(f"{chassis} {model} is {fields.get('config', 'unknown config')!r}, not Biped")
 
-    tonnage = int(fields.get("Mass", "0"))
-    walk_mp = int(fields.get("Walk MP", "0") or 0)
-    jump_mp = int(fields.get("Jump MP", "0") or 0)
+    tonnage = int(fields.get("mass", "0"))
+    walk_mp = int(fields.get("walk mp", "0") or 0)
+    jump_mp = int(fields.get("jump mp", "0") or 0)
     # MTF has no explicit run value — the standard rule derives it from
     # walking (ceil(walk * 1.5)); editable before submitting, like every
     # other imported field.
     run_mp = -(-walk_mp * 3 // 2)
 
     heat_sinks = 10
-    heat_match = re.match(r"(\d+)", fields.get("Heat Sinks", ""))
+    heat_match = re.match(r"(\d+)", fields.get("heat sinks", ""))
     if heat_match:
         heat_sinks = int(heat_match.group(1))
 
     locations = []
     for loc in ["HD", "CT", "LT", "RT", "LA", "RA", "LL", "RL"]:
-        armor_key = {"LT": "LT Armor", "RT": "RT Armor"}.get(loc, f"{loc} Armor")
+        armor_key = {"LT": "LT Armor", "RT": "RT Armor"}.get(loc, f"{loc} Armor").lower()
         armor_raw = fields.get(armor_key)
         if armor_raw is None:
             continue
@@ -299,6 +310,7 @@ def parse_mtf(text: str) -> dict:
             "structure_max": structure_for_tonnage(tonnage, loc),
         }
         rear_key = {"LT": "RTL Armor", "RT": "RTR Armor", "CT": "RTC Armor"}.get(loc)
+        rear_key = rear_key.lower() if rear_key else None
         if rear_key and fields.get(rear_key) is not None:
             entry["armor_rear_max"] = int(fields[rear_key])
         locations.append(entry)

@@ -9,6 +9,25 @@ import { RoadMarkings } from './RoadMarkings'
 import { terrainColor, terrainRotation, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import { hexToWorld, mapCenter } from '../hexMath'
+import { MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
+import { AttackEffect } from './AttackEffects'
+
+/** One weapon's worth of attack VFX to play right now, in hex
+ * coordinates — HexMap resolves these to real world positions itself
+ * (same elevation formula UnitMarker/FirstPersonView already use) so
+ * callers don't need to duplicate that math. `id` must change for every
+ * new shot (e.g. a counter or `${roll}-${Date.now()}`) so React mounts
+ * a fresh AttackEffect instead of reusing one whose animation already
+ * finished. */
+export interface ActiveAttackVfx {
+  id: string
+  attackerQ: number
+  attackerR: number
+  targetQ: number
+  targetR: number
+  weaponName: string
+  hit: boolean
+}
 
 // World units per second a unit visually walks between hexes at — hex
 // center-to-center spacing is √3 (hexMath.ts's hexToWorld), so this is
@@ -403,7 +422,7 @@ interface DragState {
 
 export function HexMap({
   map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
-  moveHighlightHexes, targetableHexes, walkPaths, physics,
+  moveHighlightHexes, targetableHexes, walkPaths, physics, activeAttack, onAttackEffectDone,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
 }: {
   map: MapData
@@ -444,6 +463,16 @@ export function HexMap({
    * provider — GMView's/MapEditorView's embedded maps have none, so
    * they never pass this. */
   physics?: boolean
+  /** The weapon shot to animate right now (lasers/PPCs/tracers/missiles/
+   * flamers between attacker and target), or null/omitted for none —
+   * see ActiveAttackVfx. Callers derive this from the latest
+   * attack_result broadcast plus the units array. */
+  activeAttack?: ActiveAttackVfx | null
+  /** Fires once activeAttack's animation has finished playing — the
+   * caller should clear its activeAttack state in response (otherwise
+   * the same shot's VFX just sits there finished, or never resets in
+   * time for the next one to mount cleanly). */
+  onAttackEffectDone?: () => void
   /** A unit was clicked/tapped without being dragged to another hex — screen coords come straight off the native pointer event, for positioning an HTML context menu. */
   onUnitClick?: (unit: Unit, clientX: number, clientY: number) => void
   /** A tile was clicked with no drag in progress — the map's own free-standing "pick a hex" gesture (used by both attack-target and move-destination picking; the caller decides what a bare tile click means). clientX/clientY come straight off the native pointer event, same as onUnitClick/onUnitDragEnd, for anchoring a facing picker at the click point. */
@@ -563,6 +592,20 @@ export function HexMap({
           onPointerUp={(e) => resolveAt(unit.q, unit.r, e)}
         />
       ))}
+      {activeAttack && (
+        <AttackEffect
+          key={activeAttack.id}
+          data={{
+            attackerPos: hexToWorld(activeAttack.attackerQ, activeAttack.attackerR),
+            targetPos: hexToWorld(activeAttack.targetQ, activeAttack.targetR),
+            attackerY: 0.3 + (elevationAt.get(`${activeAttack.attackerQ},${activeAttack.attackerR}`) ?? 0) * 0.22 + MODEL_SCALE * MODEL_CHEST_FRACTION,
+            targetY: 0.3 + (elevationAt.get(`${activeAttack.targetQ},${activeAttack.targetR}`) ?? 0) * 0.22 + MODEL_SCALE * MODEL_CHEST_FRACTION,
+            weaponName: activeAttack.weaponName,
+            hit: activeAttack.hit,
+          }}
+          onDone={() => onAttackEffectDone?.()}
+        />
+      )}
     </group>
   )
 }

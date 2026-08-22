@@ -1,0 +1,58 @@
+# MesaRPG rewrite — Docker Compose para el servidor compartido (Oracle Cloud + Sprinta +
+# war-room + F1-master). Reemplaza al stack viejo (ver ../../deploy/docker-compose.oracle.yml,
+# un único contenedor "mesarpg") en el mismo dominio rpgvision.duckdns.org: aquí van DOS
+# contenedores (backend FastAPI + frontend estático), sin nginx ni certbot propios — los
+# puertos 80/443 del host ya los ocupa el nginx de Sprinta ("sprinta-web"). Ambos se conectan
+# a la red externa "edge" para que ese nginx los alcance por nombre de contenedor.
+#
+# "name" explícito: sin esto, Compose deriva el nombre del proyecto del directorio que
+# contiene este archivo ("deploy") — y tanto ~/mesarpg/deploy/ (stack viejo) como
+# ~/war-room/deploy/ ya usan/evitaron esa misma colisión (ver el comentario de
+# war-room/deploy/docker-compose.oracle.yml). Con "name" fijo este proyecto queda aislado.
+#
+# Uso (en el servidor, dentro de ~/mesarpg-rewrite/rewrite):
+#   docker compose -f deploy/docker-compose.oracle.yml up -d --build
+name: mesarpg-rewrite
+
+services:
+  backend:
+    build: ../backend
+    container_name: mesarpg-rewrite-backend
+    volumes:
+      - mesarpg-rewrite-data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8124/api/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - edge
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        # Rutas relativas: el frontend llama a /api/... contra su propio origen público
+        # (rpgvision.duckdns.org), que el nginx de Sprinta reenvía a "backend" — ver
+        # ~/sprinta/deploy/nginx.conf. VITE_WS_URL sí tiene que ser absoluta (WebSocket no
+        # admite rutas relativas), horneada aquí al dominio público real.
+        VITE_API_URL: ""
+        VITE_WS_URL: "wss://rpgvision.duckdns.org/ws"
+    container_name: mesarpg-rewrite-frontend
+    restart: unless-stopped
+    networks:
+      - edge
+
+networks:
+  # Creada una vez en el servidor (ya existe, la usan Sprinta/MesaRPG-viejo/war-room/F1-master):
+  # docker network create edge
+  edge:
+    external: true
+
+volumes:
+  # SQLite (campañas, pilotos, mechs, catálogo de mechs importados). Distinto del volumen del
+  # stack viejo (deploy_mesarpg-data) — arranca vacío, no hereda datos del prototipo anterior.
+  mesarpg-rewrite-data:
