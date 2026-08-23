@@ -276,10 +276,49 @@ def _grasslands(rng, coords, coords_set, neighbors_fn, distance_fn, hexy):
     elev: dict[Coord, int] = {}
     for _ in range(rng.randint(2, 3)):
         _cluster(rng, coords, grid, neighbors_fn, "forest", 0.06, 2, 5)
-    _scatter(rng, coords, grid, "hills", 0.08)
-    for c in coords:
-        if grid.get(c) == "hills":
-            elev[c] = rng.randint(1, 3)
+
+    # Hills as a handful of gently-sloped mounds — peak/distance falloff
+    # around each seed, same idea as _mountains' own peaks below but
+    # radius-capped to a few tiles instead of spanning the whole map (a
+    # mound, not a mountain range). Replaces the old approach, which
+    # scattered independent single hex tiles and gave each one its own
+    # random 1-3 elevation with zero relation to its (elevation-0)
+    # neighbors — "1 solo tile muy alto con respecto a los alrededores",
+    # a one-tile cliff instead of a hill.
+    #
+    # peak_elev is fixed at 2, not left random down to 1: at peak_elev=1
+    # the falloff ring at distance 1 lands on elevation 0 (1 - 1 = 0),
+    # same as the surrounding plains, so that "hill" was STILL a single
+    # tile — same bug, just gentler. 2 guarantees a real second, lower
+    # ring (elevation 1) around the peak — an actual multi-tile slope,
+    # every time a hill is generated.
+    #
+    # A hex disk grows fast (1/7/19/37 tiles at radius 0/1/2/3), so this
+    # only runs at all above HILL_MIN_MAP_TILES — below that, even one
+    # radius-2 mound (19 tiles) can swallow most of a small map (verified:
+    # a 5x4/20-tile map hits >100/300 simulated runs with plains no
+    # longer the dominant terrain). Above it, capped at 1 hill until the
+    # map is big enough that two can't realistically overlap into one
+    # oversized blob. Simulated at 5x4, 6x6, 8x6, 10x8, 12x10 and 16x12
+    # (300 generations each) with these thresholds: zero plains-dominance
+    # failures at every size ≥ HILL_MIN_MAP_TILES (see
+    # test_generate_grasslands_map_is_plains_dominant, which a less
+    # size-aware version of this flaked on ~1-6% of the time).
+    HILL_MIN_MAP_TILES = 60
+    HILL_TWO_HILL_MAP_TILES = 150
+    if len(coords) >= HILL_MIN_MAP_TILES:
+        n_hills = 1 if len(coords) < HILL_TWO_HILL_MAP_TILES else rng.choices([1, 2], weights=[3, 1])[0]
+        for seed in rng.sample(coords, k=min(n_hills, len(coords))):
+            peak_elev = 2
+            for c in coords:
+                d = distance_fn(c, seed)
+                if d > peak_elev:
+                    continue
+                e = peak_elev - d
+                if e > 0 and e > elev.get(c, 0):
+                    elev[c] = e
+                    grid[c] = "hills"
+
     if rng.random() < 0.6:
         edge_a, edge_b = _span_endpoints(rng, coords)
         for c in _line(coords_set, edge_a, edge_b, hexy):

@@ -13,6 +13,13 @@
   position: absolute;
   inset: 0;
   z-index: 0;
+  cursor: grab;
+  /* Same reasoning as GMView's draggable mech card: without this, a
+     touch drag here competes with the browser's own scroll/long-press
+     gesture instead of driving the look-around handlers. */
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 /* "Viewed through a screen" pass — kept deliberately subtle and fully

@@ -95,6 +95,35 @@ def test_generate_mountains_map_has_high_elevation_peaks(campaign):
     assert max(elevations) >= 3
 
 
+def test_grasslands_hills_are_multi_tile_mounds_with_a_progressive_slope():
+    # A single very tall tile with elevation-0 neighbors on every side
+    # read as a one-hex cliff, not a hill ("1 solo tile muy alto con
+    # respecto a los alrededores" — real user report). A real mound
+    # needs at least two different nonzero elevations among its own
+    # "hills" tiles (a peak AND a lower shoulder around it) to prove
+    # there's an actual multi-tile slope, not just one isolated peak.
+    # Seeded and sized (16x12 — see mapgen.py's own comment on
+    # HILL_MIN_MAP_TILES/HILL_TWO_HILL_MAP_TILES for the size reasoning)
+    # for a deterministic pass rather than relying on generate_map's own
+    # unseeded rng, which would make this test itself flaky.
+    import random
+
+    from app import maps
+
+    coords = maps._hex_rect(16, 12)
+    coords_set = set(coords)
+    grid, elev = mapgen._grasslands(
+        random.Random(0), coords, coords_set, mapgen._hex_neighbors, mapgen._hex_distance, True,
+    )
+    hill_elevations = {elev.get(c, 0) for c in coords if grid.get(c) == "hills"}
+    assert hill_elevations == {1, 2}
+    # Still plains-dominant even with a hill mound present — the
+    # regression this whole change had to avoid (see mapgen.py's own
+    # HILL_MIN_MAP_TILES comment: an earlier, less size-aware version of
+    # this flaked plains-dominance ~1-6% of the time).
+    assert list(grid.values()).count("plains") > len(coords) / 2
+
+
 def test_generate_swamp_map_is_swamp_dominant_with_water_pools(campaign):
     m = mapgen.generate_map(campaign["id"], "Swamp Test", width=10, height=8, biome="swamp")
     terrains = [t["terrain"] for t in m["tiles"]]

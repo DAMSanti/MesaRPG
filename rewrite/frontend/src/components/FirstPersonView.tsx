@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { HexMap, type ActiveAttackVfx } from './HexMap'
@@ -357,6 +357,19 @@ export function FirstPersonView({
   const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
   const labelRefs = useRef<Record<number, HTMLDivElement | null>>({})
 
+  // Click-and-drag look — offset from the mech's own facing_deg, clamped
+  // to ±90° (LOOK_YAW_LIMIT_DEG) so the total sweep is exactly 180°,
+  // matching the server's own vision arc (units.py's _VISION_ARC_DEG —
+  // this cockpit was showing strictly less than what the mech can
+  // actually detect per the rules, since it only ever rendered dead
+  // ahead). Reset whenever the base facing actually changes (the unit
+  // turned/moved) — an old look offset relative to a new facing read as
+  // disorienting rather than useful.
+  const [lookYawDeg, setLookYawDeg] = useState(0)
+  useEffect(() => {
+    setLookYawDeg(0)
+  }, [unit.id, unit.q, unit.r, unit.facing_deg])
+
   // Self-contained fetch — PlayerView itself never loads map tile
   // geometry today (it only needs unit positions for its own
   // WeaponVolleyPanel flow), so this loads its own copy rather than
@@ -506,8 +519,9 @@ export function FirstPersonView({
     const eyeY = 0.3 + elevation * 0.22 + EYE_HEIGHT
     // Same facing→rotation convention HexMap's UnitMarker uses to orient
     // the rendered Mech3D model — the camera looks the same way the
-    // mech's own model visibly faces.
-    const facingRotationY = Math.PI / 2 - (unit.facing_deg * Math.PI) / 180
+    // mech's own model visibly faces, offset by however far the player
+    // has dragged their look within the ±90° limit.
+    const facingRotationY = Math.PI / 2 - ((unit.facing_deg + lookYawDeg) * Math.PI) / 180
     const forward: [number, number] = [Math.sin(facingRotationY), Math.cos(facingRotationY)]
     const position: [number, number, number] = [rawX - centerX, eyeY, rawZ - centerZ]
     const lookAt: [number, number, number] = [
@@ -516,7 +530,25 @@ export function FirstPersonView({
       position[2] + forward[1] * LOOK_DISTANCE,
     ]
     return { centerX, centerZ, position, lookAt }
-  }, [map, unit.q, unit.r, unit.facing_deg])
+  }, [map, unit.q, unit.r, unit.facing_deg, lookYawDeg])
+
+  const LOOK_YAW_LIMIT_DEG = 90
+  const LOOK_DEG_PER_PIXEL = 0.15
+  const lookDragRef = useRef<{ pointerId: number; startX: number; startYaw: number } | null>(null)
+  const onLookPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* best-effort, see GMView's own mech-drag handler */ }
+    lookDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startYaw: lookYawDeg }
+  }
+  const onLookPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = lookDragRef.current
+    if (!drag || e.pointerId !== drag.pointerId) return
+    const deltaDeg = (e.clientX - drag.startX) * LOOK_DEG_PER_PIXEL
+    setLookYawDeg(Math.max(-LOOK_YAW_LIMIT_DEG, Math.min(LOOK_YAW_LIMIT_DEG, drag.startYaw + deltaDeg)))
+  }
+  const onLookPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (lookDragRef.current?.pointerId === e.pointerId) lookDragRef.current = null
+  }
 
   const elevationAt = (q: number, r: number) => map?.tiles.find((t) => t.q === q && t.r === r)?.elevation ?? 0
   const nearestDistance = enemies.length > 0 ? Math.min(...enemies.map((e) => e.distance)) : null
@@ -577,7 +609,14 @@ export function FirstPersonView({
         <div className="fp-loading">cargando vista…</div>
       ) : (
         <>
-          <div className="fp-canvas-wrap">
+          <div
+            className="fp-canvas-wrap"
+            onPointerDown={onLookPointerDown}
+            onPointerMove={onLookPointerMove}
+            onPointerUp={onLookPointerUp}
+            onPointerCancel={onLookPointerUp}
+            onContextMenu={(e) => e.preventDefault()}
+          >
             <Canvas shadows camera={{ fov: 70 }}>
               <SkyBackground />
               <ambientLight intensity={1.2} />
