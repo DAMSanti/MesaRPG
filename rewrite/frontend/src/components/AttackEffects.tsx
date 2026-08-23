@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
+import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 
 /** Which visual treatment a weapon gets, classified from its own catalog
@@ -276,8 +277,8 @@ function TracerAttack({
  * flashes on arrival — the "barrage" the user specifically asked for,
  * distinct from a single beam/tracer. */
 function MissileAttack({
-  from, to, color, travelMs, count,
-}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; count: number }) {
+  from, to, color, travelMs, count, realModel = true,
+}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; count: number; realModel?: boolean }) {
   const seeds = useMemo(
     () => Array.from({ length: count }, (_, i) => ({
       lateral: (i - (count - 1) / 2) * 0.12 + (Math.random() - 0.5) * 0.05,
@@ -294,14 +295,93 @@ function MissileAttack({
   return (
     <group>
       {seeds.map((s, i) => (
-        <Missile key={i} from={from} to={to} color={color} travelMs={travelMs} {...s} />
+        <Missile key={i} from={from} to={to} color={color} travelMs={travelMs} realModel={realModel} {...s} />
       ))}
     </group>
   )
 }
 
+// Real .glb missile model (public/models, CREDITS.md — Sketchfab "Missile
+// & Bomb Collection - Fighter Jets - Free" by bohmerang, CC-BY-NC-SA
+// 4.0, used as an explicit placeholder pending a commercial-friendly
+// replacement — see CREDITS.md) replacing the earlier flat glow-sprite
+// missile head, per explicit request for "modelos 3d de misiles
+// realistas" after the existing laser/missile effects read as "un poco
+// cutres". The AGM-114 Hellfire mesh specifically, extracted from a
+// 16-missile collection via a one-off gltf-transform script (kept
+// alongside the model's own CREDITS.md entry for provenance) — the
+// user's own pick as "el mejor candidato" after reviewing the set.
+const MISSILE_MODEL_URL = '/models/missile-hellfire.glb'
+// World units, nose to tail — small and fast-moving on screen, so this
+// only needs to read as "a real missile shape" at a glance, not survive
+// close scrutiny the way a stationary decoration would.
+const MISSILE_LENGTH = 0.4
+
+// Cached once from the shared source scene: the uniform scale factor
+// that maps the model's own longest raw dimension (its nose-to-tail
+// length — confirmed via bounding-box inspection to be its LOCAL +Z
+// axis, not +Y like this file's other primitives default to) to
+// MISSILE_LENGTH, plus the centering offset and which raw axis that was.
+// Same "compute once, apply per-instance scaled by each clone's own
+// final scale" split TerrainDecor.tsx's RealRock/RealBuilding use, for
+// the identical reason: baking a raw-unit offset into the shared scene
+// at module scale 1 only cancels out correctly when every instance
+// happens to share that same scale, which these don't in general even
+// though today only one MISSILE_LENGTH is ever used.
+let missileScale: number | null = null
+let missileOffset: THREE.Vector3 | null = null
+function normalizeMissileSceneOnce(scene: THREE.Group) {
+  if (missileScale !== null) return
+  const box = new THREE.Box3().setFromObject(scene)
+  const size = new THREE.Vector3()
+  box.getSize(size)
+  missileScale = size.z > 0 ? MISSILE_LENGTH / size.z : 1
+  missileOffset = new THREE.Vector3()
+  box.getCenter(missileOffset)
+  scene.traverse((obj) => {
+    if (obj instanceof THREE.Mesh) {
+      obj.castShadow = false
+      obj.receiveShadow = false
+    }
+  })
+}
+
+/** The missile body itself — a `<group>` whose own rotation callers set
+ * every frame to point its LOCAL +Z (the model's real nose-to-tail
+ * axis, confirmed by inspecting its bounding box) at the current travel
+ * direction, the same way StraightBeam points a cylinder's local +Y at
+ * its own direction via alignedTransform above. Position is likewise
+ * fully caller-driven (Missile's own useFrame), not managed here. */
+function RealMissile() {
+  const { scene } = useGLTF(MISSILE_MODEL_URL)
+  normalizeMissileSceneOnce(scene)
+  const instance = useMemo(() => {
+    const clone = scene.clone(true)
+    const s = missileScale ?? 1
+    clone.scale.setScalar(s)
+    if (missileOffset) {
+      clone.position.set(-missileOffset.x * s, -missileOffset.y * s, -missileOffset.z * s)
+    }
+    // The model's raw local geometry sits far from its own node origin
+    // (a leftover offset from the multi-missile collection it was
+    // extracted from — see CREDITS.md), which we cancel out above via
+    // position/scale on this wrapper. But three.js computes frustum-
+    // culling bounding spheres from the MESH's raw local geometry before
+    // that cancellation is conceptually "applied" from its perspective,
+    // and a fast-moving small object like this can end up wrongly culled
+    // as it crosses the camera frustum boundary. Not worth chasing
+    // further for an object this small/cheap — just skip culling.
+    clone.traverse((obj) => {
+      if (obj instanceof THREE.Mesh) obj.frustumCulled = false
+    })
+    return clone
+  }, [scene])
+  return <primitive object={instance} />
+}
+useGLTF.preload(MISSILE_MODEL_URL)
+
 function Missile({
-  from, to, color, travelMs, lateral, arcHeight, delay,
+  from, to, color, travelMs, lateral, arcHeight, delay, realModel,
 }: {
   from: THREE.Vector3
   to: THREE.Vector3
@@ -310,8 +390,13 @@ function Missile({
   lateral: number
   arcHeight: number
   delay: number
+  // false for 'mg' (machine-gun bursts, which also reuse this same
+  // Missile/MissileAttack pair) — a real guided-missile body reads as
+  // absurd for MG rounds, so those keep the original flat glow sprite
+  // instead of RealMissile.
+  realModel: boolean
 }) {
-  const headRef = useRef<THREE.Mesh>(null)
+  const headRef = useRef<THREE.Group>(null)
   const trailGroupRef = useRef<THREE.Group>(null)
   const start = useRef<number | null>(null)
   const flashSpawned = useRef(false)
@@ -346,7 +431,24 @@ function Missile({
     if (headRef.current) {
       headRef.current.visible = t < 1
       headRef.current.position.copy(pos)
-      headRef.current.quaternion.copy(state.camera.quaternion)
+      if (realModel) {
+        // A real 3D body, unlike the flat glow sprite the MG variant
+        // still uses below, needs to actually point somewhere rather
+        // than always billboard the camera — the tangent of its own
+        // arced flight path (a tiny step behind vs. at `t`, not the
+        // straight attacker->target line), pointing the model's own
+        // nose-to-tail axis (local +Z, see RealMissile's own doc
+        // comment) along it. Clamped forward-difference near t=0 since
+        // t-ε would go negative there.
+        const tangentT0 = Math.max(0, t - 0.01)
+        const tangentT1 = Math.min(1, t + 0.01)
+        const dir = new THREE.Vector3().subVectors(posAt(tangentT1), posAt(tangentT0))
+        if (dir.lengthSq() > 1e-8) {
+          headRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize())
+        }
+      } else {
+        headRef.current.quaternion.copy(state.camera.quaternion)
+      }
     }
     if (trailGroupRef.current) {
       const trailT = Math.max(0, t - 0.08)
@@ -365,12 +467,18 @@ function Missile({
 
   return (
     <>
-      <mesh ref={headRef}>
-        <planeGeometry args={[0.16, 0.16]} />
-        <meshBasicMaterial map={getGlowTexture()} color={color} transparent blending={THREE.AdditiveBlending} depthWrite={false} />
-      </mesh>
+      <group ref={headRef}>
+        {realModel ? (
+          <RealMissile />
+        ) : (
+          <mesh frustumCulled={false}>
+            <planeGeometry args={[0.16, 0.16]} />
+            <meshBasicMaterial map={getGlowTexture()} color={color} transparent blending={THREE.AdditiveBlending} depthWrite={false} />
+          </mesh>
+        )}
+      </group>
       <group ref={trailGroupRef}>
-        <mesh>
+        <mesh frustumCulled={false}>
           <cylinderGeometry args={[0.02, 0.005, 1, 5, 1, true]} />
           <meshBasicMaterial color={color} transparent opacity={0.5} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
@@ -487,8 +595,8 @@ export function AttackEffect({ data, onDone }: { data: AttackEffectData; onDone:
 
   if (category === 'beam') return <BeamAttack from={from} to={to} color={color} duration={duration} thick={false} />
   if (category === 'ppc') return <BeamAttack from={from} to={to} color={color} duration={duration} thick />
-  if (category === 'missile') return <MissileAttack from={from} to={to} color={color} travelMs={travelMs} count={5} />
-  if (category === 'mg') return <MissileAttack from={from} to={to} color={color} travelMs={travelMs} count={3} />
+  if (category === 'missile') return <MissileAttack from={from} to={to} color={color} travelMs={travelMs} count={5} realModel />
+  if (category === 'mg') return <MissileAttack from={from} to={to} color={color} travelMs={travelMs} count={3} realModel={false} />
   if (category === 'flame') return <FlameAttack from={from} to={to} color={color} duration={duration} />
   return (
     <>

@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls } from '@react-three/drei'
 import { useCampaignId } from '../useCampaignId'
 import { terrainColor, terrainTexture } from '../terrain'
 import { TerrainDecor } from '../components/TerrainDecor'
+import { BUILDING_MIN_HEIGHT } from '../components/HexMap'
 import { TableBackground } from '../components/TableBackground'
 import { RoadMarkings } from '../components/RoadMarkings'
 import { NavBar } from '../components/NavBar'
@@ -87,7 +88,9 @@ function EditableTile({
   lookup: Map<string, HexTileData>
 }) {
   const [x, z] = worldPos(gridType, tile.q, tile.r)
-  const height = 0.3 + tile.elevation * 0.22
+  // Same fixed building-tile platform height HexMap.tsx's own Tile
+  // uses — see BUILDING_MIN_HEIGHT's own doc comment there.
+  const height = tile.terrain === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + tile.elevation * 0.22
   return (
     <group position={[x, 0, z]}>
       <mesh
@@ -105,7 +108,7 @@ function EditableTile({
           <boxGeometry args={[1.85, height, 1.85]} />
         )}
         <meshStandardMaterial
-          color={terrainColor(tile.terrain, tile.elevation)}
+          color={terrainColor(tile.terrain)}
           map={terrainTexture(tile.terrain, tile.q, tile.r)}
         />
       </mesh>
@@ -416,21 +419,28 @@ function Canvas3D({
         shadow-camera-far={60}
       />
       <TableBackground />
-      <group position={[-centerX, 0, -centerZ]}>
-        {map.tiles.map((t) => (
-          <EditableTile
-            key={`${t.q},${t.r}`}
-            tile={t}
-            gridType={map.grid_type}
-            selected={selected?.q === t.q && selected?.r === t.r}
-            onClick={() => onSelect({ q: t.q, r: t.r })}
-            lookup={lookup}
-          />
-        ))}
-        {units.map((u) => (
-          <UnitDot key={u.id} unit={u} gridType={map.grid_type} elevation={elevationAt.get(`${u.q},${u.r}`) ?? 0} />
-        ))}
-      </group>
+      {/* TerrainDecor's forest tiles load a real .glb tree model via
+          useGLTF, which suspends — every other TerrainDecor consumer
+          (HexMap.tsx's own callers: TableView/GMView/FirstPersonView)
+          already wraps it for exactly this reason; this one didn't
+          need it before RealTree existed. */}
+      <Suspense fallback={null}>
+        <group position={[-centerX, 0, -centerZ]}>
+          {map.tiles.map((t) => (
+            <EditableTile
+              key={`${t.q},${t.r}`}
+              tile={t}
+              gridType={map.grid_type}
+              selected={selected?.q === t.q && selected?.r === t.r}
+              onClick={() => onSelect({ q: t.q, r: t.r })}
+              lookup={lookup}
+            />
+          ))}
+          {units.map((u) => (
+            <UnitDot key={u.id} unit={u} gridType={map.grid_type} elevation={elevationAt.get(`${u.q},${u.r}`) ?? 0} />
+          ))}
+        </group>
+      </Suspense>
       <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} />
     </Canvas>
   )

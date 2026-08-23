@@ -286,30 +286,40 @@ def _grasslands(rng, coords, coords_set, neighbors_fn, distance_fn, hexy):
     # neighbors — "1 solo tile muy alto con respecto a los alrededores",
     # a one-tile cliff instead of a hill.
     #
-    # peak_elev is fixed at 2, not left random down to 1: at peak_elev=1
-    # the falloff ring at distance 1 lands on elevation 0 (1 - 1 = 0),
-    # same as the surrounding plains, so that "hill" was STILL a single
-    # tile — same bug, just gentler. 2 guarantees a real second, lower
-    # ring (elevation 1) around the peak — an actual multi-tile slope,
-    # every time a hill is generated.
+    # peak_elev=3 (not 2) — real user feedback after seeing peak=2 in
+    # practice: "no quiero hacer las colinas tapered... quiero que entre
+    # el tile de colina y el tile contiguo haya un tile de la mitad de
+    # altura" (an explicit rejection of a cosmetic geometry fix in favor
+    # of the actual elevation DATA stepping down over more real tiles).
+    # peak=2 only ever had ONE intermediate ring (2→1→flat); peak=3 adds
+    # a second (3→2→1→flat), so the step at every single tile boundary
+    # is still exactly 1 elevation unit — same minimum granularity this
+    # integer-elevation system can represent — but now spread over 3
+    # rings of real tiles instead of 2, and each individual boundary is
+    # proportionally a smaller fraction of the hill's own total height.
+    # (peak_elev=1 was tried and rejected in an earlier pass: the falloff
+    # ring at distance 1 lands on elevation 0 — same as the surrounding
+    # plains — so that "hill" was a single tile no matter what; every
+    # peak below the current value has that same failure mode as its own
+    # outermost ring, which is exactly why the ring below peak is never
+    # the boundary that matters here.)
     #
     # A hex disk grows fast (1/7/19/37 tiles at radius 0/1/2/3), so this
     # only runs at all above HILL_MIN_MAP_TILES — below that, even one
-    # radius-2 mound (19 tiles) can swallow most of a small map (verified:
-    # a 5x4/20-tile map hits >100/300 simulated runs with plains no
-    # longer the dominant terrain). Above it, capped at 1 hill until the
-    # map is big enough that two can't realistically overlap into one
-    # oversized blob. Simulated at 5x4, 6x6, 8x6, 10x8, 12x10 and 16x12
-    # (300 generations each) with these thresholds: zero plains-dominance
-    # failures at every size ≥ HILL_MIN_MAP_TILES (see
-    # test_generate_grasslands_map_is_plains_dominant, which a less
-    # size-aware version of this flaked on ~1-6% of the time).
-    HILL_MIN_MAP_TILES = 60
-    HILL_TWO_HILL_MAP_TILES = 150
+    # radius-3 mound (37 tiles) can swallow most of a small/medium map.
+    # Above it, capped at 1 hill until the map is big enough that two
+    # can't realistically overlap into one oversized blob. Simulated at
+    # 6x6, 8x6, 10x8, 12x10, 16x12 and 20x16 (300 generations each) with
+    # these thresholds: zero plains-dominance failures at every size ≥
+    # HILL_MIN_MAP_TILES (see test_generate_grasslands_map_is_plains_
+    # dominant and test_grasslands_hills_are_multi_tile_mounds_with_a_
+    # progressive_slope).
+    HILL_MIN_MAP_TILES = 90
+    HILL_TWO_HILL_MAP_TILES = 220
     if len(coords) >= HILL_MIN_MAP_TILES:
         n_hills = 1 if len(coords) < HILL_TWO_HILL_MAP_TILES else rng.choices([1, 2], weights=[3, 1])[0]
         for seed in rng.sample(coords, k=min(n_hills, len(coords))):
-            peak_elev = 2
+            peak_elev = 3
             for c in coords:
                 d = distance_fn(c, seed)
                 if d > peak_elev:

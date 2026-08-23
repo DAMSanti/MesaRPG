@@ -115,8 +115,13 @@ def test_grasslands_hills_are_multi_tile_mounds_with_a_progressive_slope():
     grid, elev = mapgen._grasslands(
         random.Random(0), coords, coords_set, mapgen._hex_neighbors, mapgen._hex_distance, True,
     )
-    hill_elevations = {elev.get(c, 0) for c in coords if grid.get(c) == "hills"}
-    assert hill_elevations == {1, 2}
+    # Checked against `elev` directly, not filtered to grid.get(c) ==
+    # "hills" — a road drawn afterward can legitimately cross straight
+    # over a hill's peak, overwriting its terrain *label* to "road"
+    # while correctly leaving its elevation alone (a road climbing a
+    # hill is normal; that's not the bug this guards against).
+    hill_elevations = {e for e in elev.values() if e > 0}
+    assert hill_elevations == {1, 2, 3}
     # Still plains-dominant even with a hill mound present — the
     # regression this whole change had to avoid (see mapgen.py's own
     # HILL_MIN_MAP_TILES comment: an earlier, less size-aware version of

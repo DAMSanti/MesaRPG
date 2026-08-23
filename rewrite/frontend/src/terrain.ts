@@ -3,19 +3,19 @@ import * as THREE from 'three'
 /** Shared by MapEditorView (authoring) and HexMap (table display) so the
  * two never drift into showing terrain differently.
  *
- * Most terrain gets a procedural texture (canvas-drawn, no external
- * assets — same approach as the dice pips) that bakes in its own full
- * color; plains and forest instead use a real CC0 photo (public/textures/
- * CREDITS.md) for a genuinely realistic look those two benefit from most
- * (open ground and canopy read unmistakably as what they are). Either
- * way `terrainColor()` is white for every terrain except hills
- * (continuous elevation tint) and forest (a fixed darkening — dense
- * canopy shadow, not hills' gradient), so texture and material color
- * multiply cleanly instead of double-tinting. Procedural terrains get a
- * few variants picked deterministically per tile (a hash of its
- * coordinates, not Math.random — stays stable across re-renders) so
- * neighboring tiles of the same type don't look identical; the two
- * photo terrains get `terrainRotation()` instead (see below) since
+ * A handful of terrains (plains, forest/light_forest, hills, road,
+ * water/water_deep, rough, rubble, swamp, snow, building — see
+ * ROTATED_PHOTO_TERRAINS below) use a real CC0 photo (public/textures/
+ * CREDITS.md) for a genuinely realistic look; everything else still gets
+ * a procedural texture (canvas-drawn, no external assets — same approach
+ * as the dice pips), which bakes in its own full color. Either way
+ * `terrainColor()` is white for every terrain except forest (a fixed
+ * darkening — dense canopy shadow) and water_deep (a darker tint), so
+ * texture and material color multiply cleanly instead of double-tinting.
+ * Procedural terrains get a few variants picked deterministically per
+ * tile (a hash of its coordinates, not Math.random — stays stable across
+ * re-renders) so neighboring tiles of the same type don't look identical;
+ * the photo terrains get `terrainRotation()` instead (see below) since
  * there's only one photo each to vary. */
 
 const SIZE = 512
@@ -50,6 +50,20 @@ const getDirtTexture = () => loadPhotoTexture('/textures/dirt.jpg', DIRT_REPEAT)
 // No baked-in centerline (that's RoadMarkings.tsx's job, painted per-tile
 // from real neighbor connections) — plain worn asphalt only.
 const getRoadTexture = () => loadPhotoTexture('/textures/road.jpg', ROAD_REPEAT)
+const HILL_GRASS_REPEAT = 3
+const getHillGrassTexture = () => loadPhotoTexture('/textures/hill-grass.jpg', HILL_GRASS_REPEAT)
+const WATER_BED_REPEAT = 2
+const getWaterBedTexture = () => loadPhotoTexture('/textures/water-bed.jpg', WATER_BED_REPEAT)
+const ROUGH_REPEAT = 2
+const getRoughTexture = () => loadPhotoTexture('/textures/rough.jpg', ROUGH_REPEAT)
+const RUBBLE_REPEAT = 2
+const getRubbleTexture = () => loadPhotoTexture('/textures/rubble.jpg', RUBBLE_REPEAT)
+const SWAMP_REPEAT = 3
+const getSwampTexture = () => loadPhotoTexture('/textures/swamp.jpg', SWAMP_REPEAT)
+const SNOW_REPEAT = 3
+const getSnowTexture = () => loadPhotoTexture('/textures/snow.jpg', SNOW_REPEAT)
+const SIDEWALK_REPEAT = 2
+const getSidewalkTexture = () => loadPhotoTexture('/textures/sidewalk.jpg', SIDEWALK_REPEAT)
 
 // Not every plains tile is a uniform lawn — a minority (roughly 1 in 5)
 // render as bare, pebbly earth instead (dirt.jpg), so a field reads as
@@ -77,7 +91,7 @@ export function plainsGroundVariant(q: number, r: number): 'grass' | 'dirt' {
  * aligned edge-to-edge with its neighbors; anything finer would open
  * visible gaps/overlaps at tile borders despite the texture itself
  * tiling seamlessly. */
-const ROTATED_PHOTO_TERRAINS = new Set(['plains', 'forest', 'light_forest', 'road'])
+const ROTATED_PHOTO_TERRAINS = new Set(['plains', 'forest', 'light_forest', 'road', 'hills', 'water', 'water_deep', 'rough', 'rubble', 'swamp', 'snow', 'building'])
 export function terrainRotation(terrain: string, q: number, r: number): number {
   if (!ROTATED_PHOTO_TERRAINS.has(terrain)) return 0
   return (hashTile(q, r, 'photo-rotation') % 6) * (Math.PI / 3)
@@ -109,33 +123,25 @@ export function hashTile(q: number, r: number, salt: number | string = 0): numbe
   return h >>> 0
 }
 
-/** Open hills ground keeps the elevation colour ramp as the material's
- * base color, multiplied by a light detail texture below. Forest gets a
- * fixed dark multiply instead — the moss photo (public/textures/
- * CREDITS.md) is a bright lawn-like green on its own; darkening it
- * reads as canopy shadow seen from directly above, matching the
- * moody/dense look the old procedural forest texture had. Every other
- * terrain (plains' real grass photo included) bakes its full color into
- * the texture itself, so the material color stays white there
- * (multiplying by white is a no-op) — an elevation tint would just
- * wash out a real photo unnaturally, and forest doesn't vary by
- * elevation the way hills does.
+/** Forest gets a fixed dark multiply — the moss photo (public/textures/
+ * CREDITS.md) is a bright lawn-like green on its own; darkening it reads
+ * as canopy shadow seen from directly above, matching the moody/dense
+ * look the old procedural forest texture had. Every other photo terrain
+ * (plains, hills) bakes its full color into the texture itself, so the
+ * material color stays white there (multiplying by white is a no-op) —
+ * hills used to get its own elevation-based color ramp instead of a real
+ * texture (no photo existed yet), but keeping that tint now that
+ * hill-grass.jpg exists would just wash the real photo out unnaturally,
+ * the same reasoning already applied to plains/forest.
  *
- * The two photo terrains (plains/forest) additionally get a small
- * per-tile brightness jitter (±6%) folded into this same color, since
- * they only have one source photo each (see terrainRotation above) —
- * without it, every plains tile would be lit exactly alike despite
- * sharing one image; every other terrain already varies via its own
- * baked texture variant, so no jitter is added there. */
-export function terrainColor(terrain: string, elevation: number, q = 0, r = 0): string {
-  if (terrain === 'hills') {
-    const t = Math.max(0, Math.min(1, elevation / 4))
-    const from = { r: 0x1f, g: 0x3a, b: 0x2f }
-    const to = { r: 0x9a, g: 0x8f, b: 0x74 }
-    const lerp = (a: number, b: number) => Math.round(a + (b - a) * t)
-    return `rgb(${lerp(from.r, to.r)}, ${lerp(from.g, to.g)}, ${lerp(from.b, to.b)})`
-  }
-  if (terrain === 'plains' || terrain === 'forest' || terrain === 'light_forest') {
+ * These photo terrains additionally get a small per-tile brightness
+ * jitter (±6%) folded into this same color, since they only have one
+ * source photo each (see terrainRotation above) — without it, every
+ * plains/hills tile would be lit exactly alike despite sharing one
+ * image; every non-photo terrain already varies via its own baked
+ * texture variant, so no jitter is added there. */
+export function terrainColor(terrain: string, q = 0, r = 0): string {
+  if (terrain === 'plains' || terrain === 'forest' || terrain === 'light_forest' || terrain === 'hills') {
     // light_forest gets a lighter multiply than forest's dense-canopy
     // shadow — thinner canopy, more daylight reaching the ground — while
     // still reading as the same photo terrain, not a distinct texture.
@@ -151,154 +157,10 @@ export function terrainColor(terrain: string, elevation: number, q = 0, r = 0): 
   return '#ffffff'
 }
 
-function speckles(
-  ctx: CanvasRenderingContext2D,
-  size: number,
-  rng: () => number,
-  opts: { count: number; radius: [number, number]; color: string; alpha: [number, number] },
-) {
-  for (let i = 0; i < opts.count; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const rad = opts.radius[0] + rng() * (opts.radius[1] - opts.radius[0])
-    ctx.globalAlpha = opts.alpha[0] + rng() * (opts.alpha[1] - opts.alpha[0])
-    ctx.fillStyle = opts.color
-    ctx.beginPath()
-    ctx.arc(x, y, rad, 0, Math.PI * 2)
-    ctx.fill()
-  }
-  ctx.globalAlpha = 1
-}
-
 // ---- per-terrain procedural drawers ---------------------------------------
 // Light near-white base = detail multiplier over the elevation-tinted
 // material color (hills only now — plains uses a real photo, see
 // getGrassTexture above). Everything else bakes its own full color.
-
-function drawHills(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
-  ctx.fillStyle = '#dfe1d6'
-  ctx.fillRect(0, 0, size, size)
-  for (let i = 0; i < 30; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const rad = size * (0.02 + rng() * 0.06)
-    ctx.fillStyle = rng() < 0.5 ? 'rgba(120,110,90,0.16)' : 'rgba(255,255,255,0.26)'
-    ctx.beginPath()
-    ctx.ellipse(x, y, rad, rad * 0.6, rng() * Math.PI, 0, Math.PI * 2)
-    ctx.fill()
-  }
-  speckles(ctx, size, rng, { count: 160, radius: [2, 5], color: 'rgba(70,65,55,0.2)', alpha: [0.3, 0.7] })
-}
-
-function drawWater(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
-  const grad = ctx.createLinearGradient(0, 0, 0, size)
-  grad.addColorStop(0, '#1a4152')
-  grad.addColorStop(1, '#215a70')
-  ctx.fillStyle = grad
-  ctx.fillRect(0, 0, size, size)
-  ctx.strokeStyle = 'rgba(190,225,235,0.32)'
-  for (let y = 12; y < size; y += 26 + rng() * 10) {
-    ctx.lineWidth = 2 + rng() * 1.5
-    ctx.beginPath()
-    for (let x = 0; x <= size; x += 12) {
-      const wave = Math.sin((x / size) * Math.PI * (3 + rng() * 2) + y) * (size * (0.008 + rng() * 0.006))
-      if (x === 0) ctx.moveTo(x, y + wave)
-      else ctx.lineTo(x, y + wave)
-    }
-    ctx.stroke()
-  }
-  speckles(ctx, size, rng, { count: 50, radius: [2, 5], color: 'rgba(255,255,255,0.25)', alpha: [0.2, 0.4] })
-}
-
-function drawSwamp(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
-  ctx.fillStyle = '#3a3f2c'
-  ctx.fillRect(0, 0, size, size)
-  // murky mud patches
-  for (let i = 0; i < 22; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const rad = size * (0.03 + rng() * 0.07)
-    ctx.fillStyle = `rgba(${30 + rng() * 20 | 0},${28 + rng() * 18 | 0},${18 + rng() * 12 | 0},0.5)`
-    ctx.beginPath()
-    ctx.arc(x, y, rad, 0, Math.PI * 2)
-    ctx.fill()
-  }
-  // reeds/reflections near waterlogged ground
-  for (let i = 0; i < 60; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const len = size * (0.01 + rng() * 0.02)
-    ctx.strokeStyle = rng() < 0.5 ? 'rgba(120,140,90,0.3)' : 'rgba(60,90,80,0.25)'
-    ctx.lineWidth = 1.2
-    ctx.beginPath()
-    ctx.moveTo(x, y)
-    ctx.lineTo(x, y - len)
-    ctx.stroke()
-  }
-  speckles(ctx, size, rng, { count: 90, radius: [1.5, 4], color: 'rgba(15,20,14,0.3)', alpha: [0.3, 0.5] })
-}
-
-function drawSnow(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
-  const grad = ctx.createLinearGradient(0, 0, size, size)
-  grad.addColorStop(0, '#eef3f6')
-  grad.addColorStop(1, '#d7e2e8')
-  ctx.fillStyle = grad
-  ctx.fillRect(0, 0, size, size)
-  // wind-carved drift shadows
-  for (let i = 0; i < 16; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const w = size * (0.08 + rng() * 0.14)
-    const h = size * (0.02 + rng() * 0.03)
-    ctx.save()
-    ctx.translate(x, y)
-    ctx.rotate(rng() * Math.PI)
-    ctx.fillStyle = 'rgba(150,170,185,0.22)'
-    ctx.beginPath()
-    ctx.ellipse(0, 0, w, h, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.restore()
-  }
-  speckles(ctx, size, rng, { count: 130, radius: [1, 2.5], color: 'rgba(200,215,225,0.5)', alpha: [0.3, 0.6] })
-}
-
-function drawRough(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
-  ctx.fillStyle = '#5c5648'
-  ctx.fillRect(0, 0, size, size)
-  speckles(ctx, size, rng, { count: 100, radius: [6, 16], color: 'rgba(90,84,68,0.3)', alpha: [0.3, 0.6] })
-  ctx.strokeStyle = 'rgba(30,26,20,0.35)'
-  ctx.lineWidth = 2.5
-  for (let i = 0; i < 16; i++) {
-    let x = rng() * size
-    let y = rng() * size
-    ctx.beginPath()
-    ctx.moveTo(x, y)
-    for (let j = 0; j < 5; j++) {
-      x += (rng() - 0.5) * size * 0.12
-      y += (rng() - 0.5) * size * 0.12
-      ctx.lineTo(x, y)
-    }
-    ctx.stroke()
-  }
-}
-
-function drawRubble(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
-  ctx.fillStyle = '#5c4a42'
-  ctx.fillRect(0, 0, size, size)
-  for (let i = 0; i < 80; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const w = size * (0.015 + rng() * 0.045)
-    const h = size * (0.015 + rng() * 0.045)
-    ctx.save()
-    ctx.translate(x, y)
-    ctx.rotate(rng() * Math.PI)
-    ctx.fillStyle = `rgba(${70 + rng() * 40 | 0},${55 + rng() * 35 | 0},${45 + rng() * 30 | 0},${0.5 + rng() * 0.4})`
-    ctx.fillRect(-w / 2, -h / 2, w, h)
-    ctx.restore()
-  }
-  speckles(ctx, size, rng, { count: 140, radius: [1, 3], color: 'rgba(20,15,12,0.3)', alpha: [0.3, 0.5] })
-}
 
 function drawHazards(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
   ctx.fillStyle = '#3a2c18'
@@ -323,123 +185,8 @@ function drawHazards(ctx: CanvasRenderingContext2D, size: number, rng: () => num
   }
 }
 
-/** Rooftop, since the camera in this app is locked top-down (see TableView
- * / MapEditorView's OrbitControls) — walls are never actually seen, so
- * "windows" are represented as roof-level skylights/glazing rather than
- * side windows nobody would ever see. `style` picks a cosmetic base tint
- * so standing buildings don't all read as one uniform grey block. */
-function drawBuildingStanding(ctx: CanvasRenderingContext2D, size: number, rng: () => number, style: number) {
-  ctx.fillStyle = style === 2 ? '#565b5e' : style === 1 ? '#4e5457' : '#4a4f52'
-  ctx.fillRect(0, 0, size, size)
-  // parapet — a darker inset border reading as the raised edge wall of a
-  // flat roof, the clearest "this is a rooftop" cue from directly above
-  const parapet = size * 0.045
-  ctx.strokeStyle = 'rgba(15,17,19,0.55)'
-  ctx.lineWidth = parapet
-  ctx.strokeRect(parapet / 2, parapet / 2, size - parapet, size - parapet)
-  // rooftop terrace — a lighter walkway strip along one edge
-  if (rng() < 0.7) {
-    const along = rng() < 0.5
-    const t = size * (0.14 + rng() * 0.08)
-    ctx.fillStyle = 'rgba(150,145,130,0.28)'
-    if (along) ctx.fillRect(parapet, parapet, size - parapet * 2, t)
-    else ctx.fillRect(parapet, parapet, t, size - parapet * 2)
-  }
-  const cell = size / (4 + Math.floor(rng() * 3))
-  ctx.strokeStyle = 'rgba(20,22,24,0.4)'
-  ctx.lineWidth = 2
-  for (let x = 0; x <= size; x += cell) {
-    ctx.beginPath()
-    ctx.moveTo(x, 0)
-    ctx.lineTo(x, size)
-    ctx.stroke()
-  }
-  for (let y = 0; y <= size; y += cell) {
-    ctx.beginPath()
-    ctx.moveTo(0, y)
-    ctx.lineTo(size, y)
-    ctx.stroke()
-  }
-  // skylights/glazed roof sections — the "windows" visible from directly above
-  const skylights = 7 + Math.floor(rng() * 6)
-  for (let i = 0; i < skylights; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const w = cell * (0.4 + rng() * 0.3)
-    const h = cell * (0.3 + rng() * 0.25)
-    ctx.fillStyle = `rgba(${90 + rng() * 40 | 0},${140 + rng() * 50 | 0},${170 + rng() * 50 | 0},0.5)`
-    ctx.fillRect(x, y, w, h)
-    ctx.strokeStyle = 'rgba(20,24,26,0.5)'
-    ctx.lineWidth = 1
-    ctx.strokeRect(x, y, w, h)
-  }
-  // rooftop AC/vent units
-  for (let i = 0; i < 4 + Math.floor(rng() * 4); i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const s = size * (0.03 + rng() * 0.04)
-    ctx.fillStyle = 'rgba(0,0,0,0.28)'
-    ctx.fillRect(x, y, s, s)
-  }
-  speckles(ctx, size, rng, { count: 90, radius: [1, 2.5], color: 'rgba(0,0,0,0.15)', alpha: [0.2, 0.4] })
-}
-
-/** Collapsed/damaged roof — cracked panel remnants, scorch marks, rubble
- * chunks. Paired with a broken 3D silhouette in TerrainDecor (not a clean
- * box), so a "ruined" building reads as ruined from both texture and shape. */
-function drawBuildingRuined(ctx: CanvasRenderingContext2D, size: number, rng: () => number) {
-  ctx.fillStyle = '#4b433d'
-  ctx.fillRect(0, 0, size, size)
-  const cell = size / (4 + Math.floor(rng() * 3))
-  ctx.strokeStyle = 'rgba(15,12,10,0.35)'
-  ctx.lineWidth = 2
-  for (let x = 0; x <= size; x += cell) {
-    if (rng() < 0.55) {
-      ctx.beginPath()
-      ctx.moveTo(x, 0)
-      ctx.lineTo(x, size)
-      ctx.stroke()
-    }
-  }
-  for (let y = 0; y <= size; y += cell) {
-    if (rng() < 0.55) {
-      ctx.beginPath()
-      ctx.moveTo(0, y)
-      ctx.lineTo(size, y)
-      ctx.stroke()
-    }
-  }
-  for (let i = 0; i < 10; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const rad = size * (0.05 + rng() * 0.1)
-    ctx.fillStyle = `rgba(${20 + rng() * 15 | 0},${16 + rng() * 12 | 0},${14 + rng() * 10 | 0},${0.35 + rng() * 0.3})`
-    ctx.beginPath()
-    ctx.arc(x, y, rad, 0, Math.PI * 2)
-    ctx.fill()
-  }
-  for (let i = 0; i < 45; i++) {
-    const x = rng() * size
-    const y = rng() * size
-    const w = size * (0.02 + rng() * 0.05)
-    const h = size * (0.02 + rng() * 0.05)
-    ctx.save()
-    ctx.translate(x, y)
-    ctx.rotate(rng() * Math.PI)
-    ctx.fillStyle = `rgba(${75 + rng() * 35 | 0},${65 + rng() * 30 | 0},${55 + rng() * 25 | 0},0.6)`
-    ctx.fillRect(-w / 2, -h / 2, w, h)
-    ctx.restore()
-  }
-}
-
 const DRAW: Record<string, (ctx: CanvasRenderingContext2D, size: number, rng: () => number) => void> = {
-  hills: drawHills,
-  water: drawWater,
-  rough: drawRough,
-  rubble: drawRubble,
   hazards: drawHazards,
-  swamp: drawSwamp,
-  snow: drawSnow,
 }
 
 function finish(canvas: HTMLCanvasElement): THREE.CanvasTexture {
@@ -471,32 +218,19 @@ function buildBaseTexture(terrain: string, variant: number): THREE.CanvasTexture
   return tex
 }
 
-// Building gets 5 looks instead of the usual 3 — 3 standing styles + 2
-// ruined — since "some standing, some ruined" is the whole point here.
+// Building gets 5 looks — 3 standing (real models, one of
+// BUILDING_MODEL_URLS in TerrainDecor.tsx, picked by this same kind) + 2
+// ruined (one of the same 3 models reused with a scorched tint and
+// smaller size — see RealBuilding's own comment) — since "some
+// standing, some ruined" is the whole point here.
 const BUILDING_VARIANTS = 5
-const buildingCache = new Map<number, THREE.CanvasTexture>()
 
 /** Which of the 5 building looks a tile gets — exported so TerrainDecor's
- * 3D shape (clean tower vs collapsed rubble) picks the SAME one the
- * texture did, instead of the two disagreeing about whether this building
- * is standing or ruined. */
+ * 3D shape (clean tower vs collapsed rubble) picks the SAME one
+ * consistently, instead of re-deriving the hash independently and
+ * risking drift. */
 export function buildingKind(q: number, r: number): number {
   return hashTile(q, r, 'building-kind') % BUILDING_VARIANTS
-}
-
-function buildBuildingTexture(kind: number): THREE.CanvasTexture {
-  const cached = buildingCache.get(kind)
-  if (cached) return cached
-  const canvas = document.createElement('canvas')
-  canvas.width = SIZE
-  canvas.height = SIZE
-  const ctx = canvas.getContext('2d')!
-  const rng = mulberry32(hashString('building') * 97 + kind * 131 + 7)
-  if (kind < 3) drawBuildingStanding(ctx, SIZE, rng, kind)
-  else drawBuildingRuined(ctx, SIZE, rng)
-  const tex = finish(canvas)
-  buildingCache.set(kind, tex)
-  return tex
 }
 
 /** Deterministic per-tile variant (stable across renders) of a terrain's
@@ -505,11 +239,38 @@ export function terrainTexture(terrain: string, q: number, r: number): THREE.Tex
   if (terrain === 'plains') return plainsGroundVariant(q, r) === 'dirt' ? getDirtTexture() : getGrassTexture()
   if (terrain === 'forest' || terrain === 'light_forest') return getForestFloorTexture()
   if (terrain === 'road') return getRoadTexture()
-  if (terrain === 'building') return buildBuildingTexture(buildingKind(q, r))
-  // water_deep reuses the same procedural drawWater pattern (DRAW lookup
-  // below) as water — the darker terrainColor() multiply above is what
-  // actually distinguishes it, not a separate texture.
-  const key = terrain === 'water_deep' ? 'water' : terrain
+  // Real photo instead of the flat procedural pattern every other
+  // non-photo terrain still uses — per explicit request for "alguna
+  // textura realista" once the tapered-mound geometry fix (see
+  // HexMap.tsx's own hillTopRadius) made hills actually worth looking
+  // closely at instead of reading as a flat-topped block.
+  if (terrain === 'hills') return getHillGrassTexture()
+  // The tile's own ground, not the building on top of it — a real
+  // sidewalk photo, per explicit request ("quiero que la base tenga la
+  // textura como de una acera"). The building itself is a real .glb
+  // model with its own materials (TerrainDecor.tsx's RealBuilding).
+  if (terrain === 'building') return getSidewalkTexture()
+  // Real riverbed photo — this is the tile's own floor, seen through the
+  // separate translucent WaterSurface TerrainDecor.tsx renders above it.
+  // water_deep reuses the same photo; the darker terrainColor() multiply
+  // (and its own deeper WaterSurface tint) is what distinguishes it, not
+  // a separate texture.
+  if (terrain === 'water' || terrain === 'water_deep') return getWaterBedTexture()
+  // Real rocky-ground / rubble-strewn-ground photos — replacing the flat
+  // procedural stroke/speckle patterns (drawRough/drawRubble, both now
+  // deleted) per explicit request for "textura realista" on both, paired
+  // with real 3D rock/debris-chunk models (TerrainDecor's RealRock) so
+  // the terrain reads as genuinely rocky/ruined rather than a flat tint.
+  if (terrain === 'rough') return getRoughTexture()
+  if (terrain === 'rubble') return getRubbleTexture()
+  // Real murky mud-and-leaf-litter / fluffy-snow photos — replacing the
+  // flat procedural patterns (drawSwamp/drawSnow, both now deleted). This
+  // is swamp's own STILL floor, seen through the separate translucent
+  // MudSurface TerrainDecor.tsx renders above it, the same
+  // floor/surface split water/water_deep already use.
+  if (terrain === 'swamp') return getSwampTexture()
+  if (terrain === 'snow') return getSnowTexture()
+  const key = terrain
   const variant = hashTile(q, r, terrain) % VARIANTS
   return buildBaseTexture(key, variant)
 }

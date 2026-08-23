@@ -1,16 +1,34 @@
-import { useEffect, useRef, useState } from 'react'
+import {
+  memo, useEffect, useMemo, useRef, useState,
+} from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
 import type { HexTileData, MapData, Unit } from '../api'
 import { Mech3D } from './Mech3D'
-import { TerrainDecor } from './TerrainDecor'
+import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
 import { terrainColor, terrainRotation, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import { hexToWorld, mapCenter } from '../hexMath'
 import { MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import { AttackEffect } from './AttackEffects'
+
+// FIXED, not a floor that yields to a taller natural elevation — two
+// earlier versions of this (elevation 2's own 0.74, then elevation
+// 0.5's 0.41) both still let the tile's own `elevation` data drive the
+// platform's height, and mapgen.py/MapEditorView's 'Edificio' palette
+// entry both default that to 2 — so in the common case the "floor" was
+// never actually the limiting factor, the elevation value was, and the
+// platform kept reading as a tall pedestal every real building model
+// sat on top of instead of a sidewalk (real user report, twice, with
+// screenshots — most recently blunt enough that a third guess wasn't
+// worth risking). A real sidewalk doesn't get taller because a
+// building's LOS-blocking elevation happens to be high — that height
+// already reads from the real, now-dramatically-tall building model
+// standing on it, not from the ground it stands on. Flush with plain
+// ground level (elevation 0's own 0.3) settles it for good, unconditionally.
+export const BUILDING_MIN_HEIGHT = 0.3
 
 /** One weapon's worth of attack VFX to play right now, in hex
  * coordinates — HexMap resolves these to real world positions itself
@@ -62,11 +80,27 @@ function quaternionFromY(angle: number): { x: number; y: number; z: number; w: n
   return { x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }
 }
 
-function Tile({
-  tile, lookup, losHighlighted, dragHighlighted, needsInitiativeHighlighted, activeMoverHighlighted, moveHighlighted,
-  targetableHighlighted, physics,
-  onPointerMove, onPointerUp,
-}: {
+// React.memo with a custom comparator — plain shallow-equal memo
+// wouldn't help here since onPointerMove/onPointerUp are fresh closures
+// every render (they capture this tile's own q/r), so a default
+// comparator would still see "different props" on every parent render
+// and re-render anyway. Those two are deliberately excluded from the
+// comparison: they always do the same thing for the same tile identity,
+// so their closure identity churning is irrelevant to whether Tile's
+// own OUTPUT needs to change.
+function tilePropsEqual(prev: Readonly<TileProps>, next: Readonly<TileProps>) {
+  return prev.tile === next.tile
+    && prev.lookup === next.lookup
+    && prev.losHighlighted === next.losHighlighted
+    && prev.dragHighlighted === next.dragHighlighted
+    && prev.needsInitiativeHighlighted === next.needsInitiativeHighlighted
+    && prev.activeMoverHighlighted === next.activeMoverHighlighted
+    && prev.moveHighlighted === next.moveHighlighted
+    && prev.targetableHighlighted === next.targetableHighlighted
+    && prev.physics === next.physics
+}
+
+type TileProps = {
   tile: HexTileData
   lookup: Map<string, HexTileData>
   losHighlighted: boolean
@@ -104,9 +138,21 @@ function Tile({
   physics?: boolean
   onPointerMove?: (e: ThreeEvent<PointerEvent>) => void
   onPointerUp?: (e: ThreeEvent<PointerEvent>) => void
-}) {
+}
+
+const Tile = memo(function Tile({
+  tile, lookup, losHighlighted, dragHighlighted, needsInitiativeHighlighted, activeMoverHighlighted, moveHighlighted,
+  targetableHighlighted, physics,
+  onPointerMove, onPointerUp,
+}: TileProps) {
   const [x, z] = hexToWorld(tile.q, tile.r)
-  const height = 0.3 + tile.elevation * 0.22
+  // Building tiles render their own ground platform at a FIXED height —
+  // see BUILDING_MIN_HEIGHT's own comment for why this doesn't read
+  // tile.elevation at all, unlike every other terrain. Elevation still
+  // does its normal job for LOS/movement rules (untouched here, purely
+  // a render decision); the building model standing on this platform is
+  // what visually carries "this is tall/blocks sightlines" now.
+  const height = tile.terrain === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + tile.elevation * 0.22
   // Terrain cylinders are drawn at 0.95 of the true hex spacing (radius
   // 1.0), leaving a small gap at every seam — harmless against a flat
   // background color, but a visible sliver of raw wood table once
@@ -135,7 +181,7 @@ function Tile({
     >
       <cylinderGeometry args={[0.95, 0.95, height, 6]} />
       <meshStandardMaterial
-        color={terrainColor(tile.terrain, tile.elevation, tile.q, tile.r)}
+        color={terrainColor(tile.terrain, tile.q, tile.r)}
         map={terrainTexture(tile.terrain, tile.q, tile.r)}
       />
     </mesh>
@@ -147,13 +193,19 @@ function Tile({
       {tile.terrain === 'road' && (
         <RoadMarkings q={tile.q} r={tile.r} height={height} lookup={lookup} gridType="hex" worldPos={hexToWorld} />
       )}
-      {physics && (tile.terrain === 'forest' || tile.terrain === 'light_forest' || tile.terrain === 'building') ? (
-        <RigidBody type="fixed" colliders="hull">
-          <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} />
-        </RigidBody>
-      ) : (
-        <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} />
-      )}
+      {/* forest/light_forest/building all dropped from the hull-collider
+          set — a hull used to wrap a cheap procedural decoration (a few
+          dozen primitives), fine to compute; TerrainDecor's trees and
+          buildings (standing AND ruined, since ruins now reuse the same
+          real models with a scorch tint rather than a cheap procedural
+          debris box) are real .glb models, tens of thousands to a few
+          hundred thousand triangles each, and Rapier computing a hull
+          from that per tile instance was a real cost on top of the
+          geometry's own render cost, for something dice essentially
+          never land under anyway. The flat ground plane above still
+          gets a (cheap, hex-shaped) collider for every tile regardless,
+          so dice still land on the table correctly either way. */}
+      <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} />
       {losHighlighted && <LosDebugOverlay height={height} color="#39ff8f" />}
       {dragHighlighted && <LosDebugOverlay height={height} color="#f5c542" y={height + 0.06} />}
       {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.08} />}
@@ -162,7 +214,7 @@ function Tile({
       {targetableHighlighted && <LosDebugOverlay height={height} color="#e35d5d" opacity={0.45} y={height + 0.14} />}
     </group>
   )
-}
+}, tilePropsEqual)
 
 // Debug-only stand-in for VISION.md §4.2's real per-player vision-cone
 // fog (still unbuilt) — a flat translucent hex over every tile a chosen
@@ -186,11 +238,33 @@ function LosDebugOverlay({
   )
 }
 
-function UnitMarker({
-  unit, elevation, dragPosition, physics, worldOffset, walkPath, onPointerDown, onPointerUp,
-}: {
+// Same rationale as tilePropsEqual above: onPointerDown/onPointerUp are
+// fresh closures every render, deliberately excluded here too.
+// worldOffset/dragPosition are freshly-literal tuples at the call site
+// (`worldOffset={[centerX, centerZ]}`), so they need value comparison,
+// not reference — a plain shallow memo would never match on those and
+// silently defeat itself.
+function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<UnitMarkerProps>) {
+  return prev.unit === next.unit
+    && prev.elevation === next.elevation
+    && prev.terrain === next.terrain
+    && prev.physics === next.physics
+    && prev.walkPath === next.walkPath
+    && prev.worldOffset[0] === next.worldOffset[0] && prev.worldOffset[1] === next.worldOffset[1]
+    && (prev.dragPosition === next.dragPosition
+      || (prev.dragPosition != null && next.dragPosition != null
+        && prev.dragPosition[0] === next.dragPosition[0] && prev.dragPosition[1] === next.dragPosition[1]))
+}
+
+type UnitMarkerProps = {
   unit: Unit
   elevation: number
+  /** The terrain of the tile this unit is currently standing on — only
+   * consulted to sink a unit's resting height into water/mud (terrainSinkY),
+   * so a mech visibly wades/sinks instead of standing on an invisible
+   * floor at the dry-land elevation height while the surface covers its
+   * ankles. */
+  terrain: string
   /** While this unit is the one being dragged, its local x/z follows the
    * pointer continuously (see HexMap's dragWorldPos) instead of snapping
    * to its stored q/r — "se mueve con el ratón" instead of only updating
@@ -226,9 +300,20 @@ function UnitMarker({
   walkPath?: { q: number; r: number }[]
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void
   onPointerUp?: (e: ThreeEvent<PointerEvent>) => void
-}) {
+}
+
+const UnitMarker = memo(function UnitMarker({
+  unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, onPointerDown, onPointerUp,
+}: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
-  const baseY = 0.3 + elevation * 0.22 + (dragPosition ? 0.5 : 0)
+  // 'building' matches Tile's own fixed platform height (BUILDING_MIN_
+  // HEIGHT), not the elevation formula every other terrain uses here —
+  // a mech standing on a building tile needs to rest on the SAME
+  // surface height that tile actually renders at, or it visibly floats
+  // above (a real elevation-2 building tile's platform sits at 0.3 now,
+  // not 0.3+2*0.22).
+  const restY = terrainSinkY(terrain) ?? (terrain === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + elevation * 0.22)
+  const baseY = restY + (dragPosition ? 0.5 : 0)
   // Ghosts stay red regardless of faction — before reveal, "hidden threat"
   // is the point, not who it turns out to be.
   const color = unit.is_ghost
@@ -397,7 +482,7 @@ function UnitMarker({
       )}
     </group>
   )
-}
+}, unitMarkerPropsEqual)
 
 /**
  * Terrain is always rendered — the physical analogy is a real table, and
@@ -418,6 +503,99 @@ interface DragState {
   unit: Unit
   startQ: number
   startR: number
+}
+
+interface FootprintMark {
+  id: number
+  x: number
+  y: number
+  z: number
+  rot: number
+}
+
+// Standard cube-coordinate hex line-drawing (lerp in cube space, round
+// each step the same "fix up the largest-error axis" way worldToHex
+// already does for a raw continuous point) — every hex a straight walk
+// from (q1,r1) to (q2,r2) actually crosses, INCLUSIVE of the destination
+// but not the origin (same convention UnitMarker's own walkPath prop
+// doc comment describes). Used as the snow-footprint trail's path
+// source instead of trusting `walkPaths` alone: a real user report
+// ("las huellas no solo se tienen que dejar cuando se llegue a la
+// casilla de nieve... tambien tienen que quedar marcada cuando esa
+// casilla de nieve es solo parte del camino") turned out to trace back
+// to walkPaths not reliably still holding this move's route by the time
+// the footprint effect below observes the position change — this
+// geometric fallback needs no such timing to line up, it only needs the
+// two endpoints, which `units` always has.
+function hexLine(q1: number, r1: number, q2: number, r2: number): { q: number; r: number }[] {
+  const x1 = q1, z1 = r1, y1 = -x1 - z1
+  const x2 = q2, z2 = r2, y2 = -x2 - z2
+  const n = Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2))
+  const result: { q: number; r: number }[] = []
+  for (let i = 1; i <= n; i++) {
+    const t = i / n
+    const x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t, z = z1 + (z2 - z1) * t
+    let rx = Math.round(x), ry = Math.round(y), rz = Math.round(z)
+    const dx = Math.abs(rx - x), dy = Math.abs(ry - y), dz = Math.abs(rz - z)
+    if (dx > dy && dx > dz) rx = -ry - rz
+    else if (dy > dz) ry = -rx - rz
+    else rz = -rx - ry
+    result.push({ q: rx, r: rz })
+  }
+  return result
+}
+
+const MAX_FOOTPRINTS = 600
+// Evenly-spaced prints per hex crossed, not just one at its far end —
+// "quiero mas de una footprint por tile, en la direccion del
+// movimiento", real user request after a single-print-per-hex version
+// read as too sparse.
+const STEPS_PER_HEX = 3
+// World units between consecutive steps within one hex — (STEPS_PER_HEX
+// - 1) * STEP_SPACING must stay under a hex's own ~0.95 radius so every
+// step lands inside the CURRENT (snow) tile, not the previous one.
+const STEP_SPACING = 0.3
+
+/** One mech-foot print — a single blocky, rectangular pad, not a
+ * heel-and-toe pair (that read as a human shoe's curved sole, not a
+ * mech's — "con la forma de un pie de mech, no de un zapato", real user
+ * report with a reference image of an actual boot-sole silhouette to
+ * avoid). Sharp box edges read as mechanical on sight, where the
+ * previous two soft rounded blobs didn't.
+ *
+ * Sitting ON TOP of the ground (bottom flush at `mark.y`, same as
+ * TerrainDecor.tsx's Pebbles), not recessed a little BELOW it — an
+ * earlier version tried exactly that for a true "dent" look, but the
+ * ground tile underneath (HexMap.tsx's Tile terrainMesh) is a SOLID
+ * opaque cylinder reaching all the way down from its own top, not a thin
+ * shell with empty space beneath — anything positioned even slightly
+ * below that top surface is simply buried inside it, fully hidden from
+ * every angle including straight down. Confirmed by temporarily swapping
+ * in a giant, unmissable debug sphere at the exact same recessed
+ * coordinates: it rendered fine, proving the position/pipeline itself
+ * was never the problem, only being on the wrong side of the ground's
+ * own solid surface. */
+function FootprintMesh({ mark }: { mark: FootprintMark }) {
+  return (
+    <mesh position={[mark.x, mark.y + 0.015, mark.z]} rotation={[0, mark.rot, 0]}>
+      <boxGeometry args={[0.16, 0.03, 0.26]} />
+      <meshStandardMaterial color="#343941" roughness={0.95} />
+    </mesh>
+  )
+}
+
+/** A mech's compressed-snow trail, left behind wherever it's crossed a
+ * 'snow' tile — "que se queden las huellas de los mechs que anden por la
+ * nieve", real user request. `marks` is owned by HexMap itself (see its
+ * own footprints state/effect below), not per-unit, since a trail needs
+ * to persist after the mech that made it has moved on, possibly off the
+ * map entirely. */
+function FootprintTrail({ marks }: { marks: FootprintMark[] }) {
+  return (
+    <group>
+      {marks.map((m) => <FootprintMesh key={m.id} mark={m} />)}
+    </group>
+  )
 }
 
 export function HexMap({
@@ -487,8 +665,23 @@ export function HexMap({
    * the same mouse-drag gesture fights the camera for the same input). */
   onDraggingChange?: (dragging: boolean) => void
 }) {
-  const elevationAt = new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.elevation]))
-  const lookup = new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t]))
+  // Memoized on map.tiles specifically — without this, these three full
+  // scans over every tile rebuilt three fresh Maps (and handed Tile a
+  // new `lookup` reference, defeating its own React.memo below) on EVERY
+  // render, including every single pointermove event during a unit
+  // drag — a real, measured contributor to "me va a tirones" on larger
+  // maps, not just a style nit.
+  const elevationAt = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.elevation])), [map.tiles])
+  const terrainAt = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.terrain])), [map.tiles])
+  const lookup = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t])), [map.tiles])
+  // A hex's own ground/platform height — matches Tile's rendering
+  // exactly, including 'building's fixed platform (BUILDING_MIN_HEIGHT,
+  // not the elevation formula; see its own doc comment) — used for the
+  // attack-beam Y below so a shot at/from a mech on a building tile
+  // still lands at that mech's actual (now non-elevation-scaled) chest
+  // height, not where the old elevation math would have put it.
+  const groundYAt = (q: number, r: number) =>
+    terrainAt.get(`${q},${r}`) === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + (elevationAt.get(`${q},${r}`) ?? 0) * 0.22
   const visibleUnits = units.filter((u) => !(u.is_ghost && !u.revealed))
   const [centerX, centerZ] = mapCenter(map.tiles)
   const needsInitiativeTiles = new Set(
@@ -505,6 +698,95 @@ export function HexMap({
   const dragRef = useRef<DragState | null>(null)
   const [hover, setHover] = useState<{ q: number; r: number } | null>(null)
   const [dragWorldPos, setDragWorldPos] = useState<[number, number] | null>(null)
+
+  // Snow footprint trail (FootprintTrail above). prevUnitTileRef tracks
+  // each unit's last-seen "q,r" across renders so a real position CHANGE
+  // (not just a re-render) can be detected; footprintSeqRef hands out
+  // stable-across-renders ids for React's key prop. Both refs, not
+  // state — neither needs to trigger its own re-render, only `footprints`
+  // (the actual persisted marks) does.
+  const prevUnitTileRef = useRef<Map<number, string>>(new Map())
+  // Which foot (-1 left, 1 right) landed LAST for this unit — toggled on
+  // every step so consecutive prints alternate sides down the path, a
+  // real walking gait, instead of both feet landing on top of each other
+  // at every single hex (real user report, with a reference image:
+  // "podemos hacer pisadas en la direccion del movimiento"). A single
+  // print per hex crossed still read as too sparse to that same report
+  // ("quiero mas de una footprint por tile, en la direccion del
+  // movimiento") — STEPS_PER_HEX interpolates a few evenly-spaced steps
+  // along each hex-to-hex segment instead of only marking its far end.
+  const footprintSideRef = useRef<Map<number, number>>(new Map())
+  const footprintSeqRef = useRef(0)
+  const [footprints, setFootprints] = useState<FootprintMark[]>([])
+  useEffect(() => {
+    const prevTiles = prevUnitTileRef.current
+    const sides = footprintSideRef.current
+    const added: FootprintMark[] = []
+    for (const u of units) {
+      const key = `${u.q},${u.r}`
+      const prevKey = prevTiles.get(u.id)
+      if (prevKey !== undefined && prevKey !== key) {
+        const [prevQStr, prevRStr] = prevKey.split(',')
+        const prevQ = Number(prevQStr), prevR = Number(prevRStr)
+        // walkPaths (see this component's own doc comment) is the real
+        // hex-by-hex route just taken, preferred when present since a
+        // real move can curve around blocked hexes a straight line
+        // wouldn't; hexLine (above) reconstructs the geometric straight
+        // path otherwise — covers drag-placement moves (no route data
+        // at all) and, in practice, most walks: walkPaths isn't
+        // reliably still holding this specific move's route by the time
+        // this effect observes the resulting position change.
+        const path = walkPaths?.get(u.id) ?? hexLine(prevQ, prevR, u.q, u.r)
+        let [fromX, fromZ] = hexToWorld(prevQ, prevR)
+        for (const hex of path) {
+          const [x, z] = hexToWorld(hex.q, hex.r)
+          if (terrainAt.get(`${hex.q},${hex.r}`) === 'snow') {
+            const dx = x - fromX, dz = z - fromZ
+            const dist = Math.hypot(dx, dz) || 1
+            const angle = Math.atan2(dz, dx)
+            const perpAngle = angle + Math.PI / 2
+            // Unit vector back along the travel direction — steps are
+            // placed walking backward from the hex's own center, not
+            // interpolated across the full inter-hex distance (~1.9
+            // units): that earlier version put the first step or two
+            // still inside the PREVIOUS (often non-snow) tile, not this
+            // one — "alguna pisada la pinta fuera de la nieve", real
+            // user report. STEP_SPACING * (STEPS_PER_HEX - 1) stays
+            // safely under a hex's own ~0.95 radius.
+            const ux = dx / dist, uz = dz / dist
+            const elev = elevationAt.get(`${hex.q},${hex.r}`) ?? 0
+            // The snow's own surface height — FootprintMesh builds its
+            // geometry UP from this itself, no offset needed here.
+            const y = 0.3 + elev * 0.22
+            for (let step = 1; step <= STEPS_PER_HEX; step++) {
+              const backDist = (STEPS_PER_HEX - step) * STEP_SPACING
+              const side = -(sides.get(u.id) ?? 1)
+              sides.set(u.id, side)
+              footprintSeqRef.current += 1
+              added.push({
+                id: footprintSeqRef.current,
+                x: x - ux * backDist + Math.cos(perpAngle) * side * 0.09,
+                y,
+                z: z - uz * backDist + Math.sin(perpAngle) * side * 0.09,
+                rot: angle,
+              })
+            }
+          }
+          fromX = x
+          fromZ = z
+        }
+      }
+      prevTiles.set(u.id, key)
+    }
+    if (added.length > 0) {
+      setFootprints((old) => [...old, ...added].slice(-MAX_FOOTPRINTS))
+    }
+    // terrainAt/elevationAt/hexToWorld intentionally excluded — terrainAt
+    // and elevationAt are rebuilt (new Map identity) every render, and
+    // depending on them would rerun this on every render instead of only
+    // on a real unit move; hexToWorld is a stable pure import.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [units, walkPaths])
 
   const endDrag = () => {
     dragRef.current = null
@@ -554,6 +836,7 @@ export function HexMap({
 
   return (
     <group position={[-centerX, 0, -centerZ]}>
+      <FootprintTrail marks={footprints} />
       {map.tiles.map((tile) => (
         <Tile
           key={`${tile.q},${tile.r}`} tile={tile} lookup={lookup}
@@ -580,6 +863,7 @@ export function HexMap({
           key={unit.id}
           unit={unit}
           elevation={elevationAt.get(`${unit.q},${unit.r}`) ?? 0}
+          terrain={terrainAt.get(`${unit.q},${unit.r}`) ?? 'plains'}
           dragPosition={dragRef.current?.unit.id === unit.id ? (dragWorldPos ?? undefined) : undefined}
           physics={physics}
           worldOffset={[centerX, centerZ]}
@@ -598,8 +882,8 @@ export function HexMap({
           data={{
             attackerPos: hexToWorld(activeAttack.attackerQ, activeAttack.attackerR),
             targetPos: hexToWorld(activeAttack.targetQ, activeAttack.targetR),
-            attackerY: 0.3 + (elevationAt.get(`${activeAttack.attackerQ},${activeAttack.attackerR}`) ?? 0) * 0.22 + MODEL_SCALE * MODEL_CHEST_FRACTION,
-            targetY: 0.3 + (elevationAt.get(`${activeAttack.targetQ},${activeAttack.targetR}`) ?? 0) * 0.22 + MODEL_SCALE * MODEL_CHEST_FRACTION,
+            attackerY: groundYAt(activeAttack.attackerQ, activeAttack.attackerR) + MODEL_SCALE * MODEL_CHEST_FRACTION,
+            targetY: groundYAt(activeAttack.targetQ, activeAttack.targetR) + MODEL_SCALE * MODEL_CHEST_FRACTION,
             weaponName: activeAttack.weaponName,
             hit: activeAttack.hit,
           }}
