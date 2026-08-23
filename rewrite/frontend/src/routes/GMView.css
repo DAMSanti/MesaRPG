@@ -114,6 +114,13 @@
 .entity-card-draggable {
   cursor: grab;
   user-select: none;
+  -webkit-touch-callout: none;
+  /* Without this, a touch drag competes with the browser's own
+     scroll/long-press-context-menu gesture on the same element — a slow
+     press read as a right-click instead of starting the drag (real user
+     report on mobile). touch-action: none hands the whole gesture to our
+     own pointer handlers (startSidebarMechDrag) instead. */
+  touch-action: none;
   border-left: 3px solid var(--entity-faction-color, var(--border));
   background: color-mix(in srgb, var(--entity-faction-color, var(--surface-hover)) 16%, var(--surface-hover));
 }

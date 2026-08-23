@@ -684,19 +684,32 @@ export function GMView() {
     }
   }
 
-  const startSidebarMechDrag = (mech: Mech, startX: number, startY: number) => {
+  const startSidebarMechDrag = (mech: Mech, pointerId: number, startX: number, startY: number) => {
+    // Pointer Events, not mouse events — a touch drag on mobile doesn't
+    // reliably fire mousedown/mousemove/mouseup at all (real user report:
+    // a fast drag did nothing), and without a pointer sequence of our own
+    // to consume the gesture, a slow press falls through to the browser's
+    // native long-press-for-context-menu instead ("entiende que estoy
+    // haciendo botón derecho"). Pointer Events fire the same way for
+    // mouse/touch/pen, so one handler covers both — see the
+    // touch-action: none on .entity-card-draggable (GMView.css) and the
+    // pointerdown preventDefault below, both needed to actually stop the
+    // browser's own touch gesture from competing with this one.
     let dragging = false
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return
       if (!dragging && Math.hypot(e.clientX - startX, e.clientY - startY) > 6) {
         dragging = true
         setDraggingSidebarMech(mech)
       }
       if (dragging) setSidebarDragPos({ x: e.clientX, y: e.clientY })
     }
-    const onUp = (e: MouseEvent) => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      if (dragging) {
+    const finish = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', finish)
+      window.removeEventListener('pointercancel', finish)
+      if (dragging && e.type === 'pointerup') {
         const container = mapContainerRef.current
         if (container && raycastToGroundRef.current && map) {
           const rect = container.getBoundingClientRect()
@@ -708,14 +721,15 @@ export function GMView() {
             setPendingFacing({ kind: 'place', mech, q, r, x: e.clientX, y: e.clientY })
           }
         }
-      } else {
+      } else if (!dragging && e.type === 'pointerup') {
         setMechMenu({ mech, x: e.clientX, y: e.clientY })
       }
       setDraggingSidebarMech(null)
       setSidebarDragPos(null)
     }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', finish)
+    window.addEventListener('pointercancel', finish)
   }
 
   const onUnitClick = (unit: Unit, x: number, y: number) => {
@@ -870,7 +884,7 @@ export function GMView() {
                   <div
                     className="entity-card entity-card-draggable"
                     style={{ '--entity-faction-color': mechFactionColor(m) } as CSSProperties}
-                    onMouseDown={(e) => { e.preventDefault(); startSidebarMechDrag(m, e.clientX, e.clientY) }}
+                    onPointerDown={(e) => { e.preventDefault(); startSidebarMechDrag(m, e.pointerId, e.clientX, e.clientY) }}
                   >
                     <span className="entity-card-name">{mechCardName(m)}</span>
                     {m.status !== 'approved' && <span className={`status-tag status-${m.status}`}>{m.status}</span>}
