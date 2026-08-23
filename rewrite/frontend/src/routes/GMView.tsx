@@ -884,7 +884,30 @@ export function GMView() {
                   <div
                     className="entity-card entity-card-draggable"
                     style={{ '--entity-faction-color': mechFactionColor(m) } as CSSProperties}
-                    onPointerDown={(e) => { e.preventDefault(); startSidebarMechDrag(m, e.pointerId, e.clientX, e.clientY) }}
+                    onPointerDown={(e) => {
+                      e.preventDefault()
+                      // Best-effort only — startSidebarMechDrag already
+                      // listens on `window`, not this element, so capture
+                      // isn't load-bearing for it to work. Some mobile
+                      // browsers (iOS Safari has a history of flaky
+                      // support) can throw here; since this call isn't
+                      // wrapped, an uncaught throw would abort the handler
+                      // before startSidebarMechDrag ever runs — the same
+                      // "fast drag does nothing" symptom this is meant to
+                      // fix, just from a different cause.
+                      try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* non-fatal, see above */ }
+                      startSidebarMechDrag(m, e.pointerId, e.clientX, e.clientY)
+                    }}
+                    // touch-action: none (GMView.css) stops the browser from
+                    // treating the gesture as a scroll, but a slow press
+                    // still fires a native `contextmenu` event on Android —
+                    // that's the actual "se interpreta como botón derecho"
+                    // real users hit, a separate thing from the pointer
+                    // events above, and the one thing a synthetic
+                    // PointerEvent test (dispatchEvent in a script) can
+                    // never reproduce, since it skips the browser's own
+                    // touch-and-hold gesture recognizer entirely.
+                    onContextMenu={(e) => e.preventDefault()}
                   >
                     <span className="entity-card-name">{mechCardName(m)}</span>
                     {m.status !== 'approved' && <span className={`status-tag status-${m.status}`}>{m.status}</span>}
