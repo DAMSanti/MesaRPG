@@ -26,6 +26,9 @@ function loadTreePhoto(url: string, repeat = 1): THREE.Texture {
   return tex
 }
 const getBarkTexture = () => loadTreePhoto('/textures/bark.jpg', 2)
+// Multiplies bark.jpg (a pale/silvery photo, see BARK_TINT's use below)
+// down toward a believable trunk-in-shadow tone.
+const BARK_TINT = '#7d6f5f'
 const getCanopyPhoto = (species: 'broad' | 'fern') =>
   loadTreePhoto(species === 'broad' ? '/textures/leaf-broad.png' : '/textures/leaf-fern.png')
 
@@ -45,46 +48,136 @@ function LeafCard({
   )
 }
 
-/** A whole tree: a bark-textured trunk plus a loose cluster of leaf
- * cards scattered through a roughly-spherical canopy volume — enough
- * cards/spread to read as full from directly above (this game's usual
- * camera) without literally filling the volume (a real canopy is airy,
- * not solid). `density` controls card count (forest > light_forest,
- * see the two call sites below), `species` picks which leaf photo. */
+/** One tapered branch, oriented from `start` along `dir` for `length` —
+ * bark-textured like the trunk it forks from. */
+function Branch({
+  start, dir, length, radiusBottom, radiusTop,
+}: { start: THREE.Vector3; dir: THREE.Vector3; length: number; radiusBottom: number; radiusTop: number }) {
+  const quaternion = useMemo(() => new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir), [dir])
+  const mid = useMemo(() => start.clone().addScaledVector(dir, length / 2), [start, dir, length])
+  return (
+    <mesh position={mid} quaternion={quaternion} castShadow>
+      <cylinderGeometry args={[radiusTop, radiusBottom, length, 5]} />
+      {/* bark.jpg is a pale/silvery photo texture — fine for the trunk,
+          which the canopy fully hides, but a branch reaching out past the
+          leaf mass read as a stark white stick against the dark canopy
+          without this tint (BARK_TINT) muting it toward shadow. */}
+      <meshStandardMaterial map={getBarkTexture()} color={BARK_TINT} roughness={0.95} />
+    </mesh>
+  )
+}
+
+/** A whole tree: a trunk that forks into a handful of angled branches
+ * (a straight cylinder running into a leaf cloud read as a pole, not a
+ * tree — "los troncos... deberian tener ramas como un arbol de verdad"),
+ * each tipped with its own small clump of leaf cards (plus one smaller
+ * clump near the trunk's own top to fill the silhouette in). Clumping
+ * foliage at real branch ends — instead of scattering cards through one
+ * global sphere independent of any branch — is what fixes the canopy
+ * reading as "una rama mal puesta": every card now hangs off something.
+ * `density` controls total card count (forest > light_forest, see the
+ * two call sites below), `species` picks which leaf photo. */
 function TreeBillboard({
   seed, species, density, trunkHeight, canopyRadius,
 }: { seed: number; species: 'broad' | 'fern'; density: number; trunkHeight: number; canopyRadius: number }) {
-  const cards = useMemo(() => {
+  const { branches, cards } = useMemo(() => {
     const rng = (salt: number) => {
       const h = hashTile(0, 0, seed + salt * 7919)
       return (h % 10000) / 10000
     }
-    return Array.from({ length: density }, (_, i) => {
-      // Spherical-ish distribution biased toward the canopy's outer
-      // shell (r closer to 1 more often than not) — a real canopy's
-      // leaf mass reads mostly as its outline, not a dense core.
-      const rTheta = rng(i * 3 + 1) * Math.PI * 2
-      const rPhi = Math.acos(2 * rng(i * 3 + 2) - 1)
-      const rRadius = canopyRadius * (0.55 + rng(i * 3 + 3) * 0.45)
-      const x = Math.sin(rPhi) * Math.cos(rTheta) * rRadius
-      const z = Math.sin(rPhi) * Math.sin(rTheta) * rRadius
-      const y = trunkHeight + canopyRadius * 0.75 + Math.cos(rPhi) * rRadius * 0.85
-      const size = canopyRadius * (0.55 + rng(i * 3 + 4) * 0.5)
+
+    const branchCount = 3 + Math.floor(rng(1) * 3) // 3-5
+    const branchTipRadius = canopyRadius * 0.11
+    const branches = Array.from({ length: branchCount }, (_, i) => {
+      // Forks partway up the trunk, tilted out and up at a real angle
+      // (never straight up — that would just look like a thinner trunk)
+      // and spread evenly around the trunk so the canopy isn't lopsided.
+      const forkY = trunkHeight * (0.45 + rng(i * 5 + 2) * 0.3)
+      const theta = (i / branchCount) * Math.PI * 2 + (rng(i * 5 + 3) - 0.5) * 1.4
+      const tilt = 0.35 + rng(i * 5 + 4) * 0.45
+      // Kept short on purpose — this game's camera is a locked top-down
+      // view (mesa/mapeditor OrbitControls has no tilt), so a branch long
+      // enough to reach past its own leaf clump reads as a bare stick
+      // radiating out from the trunk instead of tree structure.
+      const length = canopyRadius * (0.55 + rng(i * 5 + 5) * 0.35)
+      const dir = new THREE.Vector3(
+        Math.sin(tilt) * Math.cos(theta),
+        Math.cos(tilt),
+        Math.sin(tilt) * Math.sin(theta),
+      ).normalize()
+      const start = new THREE.Vector3(0, forkY, 0)
+      const tip = start.clone().addScaledVector(dir, length)
       return {
-        position: [x, y, z] as [number, number, number],
-        rotation: [rng(i * 3 + 5) * Math.PI, rng(i * 3 + 6) * Math.PI * 2, rng(i * 3 + 7) * Math.PI] as [number, number, number],
-        size,
+        start, dir, length, tip,
+        radiusBottom: canopyRadius * (0.05 + rng(i * 5 + 6) * 0.02),
+        radiusTop: branchTipRadius,
       }
     })
+
+    // One foliage clump per branch, plus a smaller one near the trunk's
+    // own top — weighted so the trunk-top clump reads as a filler, not a
+    // 5th equal branch. Centered 60% of the way from fork to tip with a
+    // radius scaled to the branch's own length (not canopyRadius) so the
+    // clump's leaf cards fully envelop the branch, base to tip, rather
+    // than just haloing its tip and leaving the rest exposed.
+    const clumpCenters = [
+      ...branches.map(b => ({
+        pos: b.start.clone().lerp(b.tip, 0.6),
+        radius: b.length * 0.7,
+        weight: 1,
+      })),
+      { pos: new THREE.Vector3(0, trunkHeight * 0.98, 0), radius: canopyRadius * 0.3, weight: 0.6 },
+    ]
+    const totalWeight = clumpCenters.reduce((sum, c) => sum + c.weight, 0)
+    const zAxis = new THREE.Vector3(0, 0, 1)
+    const cards: { position: [number, number, number]; rotation: [number, number, number]; size: number }[] = []
+    clumpCenters.forEach((clump, ci) => {
+      const count = Math.max(3, Math.round((density * clump.weight) / totalWeight))
+      for (let i = 0; i < count; i++) {
+        const salt = ci * 97 + i
+        // Small offset within the clump's own volume...
+        const rTheta = rng(salt * 3 + 100) * Math.PI * 2
+        const rPhi = Math.acos(2 * rng(salt * 3 + 101) - 1)
+        const rRadius = clump.radius * (0.4 + rng(salt * 3 + 102) * 0.6)
+        const offset = new THREE.Vector3(
+          Math.sin(rPhi) * Math.cos(rTheta),
+          Math.cos(rPhi) * 0.8,
+          Math.sin(rPhi) * Math.sin(rTheta),
+        ).multiplyScalar(rRadius)
+        // ...but facing outward from the clump's own center (plus a
+        // little random wobble) instead of a fully random orientation —
+        // fully random rotation let cards land edge-on to the usual
+        // near-top-down camera often enough that the clump read as thin
+        // scattered debris rather than a rounded leaf mass.
+        const wobbleAxis = new THREE.Vector3(
+          rng(salt * 3 + 103) - 0.5, rng(salt * 3 + 104) - 0.5, rng(salt * 3 + 105) - 0.5,
+        ).normalize()
+        const wobble = new THREE.Quaternion().setFromAxisAngle(wobbleAxis, (rng(salt * 3 + 106) - 0.5) * 1.2)
+        const quat = new THREE.Quaternion().setFromUnitVectors(zAxis, offset.clone().normalize()).premultiply(wobble)
+        const euler = new THREE.Euler().setFromQuaternion(quat)
+        const size = canopyRadius * (0.5 + rng(salt * 3 + 107) * 0.45)
+        const position = clump.pos.clone().add(offset)
+        cards.push({
+          position: [position.x, position.y, position.z],
+          rotation: [euler.x, euler.y, euler.z],
+          size,
+        })
+      }
+    })
+
+    return { branches, cards }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [seed, density, canopyRadius])
+  }, [seed, density, canopyRadius, trunkHeight])
 
   return (
     <group>
       <mesh position={[0, trunkHeight / 2, 0]} castShadow>
         <cylinderGeometry args={[canopyRadius * 0.09, canopyRadius * 0.14, trunkHeight, 6]} />
-        <meshStandardMaterial map={getBarkTexture()} roughness={0.95} />
+        <meshStandardMaterial map={getBarkTexture()} color={BARK_TINT} roughness={0.95} />
       </mesh>
+      {branches.map((b, i) => (
+        <Branch key={i} start={b.start} dir={b.dir} length={b.length} radiusBottom={b.radiusBottom} radiusTop={b.radiusTop} />
+      ))}
       {cards.map((c, i) => (
         <LeafCard key={i} species={species} position={c.position} rotation={c.rotation} size={c.size} />
       ))}
