@@ -6,18 +6,104 @@
   padding: 20px 24px 60px;
 }
 
-.gm-view h1 {
-  font-size: 18px;
-  color: var(--accent);
-  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
-  display: inline-block;
-  margin-right: 10px;
-}
-
 .gm-view section {
   margin-top: 24px;
   padding-top: 16px;
   border-top: 1px solid var(--border);
+}
+
+.nav-gear-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 15px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.nav-gear-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* Centered above the two-column layout, spanning full width — real user
+   request: sidebar and map used to misalign vertically because this used
+   to live inside .gm-main, above the map, pushing it down past where
+   .gm-sidebar starts. Living here instead means both columns below start
+   flush at the same y. */
+.round-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 20px;
+  padding: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.round-bar-label {
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 14px;
+  color: var(--accent);
+  letter-spacing: 0.03em;
+}
+
+.settings-row {
+  gap: 12px;
+}
+
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 40px;
+  height: 22px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  inset: 0;
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.toggle-slider::before {
+  content: '';
+  position: absolute;
+  width: 16px;
+  height: 16px;
+  left: 2px;
+  top: 2px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background: color-mix(in srgb, var(--accent) 30%, var(--surface-hover));
+  border-color: var(--accent);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+
+.toggle-label {
+  color: var(--text-secondary);
+  font-size: 13px;
 }
 
 /* Two-column layout: a fixed-width sidebar (pilots/mechs, each with a "+"
@@ -31,9 +117,10 @@
   margin-top: 20px;
 }
 
-/* Pinned to the map's own fixed height (.map-embed, 480px), not the
-   taller right column (which also carries the round controls above the
-   map and the roll/pilot chips below it). */
+/* Pinned to the map's own fixed height (.map-embed, 480px) — the round
+   controls that used to sit above the map here now live in .round-bar,
+   full-width above this whole two-column row, so .gm-main starts flush
+   with the map (only the roll/pilot chips push it taller below). */
 .gm-sidebar {
   width: 280px;
   flex: 0 0 280px;
@@ -306,7 +393,7 @@ button.undo {
 .map-embed {
   width: 100%;
   height: 480px;
-  margin: 10px 0;
+  margin: 0 0 10px;
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;

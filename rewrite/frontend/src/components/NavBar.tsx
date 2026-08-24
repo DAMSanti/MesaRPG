@@ -36,11 +36,16 @@ export function NavBar({
   current,
   variant = 'bar',
   links = LINKS,
+  children,
 }: {
   campaignId: number
   current: NavPath
   variant?: 'bar' | 'overlay'
   links?: readonly NavLink[]
+  /** Extra controls rendered right after the nav links, before the
+   * "↺ campaña" link — e.g. GMView's settings gear. Optional so every
+   * other caller (MapEditorView, the overlay variant) is unaffected. */
+  children?: React.ReactNode
 }) {
   return (
     <nav className={`nav-bar ${variant}`}>
@@ -54,6 +59,7 @@ export function NavBar({
           <span className="nav-label">{l.label}</span>
         </a>
       ))}
+      {children}
       <a className="nav-campaign" href="/campaigns?next=/hub">↺ campaña</a>
     </nav>
   )

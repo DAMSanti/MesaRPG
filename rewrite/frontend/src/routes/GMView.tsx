@@ -186,6 +186,7 @@ function GMViewBattletech() {
 
   // ---- pilot form (now lives inside a modal opened from the sidebar's
   // "+" button, not an always-visible inline section) ----
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
   const [showPilotModal, setShowPilotModal] = useState(false)
   const [pilotName, setPilotName] = useState('')
   const [pilotCallsign, setPilotCallsign] = useState('')
@@ -881,10 +882,21 @@ function GMViewBattletech() {
 
   return (
     <div className="gm-view">
-      <NavBar campaignId={campaignId} current="/gm" links={GM_LINKS} />
-      <h1>GM — {campaign?.name ?? `campaña #${campaignId}`}</h1>
+      <NavBar campaignId={campaignId} current="/gm" links={GM_LINKS}>
+        <button className="nav-gear-btn" onClick={() => setShowSettingsModal(true)} title="Ajustes">⚙️</button>
+      </NavBar>
       {loading && <p className="loading">Cargando…</p>}
       {error && <div className="error-banner">{error} <button onClick={() => setError(null)}>×</button></div>}
+
+      <div className="round-bar">
+        <span className="round-bar-label">
+          RONDA: {roundState && roundState.round_number > 0 ? roundState.round_number : '—'}
+          {roundState && roundState.round_number > 0 && ` — ${PHASE_LABELS[currentPhase(roundState)]}`}
+        </span>
+        <button onClick={submitStartRound}>
+          {roundState && roundState.round_number > 0 ? 'Siguiente ronda' : 'Empezar ronda'}
+        </button>
+      </div>
 
       <div className="gm-layout">
       <aside className="gm-sidebar">
@@ -967,25 +979,6 @@ function GMViewBattletech() {
 
       <div className="gm-main">
       <section>
-        <h2>Ronda</h2>
-        <div className="row">
-          <span className="round-info">
-            {roundState && roundState.round_number > 0
-              ? `Ronda ${roundState.round_number} — Fase: ${PHASE_LABELS[currentPhase(roundState)]}`
-              : 'Sin ronda empezada'}
-          </span>
-          <select
-            value={campaign?.initiative_mode ?? 'team'}
-            onChange={(e) => submitInitiativeMode(e.target.value as InitiativeMode)}
-          >
-            <option value="team">Por equipos (regla real)</option>
-            <option value="individual">Individual (1 tirada por piloto)</option>
-          </select>
-          <button onClick={submitStartRound}>
-            {roundState && roundState.round_number > 0 ? 'Siguiente ronda' : 'Empezar ronda'}
-          </button>
-        </div>
-
         {pickingTargetFor != null && (
           <div className="row">
             <span className="round-info">Elige un objetivo en el mapa…</span>
@@ -1084,6 +1077,26 @@ function GMViewBattletech() {
           </ul>
         )}
       </section>
+
+      {showSettingsModal && (
+        <Modal title="Ajustes" onClose={() => setShowSettingsModal(false)}>
+          <h3 className="step-label">House Rules</h3>
+          <div className="row settings-row">
+            <span>Tipo de iniciativa</span>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={campaign?.initiative_mode === 'individual'}
+                onChange={(e) => submitInitiativeMode(e.target.checked ? 'individual' : 'team')}
+              />
+              <span className="toggle-slider" />
+            </label>
+            <span className="toggle-label">
+              {campaign?.initiative_mode === 'individual' ? 'Individual (1 tirada por piloto)' : 'Por equipos (regla real)'}
+            </span>
+          </div>
+        </Modal>
+      )}
 
       {showPilotModal && (
         <Modal title="Nuevo piloto" onClose={() => setShowPilotModal(false)}>
