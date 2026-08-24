@@ -5,6 +5,7 @@ import { useMapId } from '../useMapId'
 import { useTableSocket } from '../ws'
 import { PilotForm } from '../components/PilotForm'
 import { PinPrompt } from '../components/PinPrompt'
+import { Modal } from '../components/Modal'
 import { MechLocationsGrid } from '../components/MechLocationsGrid'
 import { MechRecordSheet } from '../components/MechRecordSheet'
 import { MechImportSelector } from '../components/MechImportSelector'
@@ -216,8 +217,12 @@ export function PlayerView() {
 
   if (pilotId == null) {
     // Un jugador solo ve pilotos ya aprobados o los suyos propios — no
-    // puede ver ni "robar" el borrador pendiente/rechazado de otro.
-    const visiblePilots = pilots.filter((p) => p.status === 'approved' || p.is_own)
+    // puede ver ni "robar" el borrador pendiente/rechazado de otro. Y
+    // solo de facción 'player' — los mechs enemigos/NPC son del GM, no
+    // seleccionables como propios (real user request).
+    const visiblePilots = pilots.filter(
+      (p) => (p.status === 'approved' || p.is_own) && p.faction === 'player',
+    )
 
     const pickPilot = (p: Pilot) => {
       if (p.has_pin) setPendingPilot(p)
@@ -242,27 +247,23 @@ export function PlayerView() {
           />
         )}
 
-        {joinMode === 'pick' ? (
-          <>
-            {visiblePilots.length > 0 ? (
-              <div className="pilot-picker">
-                {visiblePilots.map((p) => (
-                  <button key={p.id} onClick={() => pickPilot(p)}>
-                    {p.name} {p.callsign && `"${p.callsign}"`}
-                    {p.has_pin && ' 🔒'}
-                    {p.status !== 'approved' && <span className={`status-tag status-${p.status}`}>{p.status}</span>}
-                  </button>
-                ))}
-              </div>
-            ) : (
-              !loading && <p className="hint">Todavía no hay personajes en esta partida — crea el tuyo.</p>
-            )}
-            <button onClick={() => setJoinMode('create')}>+ Crear nuevo personaje</button>
-          </>
+        {visiblePilots.length > 0 ? (
+          <div className="pilot-picker">
+            {visiblePilots.map((p) => (
+              <button key={p.id} onClick={() => pickPilot(p)}>
+                {p.name} {p.callsign && `"${p.callsign}"`}
+                {p.has_pin && ' 🔒'}
+                {p.status !== 'approved' && <span className={`status-tag status-${p.status}`}>{p.status}</span>}
+              </button>
+            ))}
+          </div>
         ) : (
-          <section>
-            <button className="link-back" onClick={() => setJoinMode('pick')}>‹ Volver</button>
-            <h2>Crear mi ficha</h2>
+          !loading && <p className="hint">Todavía no hay personajes en esta partida — crea el tuyo.</p>
+        )}
+        <button onClick={() => setJoinMode('create')}>+ Crear nuevo personaje</button>
+
+        {joinMode === 'create' && (
+          <Modal title="Crear mi ficha" onClose={() => setJoinMode('pick')}>
             <p className="hint">Rellénala como en la hoja de papel — el GM la revisará y la aprobará o te pedirá cambios.</p>
             <h3 className="step-label">Piloto</h3>
             <PilotForm
@@ -300,7 +301,7 @@ export function PlayerView() {
               previewFullHealth
             />
             <button onClick={join} disabled={!joinName || !joinChassis || joinPin.length !== 4}>Crear ficha</button>
-          </section>
+          </Modal>
         )}
       </div>
     )
