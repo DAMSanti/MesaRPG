@@ -51,8 +51,38 @@
   font-size: 20px;
   color: var(--accent);
   margin: 0;
-  display: inline-block;
-  margin-right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Compact circular icon-only control — the eye ("Vista en 1ª persona",
+   next to the pilot's name) and the phase-action buttons below both use
+   this instead of a labeled button, real user request. */
+.icon-button {
+  background: var(--surface-hover);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 50%;
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  padding: 0;
+  font-size: 15px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.icon-button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.eye-button {
+  font-size: 16px;
 }
 
 .player-view .sub {
@@ -67,20 +97,66 @@
   font-style: italic;
 }
 
-.round-indicator {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+/* Round + phase, and every possible action below it, always visible and
+   individually dimmed when it's not this phase's turn to do it — real
+   user request ("visor claro de fases... acciones desactivadas si no se
+   pueden hacer en esta fase"), replacing what used to be a single line
+   of text that changed shape depending on state. */
+.phase-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 16px;
 }
 
-.acted-tag {
+.phase-header {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.phase-round {
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 15px;
   color: var(--accent);
 }
 
-.initiative-pending {
-  color: #f5c542;
-  font-weight: 600;
+.phase-name {
+  color: var(--text-secondary);
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.phase-actions {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.phase-actions li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.phase-action-label {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.phase-action-disabled {
+  opacity: 0.4;
+}
+
+.phase-action-disabled .phase-action-label {
+  color: var(--text-muted);
 }
 
 .status-banner {
@@ -120,12 +196,6 @@
 .status-tag.status-rejected {
   color: var(--danger);
   border: 1px solid var(--danger);
-}
-
-.act-button {
-  padding: 4px 10px;
-  font-size: 12px;
-  min-height: 0;
 }
 
 .player-view section {
@@ -218,35 +288,6 @@ select {
 
 .edit-stats input {
   width: 30px;
-}
-
-/* Same card look as the GM's sidebar mech list (GMView.css) — a target
-   is a card, click it to open the weapon-toggle panel (WeaponVolleyPanel),
-   no inline weapon/range/side selectors sitting in the list itself. */
-.card-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.entity-card {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--surface-hover);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 8px 12px;
-  font-size: 13px;
-  cursor: pointer;
-}
-
-.entity-card-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .log {

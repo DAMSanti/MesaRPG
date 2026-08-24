@@ -21,7 +21,8 @@ import './UnitContextMenu.css'
 export function UnitContextMenu({
   unit, mech, canAct, x, y, onAttack, onClose,
   showRollInitiative, canRollInitiative, onRollInitiative,
-  showPhaseMovement, canPhaseMove, onPhaseMove,
+  showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement,
+  acted, onMarkActed,
 }: {
   unit: Unit
   mech: Mech | null
@@ -43,6 +44,18 @@ export function UnitContextMenu({
    * rounds.ts's activeMoverPilotId. */
   canPhaseMove?: boolean
   onPhaseMove?: (type: MovementType) => void
+  /** Rotate in place — opens FacingPicker at this same menu's position,
+   * no hex to pick, just a new facing (real user request). */
+  onRotate?: () => void
+  /** Counts this pilot as having moved this round without changing
+   * position or facing at all — same "record a 0-hex move" backend path
+   * as onRotate, just with no facing change either (real user request:
+   * "saltar movimiento"). */
+  onSkipMovement?: () => void
+  /** Whether this pilot has already ended their activation this round —
+   * shown regardless of phase, unlike the movement/attack actions above. */
+  acted?: boolean
+  onMarkActed?: () => void
 }) {
   const label = mech ? `${mech.chassis} ${mech.model ?? ''}`.trim() : `unidad #${unit.id}`
 
@@ -59,8 +72,11 @@ export function UnitContextMenu({
           <button disabled={!canPhaseMove} onClick={() => onPhaseMove?.('walk')}>Caminar</button>
           <button disabled={!canPhaseMove} onClick={() => onPhaseMove?.('run')}>Correr</button>
           <button disabled={!canPhaseMove || !mech?.jump_mp} onClick={() => onPhaseMove?.('jump')}>Saltar</button>
+          <button disabled={!canPhaseMove} onClick={onRotate}>Cambiar dirección</button>
+          <button disabled={!canPhaseMove} onClick={onSkipMovement}>Saltar movimiento</button>
         </>
       )}
+      <button disabled={acted} onClick={onMarkActed}>{acted ? '✓ Ya actuó' : 'Marcar activación'}</button>
     </DropdownMenu>
   )
 }

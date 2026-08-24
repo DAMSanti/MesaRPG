@@ -399,20 +399,11 @@ button.undo {
   overflow: hidden;
 }
 
-.round-rolls,
 .round-pilots {
   flex-direction: row;
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 10px;
-}
-
-.round-rolls li {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 3px 9px;
-  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
 }
 
 .round-pilots button.acted {

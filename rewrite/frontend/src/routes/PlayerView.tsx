@@ -7,20 +7,18 @@ import { PilotForm } from '../components/PilotForm'
 import { PinPrompt } from '../components/PinPrompt'
 import { Modal } from '../components/Modal'
 import { MechRecordSheet } from '../components/MechRecordSheet'
-import { WeaponVolleyPanel } from '../components/WeaponVolleyPanel'
 import { FirstPersonView } from '../components/FirstPersonView'
+import { FacingPicker } from '../components/FacingPicker'
 import { buildMechLocationsPayload, emptyLocationsForm, locationsFormFromMechLocationIn } from '../characterSheet'
 import { getDeviceToken } from '../deviceToken'
 import {
   addMechEquipment,
   addMechWeapon,
-  attack,
   createMech,
   createPilot,
   deleteMech,
   getMechImport,
   getUnits,
-  getVisibility,
   getWeaponCatalog,
   listCampaigns,
   listMechChassis,
@@ -28,6 +26,7 @@ import {
   listMechs,
   listPilots,
   markRoundActed,
+  moveUnit,
   requestMovement,
   resubmitPilot,
   requestInitiative,
@@ -43,7 +42,7 @@ import {
   type Unit,
   type WeaponStats,
 } from '../api'
-import { activeMoverPilotId, formatRolls } from '../rounds'
+import { activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS } from '../rounds'
 import { suggestPilotColor } from '../pilotColors'
 import { MECH_CHASSIS_ASSETS } from '../mechAssets'
 import './PlayerView.css'
@@ -67,11 +66,8 @@ export function PlayerView() {
   const [pilots, setPilots] = useState<Pilot[]>([])
   const [mechs, setMechs] = useState<Mech[]>([])
   const [units, setUnits] = useState<Unit[]>([])
-  const [visible, setVisible] = useState<Record<string, number[]>>({})
   const [log, setLog] = useState<string[]>([])
   const [weaponId, setWeaponId] = useState<number | ''>('')
-  const [selectedTarget, setSelectedTarget] = useState<Unit | null>(null)
-  const [firingVolley, setFiringVolley] = useState(false)
   // "¿Quién eres?" starts in 'pick' mode (list of existing pilots + a
   // "crear nuevo" button) — the pilot/mech creation form (below) only
   // shows once the player explicitly asks for it, instead of always
@@ -143,6 +139,7 @@ export function PlayerView() {
   const [error, setError] = useState<string | null>(null)
   const [tab, setTab] = useState<'ficha' | 'acciones'>('ficha')
   const [showFirstPerson, setShowFirstPerson] = useState(false)
+  const [showRotatePicker, setShowRotatePicker] = useState(false)
 
   const refetch = async () => {
     if (campaignId == null) return
@@ -154,7 +151,6 @@ export function PlayerView() {
       setCampaign(all.find((c) => c.id === campaignId) ?? null)
       if (mapId != null) {
         setUnits(await getUnits(mapId))
-        setVisible((await getVisibility(mapId)).visible)
       }
     } catch {
       setError('No se pudo conectar con el servidor.')
@@ -404,26 +400,6 @@ export function PlayerView() {
   // request.
   const canAct = pilot?.status === 'approved' && myMech?.status === 'approved'
 
-  const visibleEnemies = units.filter(
-    (u) => u.pilot_id !== pilotId && (visible[u.id] ?? []).includes(pilotId),
-  )
-
-  const mechForUnit = (u: Unit) => mechs.find((m) => m.id === u.mech_id) ?? null
-
-  // Same "who's flying it" naming as the GM's mech cards (GMView.tsx's
-  // mechCardName) — kept as its own small copy since it's the only thing
-  // here that would otherwise justify importing GM-specific logic into
-  // the player route.
-  const targetCardName = (u: Unit) => {
-    const mech = mechForUnit(u)
-    if (!mech) return `unidad #${u.id}`
-    const targetPilot = pilots.find((p) => p.id === u.pilot_id)
-    const chassisModel = `${mech.chassis} ${mech.model ?? ''}`.trim()
-    return targetPilot ? `${targetPilot.callsign || targetPilot.name} - ${chassisModel}` : chassisModel
-  }
-
-  const pushLog = (line: string) => setLog((l) => [line, ...l].slice(0, 8))
-
   const editPilotHits = async (value: number) => {
     if (!pilot) return
     await updatePilot(pilot.id, { hits: value }, getDeviceToken())
@@ -547,30 +523,31 @@ export function PlayerView() {
     }
   }
 
-  // Same sequential "fire every toggled weapon against this fixed
-  // target" flow as GMView's own submitWeaponVolley — see its comment
-  // for why sequential (heat/ammo ordering) and why one weapon failing
-  // doesn't abort the rest. The hit/miss line itself isn't pushed here —
-  // see the lastAttack effect below, same "log every broadcast, not just
-  // the ones this client happened to fire" fix as GMView's own.
-  const submitWeaponVolley = async (weaponIds: number[]) => {
-    if (!campaignId || !myUnit || !selectedTarget) return
-    setFiringVolley(true)
-    for (const weaponId of weaponIds) {
-      try {
-        await attack(campaignId, {
-          attacker_unit_id: myUnit.id,
-          target_unit_id: selectedTarget.id,
-          weapon_id: weaponId,
-        })
-      } catch {
-        pushLog('Un arma no pudo disparar (fuera de alcance, sin munición o sin línea de visión).')
-      }
+  // Same "record a 0-hex move" backend path as GMView's own Cambiar
+  // dirección/Saltar movimiento (main.py's /move endpoint already
+  // counts a same-position reposition as this round's move — see its
+  // own comment) — no map of its own needed here, unlike Caminar/
+  // Correr/Saltar above, since staying in place needs no highlight/
+  // confirm-on-table round trip at all.
+  const submitRotate = async (facingDeg: number) => {
+    setShowRotatePicker(false)
+    if (!myUnit) return
+    try {
+      await moveUnit(myUnit.id, myUnit.q, myUnit.r, facingDeg)
+      refetch()
+    } catch {
+      setError('No se pudo cambiar de dirección.')
     }
-    if (pilot) await markRoundActed(campaignId, pilot.id).catch(() => {})
-    setFiringVolley(false)
-    setSelectedTarget(null)
-    refetch()
+  }
+
+  const submitSkipMovement = async () => {
+    if (!myUnit) return
+    try {
+      await moveUnit(myUnit.id, myUnit.q, myUnit.r)
+      refetch()
+    } catch {
+      setError('No se pudo saltar el movimiento.')
+    }
   }
 
   return (
@@ -587,7 +564,17 @@ export function PlayerView() {
         <span className="player-tabs-campaign">{campaign?.name ?? ''}</span>
       </nav>
       {error && <div className="error-banner">{error} <button onClick={() => setError(null)}>×</button></div>}
-      <h1>{pilot?.name} {pilot?.callsign && `"${pilot.callsign}"`}</h1>
+      <h1>
+        {pilot?.name} {pilot?.callsign && `"${pilot.callsign}"`}
+        <button
+          className="icon-button eye-button"
+          onClick={() => setShowFirstPerson(true)}
+          disabled={!myUnit}
+          title={myUnit ? 'Vista en 1ª persona' : 'Tu mech aún no está colocado en el mapa'}
+        >
+          👁️
+        </button>
+      </h1>
       <p className="sub">Gunnery {pilot?.gunnery} · Piloting {pilot?.piloting}</p>
 
       {pilot && pilot.status === 'pending' && (
@@ -636,73 +623,68 @@ export function PlayerView() {
 
       {tab === 'acciones' && canAct && (
         <>
-      {roundState && roundState.round_number > 0 && (
-        // roundState.mode (not campaign.initiative_mode) — roundState
-        // already refreshes live over WS on every round event, while
-        // `campaign` here is only fetched once on mount, so it can go
-        // stale if the GM switches modes after this page already loaded.
-        roundState.mode === 'individual' && pilot && !roundState.rolls.some((r) => r.pilot_id === pilot.id) ? (
-          // Acting before rolling doesn't make sense in individual mode
-          // (activeTurnPilotIds never treats an unrolled pilot as "their
-          // turn" either) — show only the roll prompt, not the acted
-          // line, so "ya actuaste" can never appear before you've rolled.
-          <p className="sub round-indicator initiative-pending">
-            La ronda ha comenzado, tira tu iniciativa
-            <button className="act-button" onClick={rollMyInitiative}>Tirar iniciativa</button>
-          </p>
-        ) : (
-          <p className="sub round-indicator">
-            Ronda {roundState.round_number} — {formatRolls(roundState.rolls)}
-            {pilot && roundState.acted_pilot_ids.includes(pilot.id) ? (
-              <span className="acted-tag"> · ya actuaste</span>
-            ) : (
-              <button className="act-button" onClick={markMyActivation}>Terminé mi activación</button>
-            )}
-          </p>
-        )
-      )}
-      <section>
-        <h2>Vista del mech</h2>
-        {myUnit ? (
-          <button className="act-button" onClick={() => setShowFirstPerson(true)}>Vista en 1ª persona</button>
-        ) : (
-          <p className="hint">Tu mech aún no está colocado en el mapa.</p>
-        )}
-      </section>
-
-      {roundState && myUnit && pilot && activeMoverPilotId(roundState) === pilot.id && (
-        // Fase de movimiento (requested directly) — se activa sola en
-        // cuanto todos han tirado iniciativa, empezando por quien menos
-        // sacó (rounds.ts's activeMoverPilotId). PlayerView no tiene mapa
-        // propio — elegir un tipo aquí pide al servidor que difunda las
-        // casillas alcanzables (api.ts's requestMovement), y es la Vista
-        // de Mesa la que pinta el resaltado y captura el click de
-        // confirmación (mismo reparto que la tirada de iniciativa).
-        <section>
-          <h2>Movimiento</h2>
-          <p className="hint">Es tu turno de moverte — elige cómo, y confirma en la Vista de Mesa.</p>
-          <div className="row">
-            <button className="act-button" onClick={() => submitMovement('walk')}>Caminar</button>
-            <button className="act-button" onClick={() => submitMovement('run')}>Correr</button>
-            {(myMech?.jump_mp ?? 0) > 0 && (
-              <button className="act-button" onClick={() => submitMovement('jump')}>Saltar</button>
-            )}
-          </div>
-        </section>
-      )}
-
-      <section>
-        <h2>Objetivos a la vista</h2>
-        {visibleEnemies.length === 0 && <p className="hint">No ves ningún enemigo ahora mismo.</p>}
-        {visibleEnemies.length > 0 && (
-          <div className="card-list">
-            {visibleEnemies.map((u) => (
-              <div key={u.id} className="entity-card" onClick={() => setSelectedTarget(u)}>
-                <span className="entity-card-name">{targetCardName(u)}</span>
-              </div>
-            ))}
-          </div>
-        )}
+      {/* Visor de fase — real user request: ronda + fase claras arriba,
+          y debajo cada acción posible con su propio control, atenuada
+          cuando no toca ahora mismo en vez de aparecer/desaparecer sin
+          más contexto. roundState.mode (not campaign.initiative_mode) —
+          roundState already refreshes live over WS on every round event,
+          while `campaign` here is only fetched once on mount, so it can
+          go stale if the GM switches modes after this page already loaded. */}
+      <section className="phase-panel">
+        <div className="phase-header">
+          <span className="phase-round">
+            Ronda {roundState && roundState.round_number > 0 ? roundState.round_number : '—'}
+          </span>
+          <span className="phase-name">{PHASE_LABELS[roundState ? currentPhase(roundState) : 'none']}</span>
+        </div>
+        <ul className="phase-actions">
+          {roundState && roundState.mode === 'individual' && (() => {
+            const hasRolled = pilot ? roundState.rolls.some((r) => r.pilot_id === pilot.id) : false
+            const canRoll = roundState.round_number > 0 && !hasRolled
+            return (
+              <li className={canRoll ? '' : 'phase-action-disabled'}>
+                <span className="phase-action-label">{hasRolled ? '✓ Iniciativa tirada' : 'Tirar iniciativa'}</span>
+                <button className="icon-button" onClick={rollMyInitiative} disabled={!canRoll} title="Tirar iniciativa">🎲</button>
+              </li>
+            )
+          })()}
+          {(() => {
+            const isMyMoveTurn = !!(roundState && myUnit && pilot && activeMoverPilotId(roundState) === pilot.id)
+            return (
+              <li className={isMyMoveTurn ? '' : 'phase-action-disabled'}>
+                <span className="phase-action-label">Moverse</span>
+                <div className="row">
+                  <button onClick={() => submitMovement('walk')} disabled={!isMyMoveTurn}>Caminar</button>
+                  <button onClick={() => submitMovement('run')} disabled={!isMyMoveTurn}>Correr</button>
+                  {(myMech?.jump_mp ?? 0) > 0 && (
+                    <button onClick={() => submitMovement('jump')} disabled={!isMyMoveTurn}>Saltar</button>
+                  )}
+                  <button onClick={() => setShowRotatePicker(true)} disabled={!isMyMoveTurn}>Cambiar dirección</button>
+                  <button onClick={submitSkipMovement} disabled={!isMyMoveTurn}>Saltar movimiento</button>
+                </div>
+              </li>
+            )
+          })()}
+          {(() => {
+            const canAttackNow = !!(roundState && pilot && activeAttackPilotIds(roundState).has(pilot.id))
+            return (
+              <li className={canAttackNow ? '' : 'phase-action-disabled'}>
+                <span className="phase-action-label">Atacar</span>
+                <button onClick={() => setShowFirstPerson(true)} disabled={!canAttackNow || !myUnit}>🎯 Ver y atacar</button>
+              </li>
+            )
+          })()}
+          {(() => {
+            const hasActed = !!(roundState && pilot && roundState.acted_pilot_ids.includes(pilot.id))
+            const canEndActivation = !!(roundState && roundState.round_number > 0 && !hasActed)
+            return (
+              <li className={canEndActivation ? '' : 'phase-action-disabled'}>
+                <span className="phase-action-label">{hasActed ? '✓ Ya actuaste' : 'Terminar activación'}</span>
+                <button onClick={markMyActivation} disabled={!canEndActivation}>Terminé mi activación</button>
+              </li>
+            )
+          })()}
+        </ul>
       </section>
 
       {log.length > 0 && (
@@ -714,18 +696,6 @@ export function PlayerView() {
         </>
       )}
 
-      {selectedTarget && myUnit && myMech && (
-        <WeaponVolleyPanel
-          attackerMech={myMech}
-          target={selectedTarget}
-          targetMech={mechForUnit(selectedTarget)}
-          weaponCatalog={weaponCatalog}
-          firing={firingVolley}
-          onFire={submitWeaponVolley}
-          onClose={() => setSelectedTarget(null)}
-        />
-      )}
-
       {showFirstPerson && myUnit && (
         <FirstPersonView
           unit={myUnit}
@@ -735,6 +705,15 @@ export function PlayerView() {
           visibility={visibility}
           lastAttack={lastAttack}
           onClose={() => setShowFirstPerson(false)}
+        />
+      )}
+
+      {showRotatePicker && (
+        <FacingPicker
+          x={window.innerWidth / 2}
+          y={window.innerHeight / 2}
+          onPick={submitRotate}
+          onDismiss={() => setShowRotatePicker(false)}
         />
       )}
 

@@ -535,6 +535,10 @@ function GMViewBattletech() {
   type PendingFacing =
     | ({ kind: 'move'; unit: Unit; movementType?: MovementType; path?: { q: number; r: number }[]; allowedFacings?: number[] } & { q: number; r: number; x: number; y: number })
     | ({ kind: 'place'; mech: Mech } & { q: number; r: number; x: number; y: number })
+    // "Cambiar dirección" (real user request) — rotate in place, no
+    // hex picked at all; resolvePendingFacing below sends the SAME
+    // q/r back through submitMoveUnit, only facing_deg changes.
+    | ({ kind: 'rotate'; unit: Unit } & { q: number; r: number; x: number; y: number })
     | null
   const [pendingFacing, setPendingFacing] = useState<PendingFacing>(null)
   // The real route for whichever unit(s) currently have a movement-phase
@@ -580,6 +584,10 @@ function GMViewBattletech() {
     if (pendingFacing.kind === 'move') {
       if (pendingFacing.movementType) submitPhaseMove(pendingFacing.unit, pendingFacing.q, pendingFacing.r, pendingFacing.movementType, facingDeg, pendingFacing.path)
       else submitMoveUnit(pendingFacing.unit, pendingFacing.q, pendingFacing.r, false, facingDeg)
+    } else if (pendingFacing.kind === 'rotate') {
+      // Dismissing (Escape/click outside) cancels — unlike 'move'/'place',
+      // there's no move to fall back to completing without a facing.
+      if (facingDeg != null) submitMoveUnit(pendingFacing.unit, pendingFacing.q, pendingFacing.r, false, facingDeg)
     } else placeMechOnMap(pendingFacing.mech, pendingFacing.q, pendingFacing.r, facingDeg)
     setPendingFacing(null)
   }
@@ -1027,25 +1035,26 @@ function GMViewBattletech() {
           </div>
         )}
 
-        {roundState && roundState.round_number > 0 && roundState.rolls.length > 0 && (
-          <ul className="chips round-rolls">
-            {roundState.rolls.map((r, i) => (
-              <li key={i}>{formatRoll(r)}</li>
-            ))}
-          </ul>
-        )}
+        {/* Un botón por piloto — muestra su tirada de iniciativa (si la
+            tiene, solo modo individual) en vez de la lista de tiradas
+            aparte de antes, y al pulsarlo abre el mismo menú que un clic
+            sobre su mech en el mapa (real user request: "no sé qué
+            hacen [estos botones]... deberían desplegar el mismo menú"). */}
         {roundState && roundState.round_number > 0 && (
           <ul className="chips round-pilots">
             {pilots.map((p) => {
               const acted = roundState.acted_pilot_ids.includes(p.id)
+              const roll = roundState.rolls.find((r) => r.pilot_id === p.id)
+              const unit = units.find((u) => u.pilot_id === p.id)
               return (
                 <li key={p.id}>
                   <button
                     className={acted ? 'acted' : ''}
-                    onClick={() => submitMarkActed(p.id)}
-                    disabled={acted}
+                    onClick={(e) => unit && setMenu({ unit, x: e.clientX, y: e.clientY })}
+                    disabled={!unit}
+                    title={unit ? 'Ver acciones' : 'Sin mech en el mapa'}
                   >
-                    {acted ? '✓ ' : ''}{p.name}
+                    {acted ? '✓ ' : ''}{p.name}{roll ? ` (${roll.total})` : ''}
                   </button>
                 </li>
               )
@@ -1302,6 +1311,13 @@ function GMViewBattletech() {
             showPhaseMovement={roundState?.movement_order.includes(menu.unit.pilot_id ?? -1) ?? false}
             canPhaseMove={menu.unit.pilot_id != null && activeMover === menu.unit.pilot_id}
             onPhaseMove={(type) => { startPhaseMovement(menu.unit, type); setMenu(null) }}
+            onRotate={() => {
+              setPendingFacing({ kind: 'rotate', unit: menu.unit, q: menu.unit.q, r: menu.unit.r, x: menu.x, y: menu.y })
+              setMenu(null)
+            }}
+            onSkipMovement={() => { submitMoveUnit(menu.unit, menu.unit.q, menu.unit.r, false); setMenu(null) }}
+            acted={menuUnitPilot != null && (roundState?.acted_pilot_ids.includes(menuUnitPilot.id) ?? false)}
+            onMarkActed={() => { if (menuUnitPilot) submitMarkActed(menuUnitPilot.id); setMenu(null) }}
           />
         )
       })()}
