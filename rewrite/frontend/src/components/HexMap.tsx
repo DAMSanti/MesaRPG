@@ -758,6 +758,25 @@ export function HexMap({
   const [hover, setHover] = useState<{ q: number; r: number } | null>(null)
   const [dragWorldPos, setDragWorldPos] = useState<[number, number] | null>(null)
 
+  // Real user bug: clicking a mech to pick it as an attack target
+  // instead opened THAT mech's own menu. Root cause — unitMarkerPropsEqual
+  // (below) deliberately skips re-rendering a UnitMarker whose unit/
+  // elevation/etc haven't changed, so its onPointerUp keeps calling
+  // whatever `resolveAt` closure existed the LAST time that specific
+  // unit's props actually changed — which can be from BEFORE the caller
+  // set pickingTargetFor (GMView's onAttack), since clicking "Atacar"
+  // doesn't touch any unit's own props. resolveAt below reads these refs
+  // instead of the raw onUnitClick/onTileClick/onUnitDragEnd props
+  // directly, so even a stale resolveAt closure calls the CURRENT
+  // version — the ref *object* is stable across every render (only
+  // .current mutates), so a stale closure over it still sees fresh data.
+  const onUnitClickRef = useRef(onUnitClick)
+  const onTileClickRef = useRef(onTileClick)
+  const onUnitDragEndRef = useRef(onUnitDragEnd)
+  onUnitClickRef.current = onUnitClick
+  onTileClickRef.current = onTileClick
+  onUnitDragEndRef.current = onUnitDragEnd
+
   // Snow footprint trail (FootprintTrail above). prevUnitTileRef tracks
   // each unit's last-seen "q,r" across renders so a real position CHANGE
   // (not just a re-render) can be detected; footprintSeqRef hands out
@@ -884,12 +903,12 @@ export function HexMap({
     endDrag()
     if (drag) {
       if (dropQ !== drag.startQ || dropR !== drag.startR) {
-        onUnitDragEnd?.(drag.unit, dropQ, dropR, e.nativeEvent.clientX, e.nativeEvent.clientY)
+        onUnitDragEndRef.current?.(drag.unit, dropQ, dropR, e.nativeEvent.clientX, e.nativeEvent.clientY)
       } else {
-        onUnitClick?.(drag.unit, e.nativeEvent.clientX, e.nativeEvent.clientY)
+        onUnitClickRef.current?.(drag.unit, e.nativeEvent.clientX, e.nativeEvent.clientY)
       }
     } else {
-      onTileClick?.(q, r, e.nativeEvent.clientX, e.nativeEvent.clientY)
+      onTileClickRef.current?.(q, r, e.nativeEvent.clientX, e.nativeEvent.clientY)
     }
   }
 

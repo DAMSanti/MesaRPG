@@ -24,7 +24,7 @@ import { MECH_CHASSIS_ASSETS } from '../mechAssets'
 import { FACTION_COLORS, FACTION_LABELS, NEUTRAL_UNIT_COLOR, type Faction } from '../factions'
 import { suggestPilotColor } from '../pilotColors'
 import {
-  activeAttackPilotIds, activeMoverPilotId, currentPhase, formatRoll, PHASE_LABELS, pilotsNeedingInitiative,
+  activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative,
 } from '../rounds'
 import { mapCenter, worldToHex } from '../hexMath'
 import {
@@ -92,7 +92,6 @@ function GMViewBattletech() {
   const [mechs, setMechs] = useState<Mech[]>([])
   const [campaign, setCampaign] = useState<Campaign | null>(null)
   const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
-  const [log, setLog] = useState<string[]>([])
   const [campaignEvents, setCampaignEvents] = useState<CampaignEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -153,29 +152,6 @@ function GMViewBattletech() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rosterVersion])
 
-  const pushLog = (line: string) => setLog((l) => [line, ...l].slice(0, 12))
-
-  // Every resolved attack, logged from the attack_result broadcast
-  // itself rather than from whichever local flow happened to fire it —
-  // the GM's own submitWeaponVolley used to push this line directly,
-  // which meant an attack a PLAYER made (PlayerView's own volley, or the
-  // 1st-person HUD's) never showed up in the GM's registry at all, since
-  // nothing here ran for a shot GMView didn't personally initiate. This
-  // fires for literally every attack in the campaign, GM or player.
-  useEffect(() => {
-    if (!lastAttack) return
-    const targetChassis = mechs.find((m) => m.id === lastAttack.target_mech_id)?.chassis ?? `mech #${lastAttack.target_mech_id}`
-    if (lastAttack.hit) {
-      pushLog(
-        `${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: impacto en ${lastAttack.location}${lastAttack.critical ? ' (¡crítico!)' : ''} — tirada ${lastAttack.roll} vs ${lastAttack.target_number}` +
-          (lastAttack.mech_destroyed ? ' — MECH DESTRUIDO' : ''),
-      )
-    } else {
-      pushLog(`${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: fallo — tirada ${lastAttack.roll} vs ${lastAttack.target_number}`)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastAttack])
-
   // Attack VFX (laser/PPC/tracer/missile/flamer) — only real board shots
   // carry attacker_unit_id/target_unit_id (see combat.py's
   // resolve_attack), so a narrative/manual attack with no real units
@@ -208,7 +184,7 @@ function GMViewBattletech() {
     submittingPilotRef.current = true
     setSubmittingPilot(true)
     try {
-      const p = await createPilot(campaignId, {
+      await createPilot(campaignId, {
         name: pilotName,
         callsign: pilotCallsign || undefined,
         gunnery,
@@ -216,7 +192,6 @@ function GMViewBattletech() {
         faction: pilotFaction,
         color: pilotColor,
       })
-      pushLog(`Piloto creado: ${p.name} (${FACTION_LABELS[p.faction]}, gunnery ${p.gunnery}/piloting ${p.piloting})`)
       setPilotName('')
       setPilotCallsign('')
       setShowPilotModal(false)
@@ -311,19 +286,12 @@ function GMViewBattletech() {
         locations: locs,
         criticals: Object.keys(pendingCriticals).length > 0 ? pendingCriticals : undefined,
       })
-      pushLog(`Mech creado: ${m.chassis} ${m.model ?? ''} (#${m.id})`)
       for (const w of pendingWeapons) {
-        await addMechWeapon(m.id, w.weapon_name, w.location).catch(() => {
-          pushLog(`No se pudo montar ${w.weapon_name} (¿arma no soportada?)`)
-        })
+        await addMechWeapon(m.id, w.weapon_name, w.location).catch(() => {})
       }
-      if (pendingWeapons.length > 0) pushLog(`${pendingWeapons.length} armas montadas desde la importación`)
       for (const eq of pendingEquipment) {
-        await addMechEquipment(m.id, eq.equipment_name, eq.location).catch(() => {
-          pushLog(`No se pudo montar ${eq.equipment_name} (¿equipo no soportado?)`)
-        })
+        await addMechEquipment(m.id, eq.equipment_name, eq.location).catch(() => {})
       }
-      if (pendingEquipment.length > 0) pushLog(`${pendingEquipment.length} piezas de equipo montadas desde la importación`)
       // Not placed on the map here — the mech now shows up as a sidebar
       // card the GM drags onto the map whenever they're ready for it (see
       // startSidebarMechDrag/placeMechOnMap).
@@ -388,15 +356,7 @@ function GMViewBattletech() {
   const submitStartRound = async () => {
     if (!campaignId) return
     try {
-      const r = await startRound(campaignId)
-      // Individual mode starts every round with zero rolls now (manual
-      // per-pilot rolling) — nothing to list yet, unlike team mode which
-      // still rolls both sides atomically right here.
-      pushLog(
-        r.mode === 'individual'
-          ? `Ronda ${r.round_number} — esperando iniciativas`
-          : `Ronda ${r.round_number} — ${r.rolls.map(formatRoll).join(', ')}`,
-      )
+      await startRound(campaignId)
     } catch {
       setError('No se pudo empezar la ronda.')
     }
@@ -452,10 +412,8 @@ function GMViewBattletech() {
   // that reactively — no separate log line needed for the request itself.
   const rollInitiativeForPilot = async (pilotId: number) => {
     if (!campaignId) return
-    const p = pilots.find((pl) => pl.id === pilotId)
     try {
       await requestInitiative(campaignId, pilotId)
-      if (p) pushLog(`${p.callsign || p.name}: tira los dados en la Vista de Mesa…`)
     } catch {
       setError('No se pudo pedir la tirada de iniciativa.')
     }
@@ -553,7 +511,6 @@ function GMViewBattletech() {
     setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, q, r, ...(facingDeg != null ? { facing_deg: facingDeg } : {}) } : u)))
     try {
       await moveUnit(unit.id, q, r, facingDeg)
-      pushLog(`#${unit.id} movido a (${q}, ${r})`)
       if (markActed && unit.pilot_id != null) await submitMarkActed(unit.pilot_id)
     } catch {
       setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, q: unit.q, r: unit.r } : u)))
@@ -571,7 +528,6 @@ function GMViewBattletech() {
     setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, q, r, ...(facingDeg != null ? { facing_deg: facingDeg } : {}) } : u)))
     try {
       await moveUnitWithMp(unit.id, q, r, movementType, facingDeg)
-      pushLog(`#${unit.id} se movió (${movementType}) a (${q}, ${r})`)
     } catch {
       setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, q: unit.q, r: unit.r } : u)))
       setError('No se pudo mover la unidad.')
@@ -647,7 +603,6 @@ function GMViewBattletech() {
         faction: editPilotFaction,
         color: editPilotColor,
       })
-      pushLog(`Piloto actualizado: ${editPilotName}`)
       setEditingPilot(null)
       refetch()
     } catch {
@@ -664,7 +619,6 @@ function GMViewBattletech() {
     if (!editingMech || editMechPilotId === '') return
     try {
       await updateMech(editingMech.id, { pilot_id: editMechPilotId })
-      pushLog(`Mech actualizado: ${editingMech.chassis}`)
       setEditingMech(null)
       refetch()
     } catch {
@@ -676,7 +630,6 @@ function GMViewBattletech() {
     if (!confirmDeletePilot) return
     try {
       await deletePilot(confirmDeletePilot.id)
-      pushLog(`Piloto eliminado: ${confirmDeletePilot.name}`)
       setConfirmDeletePilot(null)
       refetch()
     } catch {
@@ -688,7 +641,6 @@ function GMViewBattletech() {
     if (!confirmDeleteMech) return
     try {
       await deleteMech(confirmDeleteMech.id)
-      pushLog(`Mech eliminado: ${confirmDeleteMech.chassis}`)
       // delete_mech also removes any of its units server-side (see
       // app/mechs.py) — no WS broadcast for it, so drop them locally too.
       setUnits((prev) => prev.filter((u) => u.mech_id !== confirmDeleteMech.id))
@@ -702,11 +654,10 @@ function GMViewBattletech() {
   // "Quitar del mapa" (real user request) — removes the token so the
   // mech is free to be placed again, but leaves the mech itself (and
   // its pilot) untouched in the campaign, unlike submitDeleteMech above.
-  const removeMechFromMap = async (mech: Mech, unit: Unit) => {
+  const removeMechFromMap = async (unit: Unit) => {
     try {
       await deleteUnit(unit.id)
       setUnits((prev) => prev.filter((u) => u.id !== unit.id))
-      pushLog(`${mechCardName(mech)} quitado del mapa`)
     } catch {
       setError('No se pudo quitar el mech del mapa.')
     }
@@ -724,7 +675,6 @@ function GMViewBattletech() {
         q, r, mech_id: mech.id, pilot_id: mech.pilot_id ?? undefined, ...(facingDeg != null ? { facing_deg: facingDeg } : {}),
       })
       setUnits((prev) => [...prev, created])
-      pushLog(`#${mech.id} colocado en el mapa`)
     } catch {
       setError('No se pudo colocar el mech en el mapa.')
     }
@@ -856,14 +806,8 @@ function GMViewBattletech() {
   // next one's to-hit penalty is computed (see combat.py's own
   // resolve_attack docstring), and a rejected shot (out of range/no LOS
   // for THAT weapon specifically) shouldn't abort the rest of the
-  // volley, just get logged and skipped.
-  //
-  // The hit/miss line itself is NOT pushed here — see the lastAttack
-  // effect below, which logs every attack_result broadcast regardless of
-  // who fired it. Logging it here too used to double it up for the GM's
-  // own shots, and (the actual bug report) meant a PLAYER's attack never
-  // appeared in the GM's registry at all, since nothing here ever ran
-  // for a shot GMView didn't itself initiate.
+  // volley, just get skipped — every hit/miss (and a rejected shot) is
+  // already reflected in the persisted campaign event log server-side.
   const [firingVolley, setFiringVolley] = useState(false)
   const submitWeaponVolley = async (weaponIds: number[]) => {
     if (!campaignId || !attackPanel) return
@@ -876,7 +820,7 @@ function GMViewBattletech() {
           weapon_id: weaponId,
         })
       } catch {
-        pushLog(`Un arma no pudo disparar (fuera de alcance, sin munición o sin línea de visión).`)
+        // rejected (out of range/no ammo/no LOS) — skip, volley continues
       }
     }
     if (attackPanel.attacker.pilot_id != null) await submitMarkActed(attackPanel.attacker.pilot_id)
@@ -1073,20 +1017,14 @@ function GMViewBattletech() {
         <h2>Registro</h2>
         <button onClick={submitUndo} className="undo">Deshacer última acción</button>
         {/* Persisted campaign history (survives a reload — real user
-            request) — most in-session actions already produce their own
-            line here via app/events.py, so `log` below rarely has
-            anything of its own left to show beyond a failed action's
-            transient feedback (e.g. "no se pudo montar X"). */}
+            request) — every in-session action logs its own line here
+            via app/events.py. Real user request: only this one scrolling
+            list, not a second non-scrolling one alongside it. */}
         <ul className="log event-log">
           {campaignEvents.map((e) => (
             <li key={e.id} className={e.undone ? 'event-undone' : ''}>{e.summary}</li>
           ))}
         </ul>
-        {log.length > 0 && (
-          <ul className="log">
-            {log.map((line, i) => <li key={i}>{line}</li>)}
-          </ul>
-        )}
       </section>
 
       {showSettingsModal && (
@@ -1188,7 +1126,7 @@ function GMViewBattletech() {
               </button>
             )}
             {menuUnit && (
-              <button onClick={() => { removeMechFromMap(mechMenu.mech, menuUnit); setMechMenu(null) }}>Quitar del mapa</button>
+              <button onClick={() => { removeMechFromMap(menuUnit); setMechMenu(null) }}>Quitar del mapa</button>
             )}
             <button onClick={() => { openEditMech(mechMenu.mech); setMechMenu(null) }}>Editar</button>
             <button className="danger" onClick={() => { setConfirmDeleteMech(mechMenu.mech); setMechMenu(null) }}>Eliminar</button>
