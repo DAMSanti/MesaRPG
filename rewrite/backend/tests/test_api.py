@@ -969,6 +969,21 @@ def test_reachable_hexes_endpoint_422s_for_unknown_movement_type():
         assert res.status_code == 422
 
 
+def test_create_unit_endpoint_422s_for_a_pending_mech():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 4, "height": 4}).json()
+        mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={
+                "chassis": "Locust", "tonnage": 20, "walk_mp": 8, "run_mp": 12,
+                "locations": _ATLAS_LOCATIONS, "status": "pending",
+            },
+        ).json()
+        res = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "mech_id": mech["id"]})
+        assert res.status_code == 422
+
+
 def test_move_with_mp_endpoint_moves_a_unit_within_range():
     with client() as c:
         camp = c.post("/api/campaigns", json={"name": "API Test"}).json()

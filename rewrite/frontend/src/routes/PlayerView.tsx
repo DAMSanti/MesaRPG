@@ -17,6 +17,7 @@ import {
   attack,
   createMech,
   createPilot,
+  deleteMech,
   getMechImport,
   getUnits,
   getVisibility,
@@ -28,7 +29,6 @@ import {
   listPilots,
   markRoundActed,
   requestMovement,
-  resubmitMech,
   resubmitPilot,
   requestInitiative,
   updateMechCritical,
@@ -60,7 +60,7 @@ function usePilotId() {
 export function PlayerView() {
   const campaignId = useCampaignId({ allowPicker: false })
   const { pilotId, choose } = usePilotId()
-  const { lastAttack, activeMapId, roundState, visibility } = useTableSocket(campaignId)
+  const { lastAttack, activeMapId, roundState, visibility, rosterVersion } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
 
   const [campaign, setCampaign] = useState<Campaign | null>(null)
@@ -105,6 +105,39 @@ export function PlayerView() {
   const [joinPendingWeapons, setJoinPendingWeapons] = useState<{ weapon_name: string; location: string }[]>([])
   const [joinPendingEquipment, setJoinPendingEquipment] = useState<{ equipment_name: string; location: string }[]>([])
   const [joinPendingCriticals, setJoinPendingCriticals] = useState<Record<string, string[]>>({})
+
+  // ---- editing a REJECTED pilot/mech — only reachable from the
+  // rejection banner below, and resubmitting only ever happens as part
+  // of saving this edit (real user request: "solo cuando se edita se
+  // puede reenviar"), never as a bare "reenviar" button. ----
+  const [editingRejectedPilot, setEditingRejectedPilot] = useState(false)
+  const [editPilotName, setEditPilotName] = useState('')
+  const [editPilotCallsign, setEditPilotCallsign] = useState('')
+  const [editPilotGunnery, setEditPilotGunnery] = useState(4)
+  const [editPilotPiloting, setEditPilotPiloting] = useState(5)
+  const [editPilotColor, setEditPilotColor] = useState('')
+
+  // Same chassis→model cascade as the create flow — a rejected mech is
+  // always still 'pending'-eligible, never placed on a map (GM approval
+  // required first), so replacing it outright (delete + recreate with
+  // the freshly picked model's real stats) is safe and correct — a
+  // PATCH could only ever change chassis/model/tonnage/mp/heat_sinks,
+  // never armor/structure/weapons, which would leave the OLD mech's
+  // loadout stuck on a newly picked chassis.
+  const [editingRejectedMech, setEditingRejectedMech] = useState(false)
+  const [editMechChassis, setEditMechChassis] = useState('')
+  const [editMechModel, setEditMechModel] = useState('')
+  const [editMechModelOptions, setEditMechModelOptions] = useState<MechModelResult[]>([])
+  const [editMechSelectedModelFile, setEditMechSelectedModelFile] = useState('')
+  const [editMechTonnage, setEditMechTonnage] = useState(50)
+  const [editMechWalkMp, setEditMechWalkMp] = useState(4)
+  const [editMechRunMp, setEditMechRunMp] = useState(6)
+  const [editMechHeatSinks, setEditMechHeatSinks] = useState(10)
+  const [editMechLocations, setEditMechLocations] = useState(emptyLocationsForm())
+  const [editMechPendingWeapons, setEditMechPendingWeapons] = useState<{ weapon_name: string; location: string }[]>([])
+  const [editMechPendingEquipment, setEditMechPendingEquipment] = useState<{ equipment_name: string; location: string }[]>([])
+  const [editMechPendingCriticals, setEditMechPendingCriticals] = useState<Record<string, string[]>>({})
+
   const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -150,10 +183,25 @@ export function PlayerView() {
   }, [joinSelectedModelFile])
 
   useEffect(() => {
+    if (!editMechChassis) {
+      setEditMechModelOptions([])
+      return
+    }
+    listMechModels(editMechChassis).then(setEditMechModelOptions).catch(() => setEditMechModelOptions([]))
+    setEditMechSelectedModelFile('')
+  }, [editMechChassis])
+
+  useEffect(() => {
+    if (!editMechSelectedModelFile) return
+    getMechImport(editMechSelectedModelFile).then(importEditMech).catch(() => setError('No se pudo cargar ese modelo del catálogo.'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMechSelectedModelFile])
+
+  useEffect(() => {
     refetch()
     getWeaponCatalog().then(setWeaponCatalog).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaignId, mapId, lastAttack, visibility])
+  }, [campaignId, mapId, lastAttack, visibility, rosterVersion])
 
   // Every resolved attack in the campaign, GM or any player's — see
   // GMView's identical fix for why (logging only from this client's own
@@ -183,6 +231,19 @@ export function PlayerView() {
     setJoinPendingWeapons(data.weapons)
     setJoinPendingEquipment(data.equipment)
     setJoinPendingCriticals(data.criticals)
+  }
+
+  const importEditMech = (data: MechImportData) => {
+    setEditMechChassis(data.chassis)
+    setEditMechModel(data.model)
+    setEditMechTonnage(data.tonnage)
+    setEditMechWalkMp(data.walk_mp)
+    setEditMechRunMp(data.run_mp)
+    setEditMechHeatSinks(data.heat_sinks)
+    setEditMechLocations(locationsFormFromMechLocationIn(data.locations))
+    setEditMechPendingWeapons(data.weapons)
+    setEditMechPendingEquipment(data.equipment)
+    setEditMechPendingCriticals(data.criticals)
   }
 
   // "Rellenar la ficha directamente" (ROADMAP.md Fase R3) — piloto y mech
@@ -377,20 +438,70 @@ export function PlayerView() {
     refetch()
   }
 
-  const resubmitMyPilot = async () => {
+  const openEditRejectedPilot = () => {
     if (!pilot) return
+    setEditPilotName(pilot.name)
+    setEditPilotCallsign(pilot.callsign ?? '')
+    setEditPilotGunnery(pilot.gunnery)
+    setEditPilotPiloting(pilot.piloting)
+    setEditPilotColor(pilot.color)
+    setEditingRejectedPilot(true)
+  }
+
+  const submitEditRejectedPilot = async () => {
+    if (!pilot || !editPilotName) return
+    const token = getDeviceToken()
     try {
-      await resubmitPilot(pilot.id, getDeviceToken())
+      await updatePilot(pilot.id, {
+        name: editPilotName,
+        callsign: editPilotCallsign || undefined,
+        gunnery: editPilotGunnery,
+        piloting: editPilotPiloting,
+        color: editPilotColor,
+      }, token)
+      await resubmitPilot(pilot.id, token)
+      setEditingRejectedPilot(false)
       refetch()
     } catch {
       setError('No se pudo reenviar tu ficha de piloto.')
     }
   }
 
-  const resubmitMyMech = async () => {
-    if (!myMech) return
+  const openEditRejectedMech = () => {
+    setEditMechChassis('')
+    setEditMechModelOptions([])
+    setEditMechSelectedModelFile('')
+    setEditingRejectedMech(true)
+  }
+
+  // Delete + recreate rather than PATCH — see the state declarations'
+  // own comment on why a rejected mech is always safe to replace
+  // outright instead of editing in place.
+  const submitEditRejectedMech = async () => {
+    if (!myMech || !pilot || !editMechChassis) return
+    const token = getDeviceToken()
     try {
-      await resubmitMech(myMech.id, getDeviceToken())
+      await deleteMech(myMech.id)
+      const m = await createMech(campaignId!, {
+        chassis: editMechChassis,
+        model: editMechModel || undefined,
+        tonnage: editMechTonnage,
+        walk_mp: editMechWalkMp,
+        run_mp: editMechRunMp,
+        heat_sinks: editMechHeatSinks,
+        pilot_id: pilot.id,
+        locations: buildMechLocationsPayload(editMechLocations),
+        status: 'pending',
+        owner_token: token,
+        criticals: Object.keys(editMechPendingCriticals).length > 0 ? editMechPendingCriticals : undefined,
+      })
+      for (const w of editMechPendingWeapons) {
+        await addMechWeapon(m.id, w.weapon_name, w.location, token).catch(() => {})
+      }
+      for (const eq of editMechPendingEquipment) {
+        await addMechEquipment(m.id, eq.equipment_name, eq.location, token).catch(() => {})
+      }
+      setEditingRejectedMech(false)
       refetch()
     } catch {
       setError('No se pudo reenviar tu mech.')
@@ -474,8 +585,8 @@ export function PlayerView() {
       )}
       {pilot && pilot.status === 'rejected' && (
         <p className="sub status-banner status-rejected">
-          El GM rechazó tu ficha de piloto{pilot.review_note ? `: "${pilot.review_note}"` : ''}. Corrígela arriba y
-          {' '}<button onClick={resubmitMyPilot}>reenviar</button>
+          El GM rechazó tu ficha de piloto{pilot.review_note ? `: "${pilot.review_note}"` : ''}.
+          {' '}<button onClick={openEditRejectedPilot}>Editar</button>
         </p>
       )}
 
@@ -502,8 +613,8 @@ export function PlayerView() {
               )}
               {myMech.status === 'rejected' && (
                 <p className="sub status-banner status-rejected">
-                  El GM rechazó tu mech{myMech.review_note ? `: "${myMech.review_note}"` : ''}. Corrígelo y
-                  {' '}<button onClick={resubmitMyMech}>reenviar</button>
+                  El GM rechazó tu mech{myMech.review_note ? `: "${myMech.review_note}"` : ''}.
+                  {' '}<button onClick={openEditRejectedMech}>Editar</button>
                 </p>
               )}
             </>
@@ -615,6 +726,41 @@ export function PlayerView() {
           lastAttack={lastAttack}
           onClose={() => setShowFirstPerson(false)}
         />
+      )}
+
+      {editingRejectedPilot && (
+        <Modal title="Editar mi piloto" onClose={() => setEditingRejectedPilot(false)}>
+          <PilotForm
+            name={editPilotName} onName={setEditPilotName}
+            callsign={editPilotCallsign} onCallsign={setEditPilotCallsign}
+            gunnery={editPilotGunnery} onGunnery={setEditPilotGunnery}
+            piloting={editPilotPiloting} onPiloting={setEditPilotPiloting}
+            color={editPilotColor} onColor={setEditPilotColor}
+            onSubmit={submitEditRejectedPilot} submitLabel="Guardar y reenviar" submitDisabled={!editPilotName}
+          />
+        </Modal>
+      )}
+
+      {editingRejectedMech && (
+        <Modal title="Editar mi mech" onClose={() => setEditingRejectedMech(false)}>
+          <div className="row">
+            <select value={editMechChassis} onChange={(e) => setEditMechChassis(e.target.value)}>
+              <option value="">chasis…</option>
+              {chassisOptions.map((c) => (
+                <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
+              ))}
+            </select>
+            <select
+              value={editMechSelectedModelFile}
+              onChange={(e) => setEditMechSelectedModelFile(e.target.value)}
+              disabled={editMechModelOptions.length === 0}
+            >
+              <option value="">modelo…</option>
+              {editMechModelOptions.map((m) => <option key={m.file} value={m.file}>{m.model}</option>)}
+            </select>
+          </div>
+          <button onClick={submitEditRejectedMech} disabled={!editMechChassis}>Guardar y reenviar</button>
+        </Modal>
       )}
     </div>
   )

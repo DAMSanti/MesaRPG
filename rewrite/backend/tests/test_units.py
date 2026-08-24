@@ -1,3 +1,5 @@
+import pytest
+
 from app import maps, units
 from app.systems.battletech import mechs, pilots
 from tests.conftest import ATLAS_LOCATIONS
@@ -82,6 +84,35 @@ def test_unit_with_no_pilot_has_no_faction(campaign):
     m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
     ghost = units.create_unit(campaign["id"], m["id"], q=0, r=0, is_ghost=True)
     assert ghost["pilot_faction"] is None
+
+
+def test_create_unit_with_an_approved_mech_succeeds(campaign, atlas):
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=atlas["id"])
+    assert unit["mech_id"] == atlas["id"]
+
+
+def test_create_unit_rejects_a_pending_mech(campaign, pilot):
+    # Real user request: a mech the GM hasn't reviewed yet can't be
+    # placed on the board — approval has to come first.
+    pending = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Locust", model="LCT-1V", tonnage=20,
+        walk_mp=8, run_mp=12, pilot_id=pilot["id"], locations=ATLAS_LOCATIONS, status="pending",
+    )
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    with pytest.raises(units.MechNotApproved):
+        units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=pending["id"])
+
+
+def test_create_unit_rejects_a_rejected_mech(campaign, pilot):
+    rejected = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Locust", model="LCT-1V", tonnage=20,
+        walk_mp=8, run_mp=12, pilot_id=pilot["id"], locations=ATLAS_LOCATIONS, status="pending",
+    )
+    mechs.review_mech(rejected["id"], "rejected", "not allowed")
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    with pytest.raises(units.MechNotApproved):
+        units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=rejected["id"])
 
 
 def test_visible_hexes_from_unit_works_without_a_pilot(campaign):

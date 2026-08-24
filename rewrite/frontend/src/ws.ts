@@ -86,6 +86,12 @@ export function useTableSocket(campaignId: number | null) {
   const [roundState, setRoundState] = useState<RoundState | null>(null)
   const [initiativeRollRequest, setInitiativeRollRequest] = useState<InitiativeRollRequested | null>(null)
   const [movementStarted, setMovementStarted] = useState<MovementStarted | null>(null)
+  // Bumped on every "roster_updated" broadcast (pilot/mech created,
+  // reviewed, resubmitted, edited or deleted) — no payload, just a
+  // signal. Consumers put this in a useEffect's deps to refetch their
+  // own pilots/mechs list instead of requiring a manual reload (real
+  // user report: "no se actualiza en tiempo real").
+  const [rosterVersion, setRosterVersion] = useState(0)
   const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
@@ -129,6 +135,8 @@ export function useTableSocket(campaignId: number | null) {
         setInitiativeRollRequest(message as InitiativeRollRequested)
       } else if (message.type === 'movement_started') {
         setMovementStarted(message as MovementStarted)
+      } else if (message.type === 'roster_updated') {
+        setRosterVersion((v) => v + 1)
       }
     }
 
@@ -154,6 +162,6 @@ export function useTableSocket(campaignId: number | null) {
 
   return {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState,
-    initiativeRollRequest, movementStarted, roll,
+    initiativeRollRequest, movementStarted, rosterVersion, roll,
   }
 }

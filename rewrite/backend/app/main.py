@@ -189,7 +189,7 @@ class PilotIn(BaseModel):
 
 
 @app.post("/api/campaigns/{campaign_id}/pilots")
-def create_pilot(
+async def create_pilot(
     campaign_id: int, body: PilotIn, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
 ) -> dict:
     _require_campaign(campaign_id)
@@ -202,6 +202,12 @@ def create_pilot(
         raise HTTPException(422, str(exc)) from exc
     except pilots.DuplicateOwnerPilot as exc:
         raise HTTPException(409, str(exc)) from exc
+    # Without this, a player submitting their own ficha never shows up
+    # on an already-open GM screen (or vice versa for review/resubmit
+    # below) until someone reloads — real user report ("no se actualiza
+    # en tiempo real"). No payload beyond the type: every listener just
+    # refetches its own pilots/mechs list, same as a fresh page load.
+    await manager.broadcast(campaign_id, {"type": "roster_updated"})
     return _sanitize_pilot(created, x_device_token)
 
 
@@ -245,6 +251,7 @@ async def patch_pilot(
         raise HTTPException(422, str(exc)) from exc
     for campaign_id, map_id in affected_maps:
         await _broadcast_visibility(campaign_id, map_id)
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
     return _sanitize_pilot(updated, x_device_token)
 
 
@@ -271,7 +278,7 @@ class ReviewIn(BaseModel):
 
 
 @app.post("/api/pilots/{pilot_id}/review")
-def review_pilot(
+async def review_pilot(
     pilot_id: int, body: ReviewIn, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
 ) -> dict:
     _require_pilot(pilot_id)
@@ -279,11 +286,12 @@ def review_pilot(
         updated = pilots.review_pilot(pilot_id, body.decision, body.note)
     except pilots.UnknownStatus as exc:
         raise HTTPException(422, str(exc)) from exc
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
     return _sanitize_pilot(updated, x_device_token)
 
 
 @app.post("/api/pilots/{pilot_id}/resubmit")
-def resubmit_pilot(
+async def resubmit_pilot(
     pilot_id: int, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
 ) -> dict:
     _require_owner(_require_pilot(pilot_id), x_device_token)
@@ -291,6 +299,7 @@ def resubmit_pilot(
         updated = pilots.resubmit_pilot(pilot_id)
     except pilots.InvalidStatusTransition as exc:
         raise HTTPException(422, str(exc)) from exc
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
     return _sanitize_pilot(updated, x_device_token)
 
 
@@ -298,11 +307,12 @@ def resubmit_pilot(
 async def delete_pilot(pilot_id: int) -> dict:
     # GM-only action (no _require_owner) — same as review_pilot above,
     # not an owner-initiated edit.
-    _require_pilot(pilot_id)
+    deleted_pilot = _require_pilot(pilot_id)
     affected_maps = units.maps_for_pilot(pilot_id)
     pilots.delete_pilot(pilot_id)
     for campaign_id, map_id in affected_maps:
         await _broadcast_visibility(campaign_id, map_id)
+    await manager.broadcast(deleted_pilot["campaign_id"], {"type": "roster_updated"})
     return {"deleted": True}
 
 
@@ -332,7 +342,7 @@ class MechIn(BaseModel):
 
 
 @app.post("/api/campaigns/{campaign_id}/mechs")
-def create_mech(
+async def create_mech(
     campaign_id: int, body: MechIn, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
 ) -> dict:
     _require_campaign(campaign_id)
@@ -354,6 +364,7 @@ def create_mech(
         )
     except (mechs.InvalidMechLocation, mechs.UnknownStatus) as exc:
         raise HTTPException(422, str(exc)) from exc
+    await manager.broadcast(campaign_id, {"type": "roster_updated"})
     return _sanitize_mech(created, x_device_token)
 
 
@@ -400,11 +411,12 @@ async def patch_mech(
     updated = mechs.update_mech(mech_id, **body.model_dump())
     for campaign_id, map_id in affected_maps:
         await _broadcast_visibility(campaign_id, map_id)
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
     return _sanitize_mech(updated, x_device_token)
 
 
 @app.post("/api/mechs/{mech_id}/review")
-def review_mech(
+async def review_mech(
     mech_id: int, body: ReviewIn, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
 ) -> dict:
     _require_mech(mech_id)
@@ -412,11 +424,12 @@ def review_mech(
         updated = mechs.review_mech(mech_id, body.decision, body.note)
     except mechs.UnknownStatus as exc:
         raise HTTPException(422, str(exc)) from exc
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
     return _sanitize_mech(updated, x_device_token)
 
 
 @app.post("/api/mechs/{mech_id}/resubmit")
-def resubmit_mech(
+async def resubmit_mech(
     mech_id: int, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
 ) -> dict:
     _require_owner(_require_mech(mech_id), x_device_token)
@@ -424,6 +437,7 @@ def resubmit_mech(
         updated = mechs.resubmit_mech(mech_id)
     except mechs.InvalidStatusTransition as exc:
         raise HTTPException(422, str(exc)) from exc
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
     return _sanitize_mech(updated, x_device_token)
 
 
@@ -431,11 +445,12 @@ def resubmit_mech(
 async def delete_mech(mech_id: int) -> dict:
     # GM-only action (no _require_owner) — same as review_mech above,
     # not an owner-initiated edit.
-    _require_mech(mech_id)
+    deleted_mech = _require_mech(mech_id)
     affected_maps = units.maps_for_mech(mech_id)
     mechs.delete_mech(mech_id)
     for campaign_id, map_id in affected_maps:
         await _broadcast_visibility(campaign_id, map_id)
+    await manager.broadcast(deleted_mech["campaign_id"], {"type": "roster_updated"})
     return {"deleted": True}
 
 
@@ -690,17 +705,20 @@ class UnitIn(BaseModel):
 @app.post("/api/maps/{map_id}/units")
 async def create_unit(map_id: int, body: UnitIn) -> dict:
     m = _require_map(map_id)
-    created = units.create_unit(
-        campaign_id=m["campaign_id"],
-        map_id=map_id,
-        q=body.q,
-        r=body.r,
-        mech_id=body.mech_id,
-        pilot_id=body.pilot_id,
-        facing_deg=body.facing_deg,
-        is_ghost=body.is_ghost,
-        dnd_character_id=body.dnd_character_id,
-    )
+    try:
+        created = units.create_unit(
+            campaign_id=m["campaign_id"],
+            map_id=map_id,
+            q=body.q,
+            r=body.r,
+            mech_id=body.mech_id,
+            pilot_id=body.pilot_id,
+            facing_deg=body.facing_deg,
+            is_ghost=body.is_ghost,
+            dnd_character_id=body.dnd_character_id,
+        )
+    except units.MechNotApproved as exc:
+        raise HTTPException(422, str(exc)) from exc
     # Placing a token (GM sidebar drag, or a freshly-created mech) used to
     # be invisible to an already-open Mesa view until something else
     # happened to also touch visibility — same gap move_unit already

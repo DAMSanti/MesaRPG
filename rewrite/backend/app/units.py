@@ -18,6 +18,7 @@ from .hexgrid import Hex, has_los
 from .hexgrid import distance as hex_distance
 from .maps import get_map, tiles_lookup
 from .squaregrid import Cell, has_los as square_has_los
+from .systems.battletech import mechs as bt_mechs
 from .squaregrid import distance as square_distance
 from .systems.battletech import mechs
 
@@ -70,6 +71,10 @@ def attack_side(attacker: dict, target: dict, grid_type: str) -> str:
     return "left" if relative > 0 else "right"
 
 
+class MechNotApproved(ValueError):
+    pass
+
+
 def create_unit(
     campaign_id: int,
     map_id: int,
@@ -81,6 +86,16 @@ def create_unit(
     is_ghost: bool = False,
     dnd_character_id: int | None = None,
 ) -> dict:
+    # A pending/rejected mech hasn't been reviewed yet — the GM shouldn't
+    # be able to drop it on the board before deciding whether it's even
+    # allowed in the game (real user request: "El GM solo puede colocar
+    # aquellos mechs aprobados"). GMView's own drag-to-place already
+    # blocks the drag client-side; this is the same rule enforced
+    # server-side so it can't be bypassed by calling the API directly.
+    if mech_id is not None:
+        mech = bt_mechs.get_mech(mech_id)
+        if mech and mech["status"] != "approved":
+            raise MechNotApproved(f"Mech {mech_id} is {mech['status']!r}, not approved")
     with db.connect() as conn:
         cur = conn.execute(
             """

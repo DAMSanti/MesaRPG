@@ -81,7 +81,7 @@ import './GMView.css'
  * whether to mount this or GMViewDnd based on the campaign's system. */
 function GMViewBattletech() {
   const campaignId = useCampaignId()
-  const { activeMapId, roundState, visibility, lastAttack } = useTableSocket(campaignId)
+  const { activeMapId, roundState, visibility, lastAttack, rosterVersion } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   const { map, units, setUnits } = useMapState(mapId, visibility ?? lastAttack)
   const [pilots, setPilots] = useState<Pilot[]>([])
@@ -134,6 +134,18 @@ function GMViewBattletech() {
     if (visibility || lastAttack) refetch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibility, lastAttack])
+
+  // "roster_updated" (app/main.py) — a pilot/mech was created, reviewed,
+  // resubmitted, edited or deleted, by anyone (GM or any player). Without
+  // this, a ficha a player just submitted (or a rejection the GM just
+  // sent) never shows up until someone manually reloads the page (real
+  // user report: "no se actualiza en tiempo real"). rosterVersion starts
+  // at 0 and this only fires on a real change, so it never double-fetches
+  // the mount-time refetch above.
+  useEffect(() => {
+    if (rosterVersion > 0) refetch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterVersion])
 
   const pushLog = (line: string) => setLog((l) => [line, ...l].slice(0, 12))
 
@@ -325,9 +337,6 @@ function GMViewBattletech() {
     setRejectNote('')
     refetch()
   }
-
-  const pendingPilots = pilots.filter((p) => p.status === 'pending')
-  const pendingMechs = mechs.filter((m) => m.status === 'pending')
 
   const submitUndo = async () => {
     if (!campaignId) return
@@ -676,10 +685,18 @@ function GMViewBattletech() {
     // touch-action: none on .entity-card-draggable (GMView.css) and the
     // pointerdown preventDefault below, both needed to actually stop the
     // browser's own touch gesture from competing with this one.
+    // A pending/rejected mech can't be dropped on the board yet — the
+    // GM has to review it first (real user request: "El GM solo puede
+    // colocar aquellos mechs aprobados"; the backend enforces the same
+    // rule, see units.py's MechNotApproved). canDrag=false means the
+    // pointer sequence below never enters "dragging", so a press-and-
+    // release on one of these cards always falls through to the plain
+    // click-menu branch in finish() — same as any other click.
+    const canDrag = mech.status === 'approved'
     let dragging = false
     const onMove = (e: PointerEvent) => {
       if (e.pointerId !== pointerId) return
-      if (!dragging && Math.hypot(e.clientX - startX, e.clientY - startY) > 6) {
+      if (canDrag && !dragging && Math.hypot(e.clientX - startX, e.clientY - startY) > 6) {
         dragging = true
         setDraggingSidebarMech(mech)
       }
@@ -996,39 +1013,6 @@ function GMViewBattletech() {
         )}
       </section>
 
-      {(pendingPilots.length > 0 || pendingMechs.length > 0) && (
-        <section>
-          <h2>Fichas pendientes</h2>
-          {pendingPilots.length > 0 && (
-            <>
-              <h3 className="step-label">Pilotos</h3>
-              <ul className="chips review-list">
-                {pendingPilots.map((p) => (
-                  <li key={p.id}>
-                    #{p.id} {p.name} {p.callsign && `"${p.callsign}"`} — G{p.gunnery}/P{p.piloting}
-                    <button type="button" onClick={() => approvePilot(p.id)}>Aprobar</button>
-                    <button type="button" onClick={() => { setRejectingPilotId(p.id); setRejectNote('') }}>Rechazar</button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-          {pendingMechs.length > 0 && (
-            <>
-              <h3 className="step-label">Mechs</h3>
-              <ul className="chips review-list">
-                {pendingMechs.map((m) => (
-                  <li key={m.id}>
-                    #{m.id} {m.chassis} {m.model} — {m.tonnage}t
-                    <button type="button" onClick={() => approveMech(m.id)}>Aprobar</button>
-                    <button type="button" onClick={() => { setRejectingMechId(m.id); setRejectNote('') }}>Rechazar</button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
-      )}
 
       </div>
       </div>
