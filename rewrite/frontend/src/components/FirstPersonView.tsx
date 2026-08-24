@@ -3,6 +3,7 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 import { HexMap, useAttackVfxQueue } from './HexMap'
 import { MODEL_CHEST_FRACTION, MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
+import { ARMOR_GEOMETRY, ARMOR_VIEWBOX, type MechLocationCode } from '../mechSheetGeometry'
 import {
   attack, getMap, getUnitVisibleEnemies, getWeaponCatalog, markRoundActed, requestInitiative,
   type AttackResult, type Mech, type MapData, type RoundState, type Unit, type VisibleEnemy, type WeaponStats,
@@ -126,7 +127,6 @@ function EnemyMarkersController({
 const HUD_ACCENT = '#1fc8ff'
 const HUD_DANGER = '#e35d5d'
 const HEAT_MAX = 30
-const DIST_MAX = 20
 
 function dotXs(from: number, to: number, step: number): number[] {
   const xs: number[] = []
@@ -179,6 +179,76 @@ function Ladder({
   )
 }
 
+// Same body-location order the record sheet's own diagrams iterate in
+// (MechRecordSheet.tsx) — front armor silhouette only (ARMOR_GEOMETRY),
+// since this HUD readout has no room for the rear/structure panels too.
+const HUD_MECH_LOCATIONS: MechLocationCode[] = ['HD', 'CT', 'LT', 'RT', 'LA', 'RA', 'LL', 'RL']
+
+// blue (full health) -> yellow -> orange -> red (destroyed), same 4-stop
+// gradient the user asked for ("desde el azul del HUD, pasando por
+// amarillo/naranja/rojo a medida que baja la vida"). Piecewise-linear
+// RGB interpolation between whichever two stops straddle `pct`.
+const HEALTH_GRADIENT: [number, [number, number, number]][] = [
+  [1, [31, 200, 255]], // HUD_ACCENT
+  [0.66, [255, 214, 10]],
+  [0.33, [255, 149, 0]],
+  [0, [227, 93, 93]], // HUD_DANGER
+]
+function healthColor(pct: number): string {
+  const clamped = Math.max(0, Math.min(1, pct))
+  for (let i = 0; i < HEALTH_GRADIENT.length - 1; i++) {
+    const [hiP, hiC] = HEALTH_GRADIENT[i]
+    const [loP, loC] = HEALTH_GRADIENT[i + 1]
+    if (clamped <= hiP && clamped >= loP) {
+      const t = hiP === loP ? 0 : (hiP - clamped) / (hiP - loP)
+      const mix = (a: number, b: number) => Math.round(a + (b - a) * t)
+      return `rgb(${mix(hiC[0], loC[0])}, ${mix(hiC[1], loC[1])}, ${mix(hiC[2], loC[2])})`
+    }
+  }
+  return `rgb(${HEALTH_GRADIENT[HEALTH_GRADIENT.length - 1][1].join(', ')})`
+}
+
+/** Replaces the old plain "DIST" ladder — same front-armor silhouette
+ * geometry MechRecordSheet's own armor diagram uses (real user request:
+ * "quiero que utilices los mismos [diagramas] que en la ficha"), each
+ * location filled by a blue→yellow→orange→red gradient of its combined
+ * armor+structure health instead of individual pip dots (too fine-
+ * grained to read at this HUD's small corner size). Nested <svg> so the
+ * silhouette's own sheet-space coordinates (ARMOR_VIEWBOX) don't need
+ * any manual translation into the outer HUD's 1200x700 space. */
+function MechHealthDiagram({ mech, x, y, width, height }: {
+  mech: Mech | null
+  x: number
+  y: number
+  width: number
+  height: number
+}) {
+  const byLoc = new Map((mech?.locations ?? []).map((l) => [l.location, l]))
+  return (
+    <g>
+      <text
+        x={x + width / 2} y={y - 10} fill={HUD_ACCENT} fontSize={13} textAnchor="middle"
+        fontFamily="'Cascadia Mono', monospace" opacity={0.9}
+      >
+        MECH
+      </text>
+      <svg x={x} y={y} width={width} height={height} viewBox={ARMOR_VIEWBOX}>
+        {HUD_MECH_LOCATIONS.map((code) => {
+          const geo = ARMOR_GEOMETRY[code]
+          const loc = byLoc.get(code)
+          const pct = loc ? (loc.armor_current + loc.structure_current) / Math.max(1, loc.armor_max + loc.structure_max) : 1
+          const fill = healthColor(pct)
+          return geo.outline.kind === 'polygon' ? (
+            <polygon key={code} points={geo.outline.d} transform={geo.outline.transform} fill={fill} fillOpacity={0.5} stroke={HUD_ACCENT} strokeWidth={1} strokeOpacity={0.85} />
+          ) : (
+            <path key={code} d={geo.outline.d} transform={geo.outline.transform} fill={fill} fillOpacity={0.5} stroke={HUD_ACCENT} strokeWidth={1} strokeOpacity={0.85} />
+          )
+        })}
+      </svg>
+    </g>
+  )
+}
+
 function CornerBracket({
   x, y, flipX, flipY,
 }: { x: number; y: number; flipX?: boolean; flipY?: boolean }) {
@@ -196,14 +266,13 @@ function CornerBracket({
 /** No center reticle/compass — the user explicitly asked for the frame
  * without it ("sin el marcador del centro"), just the arcs, ladders and
  * corner brackets. */
-function HudFrame({ heat, nearestDistance }: { heat: number; nearestDistance: number | null }) {
+function HudFrame({ heat, mech }: { heat: number; mech: Mech | null }) {
   const topDotsLeft = dotXs(70, 520, 26)
   const topDotsRight = dotXs(680, 1130, 26)
   return (
     <svg className="fp-hud-frame" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid meet">
       {topDotsLeft.map((x) => <circle key={`t-l-${x}`} cx={x} cy={22} r={2.2} fill={HUD_ACCENT} opacity={0.7} />)}
       {topDotsRight.map((x) => <circle key={`t-r-${x}`} cx={x} cy={22} r={2.2} fill={HUD_ACCENT} opacity={0.7} />)}
-      <polyline points="520,22 600,66 680,22" fill="none" stroke={HUD_ACCENT} strokeWidth={1.5} opacity={0.85} />
 
       {topDotsLeft.map((x) => <circle key={`b-l-${x}`} cx={x} cy={678} r={2.2} fill={HUD_ACCENT} opacity={0.7} />)}
       {topDotsRight.map((x) => <circle key={`b-r-${x}`} cx={x} cy={678} r={2.2} fill={HUD_ACCENT} opacity={0.7} />)}
@@ -215,7 +284,7 @@ function HudFrame({ heat, nearestDistance }: { heat: number; nearestDistance: nu
       <CornerBracket x={1160} y={660} flipX flipY />
 
       <Ladder x={90} label="HEAT" value={heat} max={HEAT_MAX} />
-      <Ladder x={1110} label="DIST" value={nearestDistance ?? 0} max={DIST_MAX} mirror />
+      <MechHealthDiagram mech={mech} x={1000} y={230} width={190} height={218} />
     </svg>
   )
 }
@@ -404,6 +473,20 @@ export function FirstPersonView({
   // while a slower one still animates doesn't cut the first one off.
   const { activeAttack: activeAttackVfx, onAttackEffectDone } = useAttackVfxQueue(lastAttack, units)
 
+  // Red screen-edge flash on a successful incoming hit (real user
+  // request) — a monotonic counter, not a boolean, so two hits landing
+  // within the same animation window each still get their own flash: a
+  // boolean toggled back to the same "on" value the CSS animation is
+  // already mid-run for wouldn't restart it, but remounting the overlay
+  // under a fresh `key` (below) always does.
+  const [hitFlashId, setHitFlashId] = useState(0)
+  useEffect(() => {
+    if (lastAttack?.hit && lastAttack.target_unit_id === unit.id) {
+      setHitFlashId((n) => n + 1)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAttack])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose()
@@ -535,7 +618,6 @@ export function FirstPersonView({
   }
 
   const elevationAt = (q: number, r: number) => map?.tiles.find((t) => t.q === q && t.r === r)?.elevation ?? 0
-  const nearestDistance = enemies.length > 0 ? Math.min(...enemies.map((e) => e.distance)) : null
 
   // Only render mechs this cockpit would actually see — this unit's own
   // side always (you'd see your allies regardless), enemies only if
@@ -557,8 +639,17 @@ export function FirstPersonView({
           above everything else (z-index in the CSS) since the ask was
           for the whole feed to read as viewed through a monitor, HUD
           included, not just the 3D canvas underneath it. */}
+      {/* Fake tilt-shift/diorama look (real user request) — a cheap
+          CSS-only miniature-photography trick, no postprocessing
+          dependency: blurred bands along the top/bottom edges (masked to
+          a soft gradient instead of a hard-edged blur rectangle), plus a
+          saturation/contrast boost on the canvas itself (see
+          .fp-canvas-wrap) to sell the "scale model" look. */}
+      <div className="fp-tiltshift-band top" />
+      <div className="fp-tiltshift-band bottom" />
       <div className="fp-crt-overlay" />
-      <HudFrame heat={mech?.heat_current ?? 0} nearestDistance={nearestDistance} />
+      {hitFlashId > 0 && <div key={hitFlashId} className="fp-hit-flash" />}
+      <HudFrame heat={mech?.heat_current ?? 0} mech={mech} />
 
       <div className="fp-topbar">
         <div className="fp-chassis">
@@ -586,7 +677,6 @@ export function FirstPersonView({
             </span>
           ),
         )}
-        <span className="fp-phase-note">(heat: estimado)</span>
       </div>
 
       {!map || !camera ? (

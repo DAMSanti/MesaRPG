@@ -20,6 +20,45 @@
   touch-action: none;
   -webkit-touch-callout: none;
   user-select: none;
+  /* Half of the tilt-shift/diorama look (real user request) — punchier
+     color reads as a scale model under studio light; the actual
+     top/bottom blur is the separate .fp-tiltshift-band overlay below,
+     since `filter` here would blur the HUD DOM overlays too if it lived
+     any higher up the tree. */
+  filter: saturate(1.35) contrast(1.08);
+}
+
+/* Blurred edge bands, masked to a soft gradient rather than a hard-edged
+   blur rectangle — the other half of the tilt-shift/diorama effect.
+   backdrop-filter blurs whatever the WebGL canvas rendered underneath;
+   the mask fades how much of that blur shows through, approximating a
+   shallow depth of field without a real postprocessing pass. */
+.fp-tiltshift-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Below every HUD element (frame z-index 5, topbar/phase-row 10,
+     turn-alert 12, crt-overlay 20) — real user request: "el tilt shift
+     no debe afectar al HUD, solo al mapa." Still above the canvas
+     itself (z-index 0), which is the only thing this band's
+     backdrop-filter is meant to blur. */
+  z-index: 1;
+  pointer-events: none;
+  height: 26%;
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+
+.fp-tiltshift-band.top {
+  top: 0;
+  mask-image: linear-gradient(to bottom, black 0%, black 35%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, black 0%, black 35%, transparent 100%);
+}
+
+.fp-tiltshift-band.bottom {
+  bottom: 0;
+  mask-image: linear-gradient(to top, black 0%, black 35%, transparent 100%);
+  -webkit-mask-image: linear-gradient(to top, black 0%, black 35%, transparent 100%);
 }
 
 /* "Viewed through a screen" pass — kept deliberately subtle and fully
@@ -50,6 +89,27 @@
     radial-gradient(ellipse at center, transparent 55%, rgba(0, 0, 0, 0.4) 100%);
 }
 
+/* Screen-edge red flash on a successful incoming hit (real user
+   request) — an inset glow/border rather than a full-screen wash, so it
+   reads as "the cockpit just took a hit" without hiding the view at the
+   moment it matters most. Remounted under a fresh key on every landed
+   hit (see FirstPersonView's hitFlashId) so the animation restarts even
+   if a previous flash hasn't finished fading. */
+.fp-hit-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  border: 14px solid var(--danger);
+  box-shadow: inset 0 0 70px 24px rgba(227, 93, 93, 0.65);
+  animation: fp-hit-flash-anim 0.55s ease-out forwards;
+}
+
+@keyframes fp-hit-flash-anim {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
 .fp-hud-frame {
   position: absolute;
   inset: 0;
@@ -62,40 +122,65 @@
     drop-shadow(0 0 8px rgba(31, 200, 255, 0.6));
 }
 
+/* Same self-hosted condensed display face MechRecordSheet.css uses for
+   its own headers/banners (Archivo Narrow, offline — VISION.md §3) — the
+   user asked for the mech name in "un tipo de letra tipo mech", and this
+   is the one non-monospace face already in the app for exactly that
+   "banner/plaque" look. Duplicated here (not imported from
+   MechRecordSheet.css) since this component has no other dependency on
+   that file — a repeated @font-face with identical descriptors is inert,
+   not a real double-load. */
+@font-face {
+  font-family: 'Sheet Condensed';
+  src: url('/fonts/ArchivoNarrow-Variable.ttf') format('truetype-variations');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* No background/border box — real user request ("sin el fondo oscuro"):
+   the name, phase row and close button all read as PART of the HUD frame
+   graphic itself (same HUD blue, same glow) rather than a UI panel
+   floating on top of it. */
 .fp-topbar {
   position: absolute;
-  top: 16px;
-  left: 16px;
-  right: 16px;
+  top: 14px;
+  left: 0;
+  right: 0;
   z-index: 10;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
-  font-size: 13px;
-  background: rgba(18, 33, 31, 0.75);
-  padding: 8px 14px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
+  justify-content: center;
+  pointer-events: none;
 }
 
 .fp-chassis {
-  color: var(--accent-2);
-  font-weight: 600;
-  letter-spacing: 0.02em;
+  font-family: 'Sheet Condensed', 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fp-hud-blue);
+  text-shadow: 0 0 3px rgba(31, 200, 255, 0.95), 0 0 14px rgba(31, 200, 255, 0.55);
 }
 
 .fp-close {
+  position: absolute;
+  top: 10px;
+  right: 22px;
+  z-index: 11;
+  pointer-events: auto;
   background: none;
   border: none;
-  color: var(--text-secondary);
-  font-size: 20px;
+  color: var(--fp-hud-blue);
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 26px;
   line-height: 1;
   cursor: pointer;
+  text-shadow: 0 0 3px rgba(31, 200, 255, 0.95), 0 0 12px rgba(31, 200, 255, 0.55);
 }
 
 .fp-close:hover {
-  color: var(--fp-hud-blue);
+  opacity: 0.7;
 }
 
 /* "It's on you right now" — initiative not yet rolled, or your turn to
@@ -105,7 +190,7 @@
    glancing at the HUD mid-conversation. */
 .fp-turn-alert {
   position: absolute;
-  top: 108px;
+  top: 128px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 12;
@@ -130,47 +215,57 @@
   }
 }
 
+/* Directly under the mech name, same treatment (real user request:
+   "acopladas a [el HUD], como si formasen parte de el") — no per-pill
+   box/border, just HUD-blue text that dims when inactive and glows
+   brighter when it's the current phase, so the row reads as one
+   attached readout rather than a separate button bar. */
 .fp-phase-row {
   position: absolute;
-  top: 64px;
-  left: 16px;
+  top: 52px;
+  left: 0;
+  right: 0;
   z-index: 10;
   display: flex;
-  align-items: center;
-  gap: 8px;
+  justify-content: center;
+  align-items: baseline;
+  gap: 18px;
+  pointer-events: none;
 }
 
+/* Bigger + a bottom rule (real user request: "se ven muy pequeñas") —
+   the rule doubles as a hint of the button shape these will need once
+   every phase (not just Iniciativa) becomes tappable, without going
+   back to the old boxed-pill look the mech name/close button just
+   dropped. */
 .fp-phase-pill {
-  padding: 4px 10px;
-  border-radius: 4px;
-  border: 1px solid var(--border);
-  background: rgba(18, 33, 31, 0.75);
-  color: var(--text-secondary);
+  padding: 2px 3px 4px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--fp-hud-blue);
+  opacity: 0.45;
   font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
-  font-size: 11px;
+  font-size: 15px;
+  font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.06em;
 }
 
 .fp-phase-pill.active {
-  border-color: var(--fp-hud-blue);
-  color: var(--fp-hud-blue);
-  box-shadow: 0 0 6px var(--fp-hud-blue);
+  opacity: 1;
+  border-bottom-color: var(--fp-hud-blue);
+  text-shadow: 0 0 3px rgba(31, 200, 255, 0.95), 0 0 10px rgba(31, 200, 255, 0.6);
 }
 
 button.fp-phase-pill.clickable {
   cursor: pointer;
+  pointer-events: auto;
   animation: fp-target-pulse 1.4s ease-in-out infinite;
 }
 
 button.fp-phase-pill.clickable:hover {
-  background: rgba(31, 200, 255, 0.2);
-}
-
-.fp-phase-note {
-  font-size: 10px;
-  color: var(--text-secondary);
-  opacity: 0.6;
+  opacity: 0.7;
 }
 
 .fp-loading {

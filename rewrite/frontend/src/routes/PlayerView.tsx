@@ -20,6 +20,7 @@ import {
   getMechImport,
   getUnits,
   getWeaponCatalog,
+  listCampaignEvents,
   listCampaigns,
   listMechChassis,
   listMechModels,
@@ -34,6 +35,7 @@ import {
   updateMechLocation,
   updatePilot,
   type Campaign,
+  type CampaignEvent,
   type Mech,
   type MechImportData,
   type MechModelResult,
@@ -66,7 +68,7 @@ export function PlayerView() {
   const [pilots, setPilots] = useState<Pilot[]>([])
   const [mechs, setMechs] = useState<Mech[]>([])
   const [units, setUnits] = useState<Unit[]>([])
-  const [log, setLog] = useState<string[]>([])
+  const [campaignEvents, setCampaignEvents] = useState<CampaignEvent[]>([])
   const [weaponId, setWeaponId] = useState<number | ''>('')
   // "¿Quién eres?" starts in 'pick' mode (list of existing pilots + a
   // "crear nuevo" button) — the pilot/mech creation form (below) only
@@ -152,6 +154,7 @@ export function PlayerView() {
       if (mapId != null) {
         setUnits(await getUnits(mapId))
       }
+      setCampaignEvents(await listCampaignEvents(campaignId))
     } catch {
       setError('No se pudo conectar con el servidor.')
     } finally {
@@ -198,23 +201,6 @@ export function PlayerView() {
     getWeaponCatalog().then(setWeaponCatalog).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId, mapId, lastAttack, visibility, rosterVersion])
-
-  // Every resolved attack in the campaign, GM or any player's — see
-  // GMView's identical fix for why (logging only from this client's own
-  // submitWeaponVolley meant nobody else's shots ever showed up here).
-  // Declared up here (using setLog directly, not the pushLog helper
-  // defined further down) so this hook runs before this component's own
-  // early returns below — a hook declared after them would be called
-  // conditionally, which React doesn't allow.
-  useEffect(() => {
-    if (!lastAttack) return
-    const targetChassis = mechs.find((m) => m.id === lastAttack.target_mech_id)?.chassis ?? `mech #${lastAttack.target_mech_id}`
-    const line = lastAttack.hit
-      ? `${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: impacto en ${lastAttack.location}${lastAttack.mech_destroyed ? ' — ¡DESTRUIDO!' : ''} (tirada ${lastAttack.roll})`
-      : `${lastAttack.weapon_name ?? 'Ataque'} → ${targetChassis}: fallo (tirada ${lastAttack.roll} vs ${lastAttack.target_number})`
-    setLog((l) => [line, ...l].slice(0, 8))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastAttack])
 
   const importJoinMech = (data: MechImportData) => {
     setJoinChassis(data.chassis)
@@ -395,6 +381,41 @@ export function PlayerView() {
   const pilot = pilots.find((p) => p.id === pilotId)
   const myMech = mechs.find((m) => m.pilot_id === pilotId)
   const myUnit = units.find((u) => u.pilot_id === pilotId)
+
+  // "El registro del player view debe mostrar solo lo que le afecta a
+  // ese player y mensajes generales" (real user request) — GMView's own
+  // Registro shows the whole campaign; this one narrows to events tied
+  // to this player's own pilot/mech (by id, or via a since-deleted
+  // one's payload snapshot) plus a short list of campaign-wide events
+  // that affect everyone (nobody's pilot "owns" a map or a new round).
+  const GENERAL_EVENT_TYPES = new Set([
+    'map_created', 'map_generated', 'map_deleted', 'map_projected', 'round_started',
+  ])
+  const isMyEvent = (e: CampaignEvent): boolean => {
+    if (GENERAL_EVENT_TYPES.has(e.event_type)) return true
+    const p = e.payload as Record<string, unknown>
+    const snapshot = p.snapshot as Record<string, unknown> | undefined
+    if (e.event_type.startsWith('pilot_')) {
+      return p.pilot_id === pilotId || snapshot?.id === pilotId
+    }
+    if (e.event_type.startsWith('mech_')) {
+      return (myMech != null && (p.mech_id === myMech.id || snapshot?.id === myMech.id)) || snapshot?.pilot_id === pilotId
+    }
+    if (e.event_type === 'initiative_rolled') return p.pilot_id === pilotId
+    if (e.event_type === 'unit_placed' || e.event_type === 'unit_moved') {
+      return p.pilot_id === pilotId || (myMech != null && p.mech_id === myMech.id)
+    }
+    if (e.event_type === 'unit_removed') {
+      return snapshot?.pilot_id === pilotId || (myMech != null && snapshot?.mech_id === myMech.id)
+    }
+    if (e.event_type === 'attack') {
+      const result = p.result as Record<string, unknown> | undefined
+      return myMech != null && result != null && (result.attacker_mech_id === myMech.id || result.target_mech_id === myMech.id)
+    }
+    return false
+  }
+  const myEvents = campaignEvents.filter(isMyEvent)
+
   // "Acciones" (movimiento, ataque, iniciativa…) no tiene sentido hasta
   // que el GM haya aceptado tanto al piloto como al mech — real user
   // request.
@@ -687,10 +708,14 @@ export function PlayerView() {
         </ul>
       </section>
 
-      {log.length > 0 && (
+      {myEvents.length > 0 && (
         <section>
           <h2>Registro</h2>
-          <ul className="log">{log.map((l, i) => <li key={i}>{l}</li>)}</ul>
+          <ul className="log event-log">
+            {myEvents.map((e) => (
+              <li key={e.id} className={e.undone ? 'event-undone' : ''}>{e.summary}</li>
+            ))}
+          </ul>
         </section>
       )}
         </>

@@ -305,3 +305,14 @@ select {
 .log li:first-child {
   color: var(--accent-2);
 }
+
+.event-log {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.event-undone {
+  opacity: 0.45;
+  text-decoration: line-through;
+}

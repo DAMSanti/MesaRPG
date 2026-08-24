@@ -114,7 +114,10 @@ def create_unit(
         unit_id = cur.lastrowid
         if mech_id is not None:
             name = f"{mech['chassis']} {mech['model'] or ''}".strip() if mech else f"mech #{mech_id}"
-            events.log_event(conn, campaign_id, "unit_placed", f"{name} colocado en el mapa", {"unit_id": unit_id})
+            events.log_event(
+                conn, campaign_id, "unit_placed", f"{name} colocado en el mapa",
+                {"unit_id": unit_id, "mech_id": mech_id, "pilot_id": pilot_id},
+            )
         return _get(conn, unit_id)
 
 
@@ -143,7 +146,7 @@ def delete_unit(unit_id: int) -> bool:
 def move_unit(unit_id: int, q: int, r: int, facing_deg: int | None = None) -> dict:
     with db.connect() as conn:
         prev = conn.execute(
-            "SELECT campaign_id, q, r, facing_deg FROM units WHERE id = ?", (unit_id,)
+            "SELECT campaign_id, mech_id, pilot_id, q, r, facing_deg FROM units WHERE id = ?", (unit_id,)
         ).fetchone()
         if facing_deg is None:
             conn.execute("UPDATE units SET q = ?, r = ? WHERE id = ?", (q, r, unit_id))
@@ -155,7 +158,10 @@ def move_unit(unit_id: int, q: int, r: int, facing_deg: int | None = None) -> di
         if prev:
             events.log_event(
                 conn, prev["campaign_id"], "unit_moved", "Unidad movida",
-                {"unit_id": unit_id, "prev_q": prev["q"], "prev_r": prev["r"], "prev_facing_deg": prev["facing_deg"]},
+                {
+                    "unit_id": unit_id, "mech_id": prev["mech_id"], "pilot_id": prev["pilot_id"],
+                    "prev_q": prev["q"], "prev_r": prev["r"], "prev_facing_deg": prev["facing_deg"],
+                },
             )
         return _get(conn, unit_id)
 
