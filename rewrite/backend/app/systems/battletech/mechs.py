@@ -9,9 +9,10 @@ way `assets/markers`... er, the same way a GM would fill in a paper
 sheet's boxes by hand.
 """
 
-from . import db, equipment, weapons
-from .critical_layout import generate_default_criticals
-from .db import MECH_LOCATIONS, REAR_ARMOR_LOCATIONS
+from ... import db, equipment
+from ...critical_layout import generate_default_criticals
+from ...db import MECH_LOCATIONS, REAR_ARMOR_LOCATIONS
+from . import weapons
 
 # Character sheet approval (ROADMAP.md Fase R3 — "suite jugable"), same
 # trio as app/pilots.py — kept independent per module rather than shared,

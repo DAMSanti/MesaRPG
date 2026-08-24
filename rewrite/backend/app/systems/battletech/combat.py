@@ -38,17 +38,18 @@ infantry/ProtoMechs.
 
 import secrets
 
-from . import db, mechs, pilots, weapons
-from .hexgrid import Hex
-from .hexgrid import distance as hex_distance
-from .hexgrid import has_los
-from .hexgrid import line as hex_line
-from .maps import get_map, tiles_lookup
-from .squaregrid import Cell
-from .squaregrid import distance as square_distance
-from .squaregrid import has_los as square_has_los
-from .squaregrid import line as square_line
-from .units import attack_side, get_unit
+from ... import db
+from ...hexgrid import Hex
+from ...hexgrid import distance as hex_distance
+from ...hexgrid import has_los
+from ...hexgrid import line as hex_line
+from ...maps import get_map, tiles_lookup
+from ...squaregrid import Cell
+from ...squaregrid import distance as square_distance
+from ...squaregrid import has_los as square_has_los
+from ...squaregrid import line as square_line
+from ...units import attack_side, get_unit
+from . import mechs, pilots, weapons
 
 
 class OutOfAmmo(ValueError):

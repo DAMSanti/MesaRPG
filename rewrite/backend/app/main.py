@@ -12,8 +12,8 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from . import campaigns, combat, db, equipment, mapgen, maps, mech_templates, mechs, pilots, rolls, systems, table_session, units, weapons
-from .systems.battletech import movement, turns
+from . import campaigns, db, equipment, mapgen, maps, mech_templates, rolls, systems, table_session, units
+from .systems.battletech import combat, mechs, movement, pilots, turns, weapons
 from .ws import hub_manager, manager
 
 

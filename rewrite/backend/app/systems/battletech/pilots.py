@@ -1,4 +1,4 @@
-from . import db
+from ... import db
 
 # player = a player's own character; enemy = GM-controlled hostile;
 # npc = non-aggressive (merchants, quest contacts, etc.) — Battletech only

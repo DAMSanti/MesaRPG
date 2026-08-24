@@ -13,8 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from app import campaigns as campaigns_module
-from app import mechs, pilots
-from app.systems.battletech import turns
+from app.systems.battletech import mechs, pilots, turns
 from tests.conftest import ATLAS_LOCATIONS
 
 
@@ -275,8 +274,8 @@ def test_movement_order_in_team_mode_groups_by_side_total(campaign):
 
 
 def test_starting_a_new_round_clears_prior_movement(campaign, pilot, monkeypatch):
-    from app.systems.battletech import movement
-    from app import maps, mechs, units as units_module
+    from app.systems.battletech import mechs, movement
+    from app import maps, units as units_module
     from tests.conftest import ATLAS_LOCATIONS
 
     m = maps.create_map(campaign["id"], "Flat", width=6, height=6)
@@ -382,7 +381,7 @@ def test_ranged_target_pilot_ids_populated_when_a_weapon_is_in_range(campaign):
 
 
 def test_ranged_target_pilot_ids_empty_without_ammo(campaign):
-    from app import mechs as mechs_module
+    from app.systems.battletech import mechs as mechs_module
 
     attacker_pilot, _ = _two_mechs_movement_complete(campaign, distance_apart=2, weapon="AC/20")
     mech = mechs_module.get_mech(next(

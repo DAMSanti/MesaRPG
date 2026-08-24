@@ -34,9 +34,10 @@ import heapq
 import math
 from typing import Literal
 
-from ... import db, mechs, units
+from ... import db, units
 from ...mapgen import TERRAIN_MOVE_COST
 from ...maps import get_map
+from . import mechs
 
 MovementType = Literal["walk", "run", "jump"]
 

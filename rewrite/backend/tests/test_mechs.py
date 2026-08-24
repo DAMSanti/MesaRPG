@@ -1,6 +1,6 @@
 import pytest
 
-from app import mechs
+from app.systems.battletech import mechs
 from tests.conftest import ATLAS_LOCATIONS
 
 

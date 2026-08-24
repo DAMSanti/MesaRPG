@@ -16,7 +16,7 @@ modeled (a known simplification, not a silent gap: flagged here so it's
 easy to find later).
 """
 
-from .weapons import WEAPON_CATALOG
+from .systems.battletech.weapons import WEAPON_CATALOG
 
 EMPTY = "-Empty-"
 

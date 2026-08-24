@@ -1,6 +1,6 @@
 import pytest
 
-from app import combat, mechs
+from app.systems.battletech import combat, mechs
 
 
 def test_target_movement_mod_brackets():
@@ -309,7 +309,8 @@ def test_partial_cover_bonus_zero_for_an_adjacent_target():
 
 
 def _place_two_units(campaign, width=10, height=6):
-    from app import maps, mechs as mechs_module, pilots, units
+    from app import maps, units
+    from app.systems.battletech import mechs as mechs_module, pilots
     from tests.conftest import ATLAS_LOCATIONS
 
     m = maps.create_map(campaign["id"], "Combat Test", width=width, height=height)

@@ -1,6 +1,6 @@
 import pytest
 
-from app import pilots
+from app.systems.battletech import pilots
 
 
 def test_create_pilot_defaults_to_player_faction(campaign):
@@ -129,7 +129,7 @@ def test_delete_pilot_returns_false_for_unknown_id(campaign):
 
 
 def test_delete_pilot_unpilots_but_does_not_delete_their_mech(campaign):
-    from app import mechs
+    from app.systems.battletech import mechs
     from tests.conftest import ATLAS_LOCATIONS
 
     p = pilots.create_pilot(campaign["id"], "Soon Gone")

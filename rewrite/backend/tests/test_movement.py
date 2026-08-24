@@ -1,5 +1,5 @@
-from app import maps, mechs, pilots, units
-from app.systems.battletech import movement
+from app import maps, units
+from app.systems.battletech import mechs, movement, pilots
 from tests.conftest import ATLAS_LOCATIONS
 
 

@@ -1,6 +1,6 @@
 import pytest
 
-from app import weapons
+from app.systems.battletech import weapons
 
 
 def test_catalog_has_the_standard_inner_sphere_loadout():

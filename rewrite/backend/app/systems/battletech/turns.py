@@ -43,7 +43,8 @@ without a full phase-by-phase turn structure.
 import json
 import random
 
-from ... import campaigns, db, mechs, pilots, units, weapons
+from ... import campaigns, db, units
+from . import mechs, pilots, weapons
 
 # NPCs are non-aggressive by definition (ROADMAP.md S2 follow-up) — they
 # never participate in combat initiative, in either mode.

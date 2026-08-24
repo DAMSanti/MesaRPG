@@ -13,12 +13,13 @@
 
 import math
 
-from . import db, mechs
+from . import db
 from .hexgrid import Hex, has_los
 from .hexgrid import distance as hex_distance
 from .maps import get_map, tiles_lookup
 from .squaregrid import Cell, has_los as square_has_los
 from .squaregrid import distance as square_distance
+from .systems.battletech import mechs
 
 _SQRT3 = math.sqrt(3)
 

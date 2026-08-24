@@ -1,6 +1,7 @@
 import pytest
 
-from app import campaigns, db, mechs, pilots
+from app import campaigns, db
+from app.systems.battletech import mechs, pilots
 
 ATLAS_LOCATIONS = [
     {"location": "HD", "armor_max": 9, "structure_max": 3},

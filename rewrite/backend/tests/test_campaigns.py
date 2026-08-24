@@ -1,6 +1,7 @@
 import pytest
 
-from app import campaigns, mechs, pilots, systems
+from app import campaigns, systems
+from app.systems.battletech import mechs, pilots
 from tests.conftest import ATLAS_LOCATIONS
 
 
