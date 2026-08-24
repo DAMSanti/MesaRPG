@@ -45,3 +45,31 @@ def test_create_map_generates_square_grid_for_dnd5e_campaign():
     assert len(m["tiles"]) == 5 * 4
     coords = {(t["q"], t["r"]) for t in m["tiles"]}
     assert coords == {(x, y) for x in range(5) for y in range(4)}
+
+
+def test_delete_map_removes_it(campaign):
+    m = maps.create_map(campaign["id"], "Doomed map", width=3, height=3)
+    assert maps.delete_map(m["id"]) is True
+    assert maps.get_map(m["id"]) is None
+
+
+def test_delete_map_returns_false_for_unknown_id(campaign):
+    assert maps.delete_map(999999) is False
+
+
+def test_delete_map_clears_active_map_id_if_it_was_active(campaign):
+    m = maps.create_map(campaign["id"], "Active map", width=3, height=3)
+    campaigns.set_active_map(campaign["id"], m["id"])
+    maps.delete_map(m["id"])
+    updated = campaigns.get_campaign(campaign["id"])
+    assert updated["active_map_id"] is None
+
+
+def test_delete_map_leaves_other_maps_and_active_map_untouched(campaign):
+    keep = maps.create_map(campaign["id"], "Keep me", width=3, height=3)
+    doomed = maps.create_map(campaign["id"], "Doomed map", width=3, height=3)
+    campaigns.set_active_map(campaign["id"], keep["id"])
+    maps.delete_map(doomed["id"])
+    assert maps.get_map(keep["id"]) is not None
+    updated = campaigns.get_campaign(campaign["id"])
+    assert updated["active_map_id"] == keep["id"]

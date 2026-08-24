@@ -126,6 +126,8 @@ export const createMap = (campaignId: number, name: string, width: number, heigh
 
 export const getMap = (mapId: number) => request<MapData>(`/api/maps/${mapId}`)
 
+export const deleteMap = (mapId: number) => request<{ ok: boolean }>(`/api/maps/${mapId}`, { method: 'DELETE' })
+
 export interface TerrainInfo {
   elevation: number
   blocks_los: boolean

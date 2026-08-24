@@ -1156,3 +1156,17 @@ def test_dnd_round_lifecycle_via_api(monkeypatch):
 
         fetched = c.get(f"/api/campaigns/{camp['id']}/dnd/round").json()
         assert fetched["acted_character_ids"] == [a["id"]]
+
+
+def test_delete_map_endpoint_removes_it_and_404s_after():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "Doomed", "width": 3, "height": 3}).json()
+
+        assert c.delete(f"/api/maps/{m['id']}").json() == {"ok": True}
+        assert c.get(f"/api/maps/{m['id']}").status_code == 404
+
+
+def test_delete_map_endpoint_404s_for_unknown_map():
+    with client() as c:
+        assert c.delete("/api/maps/999999").status_code == 404

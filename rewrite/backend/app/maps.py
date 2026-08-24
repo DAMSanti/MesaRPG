@@ -59,6 +59,20 @@ def get_map(map_id: int) -> dict | None:
         return _get(conn, map_id)
 
 
+def delete_map(map_id: int) -> bool:
+    """hex_tiles/units both cascade on map_id (db.py's own FK
+    declarations), so this alone cleans up everything on the map itself.
+    campaigns.active_map_id has no FK constraint at all though (it
+    predates that column existing as a real reference — db.py's own
+    migration comment), so a campaign that had THIS map projected would
+    otherwise keep pointing at a now-nonexistent id; cleared here rather
+    than left dangling for whichever caller reads it next to discover."""
+    with db.connect() as conn:
+        conn.execute("UPDATE campaigns SET active_map_id = NULL WHERE active_map_id = ?", (map_id,))
+        cur = conn.execute("DELETE FROM maps WHERE id = ?", (map_id,))
+        return cur.rowcount > 0
+
+
 def list_maps(campaign_id: int) -> list[dict]:
     with db.connect() as conn:
         rows = conn.execute(

@@ -632,6 +632,13 @@ def get_map(map_id: int) -> dict:
     return m
 
 
+@app.delete("/api/maps/{map_id}")
+def delete_map(map_id: int) -> dict:
+    if not maps.delete_map(map_id):
+        raise HTTPException(404, f"Map {map_id} not found")
+    return {"ok": True}
+
+
 def _require_map(map_id: int) -> dict:
     m = maps.get_map(map_id)
     if not m:
