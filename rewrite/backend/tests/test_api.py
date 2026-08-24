@@ -984,6 +984,45 @@ def test_create_unit_endpoint_422s_for_a_pending_mech():
         assert res.status_code == 422
 
 
+def test_delete_unit_endpoint_removes_it_and_404s_after():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 4, "height": 4}).json()
+        unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0}).json()
+
+        res = c.delete(f"/api/units/{unit['id']}")
+        assert res.status_code == 200
+        assert res.json() == {"deleted": True}
+
+        res2 = c.delete(f"/api/units/{unit['id']}")
+        assert res2.status_code == 404
+
+
+def test_delete_unit_endpoint_404s_for_unknown_unit():
+    with client() as c:
+        res = c.delete("/api/units/999999")
+        assert res.status_code == 404
+
+
+def test_placing_a_mech_on_a_new_map_removes_it_from_the_old_map_via_api():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        map_a = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "A", "width": 4, "height": 4}).json()
+        map_b = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "B", "width": 4, "height": 4}).json()
+        mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={"chassis": "Locust", "tonnage": 20, "walk_mp": 8, "run_mp": 12, "locations": _ATLAS_LOCATIONS},
+        ).json()
+
+        c.post(f"/api/maps/{map_a['id']}/units", json={"q": 0, "r": 0, "mech_id": mech["id"]})
+        c.post(f"/api/maps/{map_b['id']}/units", json={"q": 1, "r": 1, "mech_id": mech["id"]})
+
+        assert c.get(f"/api/maps/{map_a['id']}/units").json() == []
+        remaining = c.get(f"/api/maps/{map_b['id']}/units").json()
+        assert len(remaining) == 1
+        assert remaining[0]["mech_id"] == mech["id"]
+
+
 def test_move_with_mp_endpoint_moves_a_unit_within_range():
     with client() as c:
         camp = c.post("/api/campaigns", json={"name": "API Test"}).json()

@@ -705,6 +705,11 @@ class UnitIn(BaseModel):
 @app.post("/api/maps/{map_id}/units")
 async def create_unit(map_id: int, body: UnitIn) -> dict:
     m = _require_map(map_id)
+    # A mech can only be on one map at a time (units.create_unit itself
+    # enforces this) — captured *before* the create so an already-open
+    # view of whatever OLD map it was on also learns it's gone, not just
+    # the new map below.
+    old_maps = units.maps_for_mech(body.mech_id) if body.mech_id is not None else set()
     try:
         created = units.create_unit(
             campaign_id=m["campaign_id"],
@@ -724,7 +729,22 @@ async def create_unit(map_id: int, body: UnitIn) -> dict:
     # happened to also touch visibility — same gap move_unit already
     # closed for repositioning.
     await _broadcast_visibility(m["campaign_id"], map_id)
+    for old_campaign_id, old_map_id in old_maps:
+        if old_map_id != map_id:
+            await _broadcast_visibility(old_campaign_id, old_map_id)
     return created
+
+
+@app.delete("/api/units/{unit_id}")
+async def delete_unit(unit_id: int) -> dict:
+    """Removes a token from the map (GM's "Quitar del mapa") without
+    touching the mech/pilot it represents — see units.delete_unit."""
+    unit = units.get_unit(unit_id)
+    if not unit:
+        raise HTTPException(404, f"Unit {unit_id} not found")
+    units.delete_unit(unit_id)
+    await _broadcast_visibility(unit["campaign_id"], unit["map_id"])
+    return {"deleted": True}
 
 
 @app.get("/api/maps/{map_id}/units")

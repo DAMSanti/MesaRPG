@@ -10,16 +10,31 @@ export function useMapState(mapId: number | null, refetchToken: unknown) {
   const [map, setMap] = useState<MapData | null>(null)
   const [units, setUnits] = useState<Unit[]>([])
 
+  // Tiles only ever change from MapEditorView (a separate route) — this
+  // embedded map is read-only for terrain, so there's no reason to
+  // refetch it on every refetchToken tick (visibility_update fires on
+  // every unit placed/moved/attacked). Refetching it anyway used to
+  // recreate `map` — and every <Tile> under it — each time, which
+  // visibly flickered the whole board on something as small as placing
+  // one mech (real user report). Only `units` needs to track
+  // refetchToken; `map` is fetched once per mapId.
   useEffect(() => {
     if (mapId == null) return
     let cancelled = false
-    ;(async () => {
-      const [m, u] = await Promise.all([getMap(mapId), getUnits(mapId)])
-      if (!cancelled) {
-        setMap(m)
-        setUnits(u)
-      }
-    })()
+    getMap(mapId).then((m) => {
+      if (!cancelled) setMap(m)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [mapId])
+
+  useEffect(() => {
+    if (mapId == null) return
+    let cancelled = false
+    getUnits(mapId).then((u) => {
+      if (!cancelled) setUnits(u)
+    })
     return () => {
       cancelled = true
     }

@@ -92,6 +92,49 @@ def test_create_unit_with_an_approved_mech_succeeds(campaign, atlas):
     assert unit["mech_id"] == atlas["id"]
 
 
+def test_delete_unit_removes_it(campaign, atlas):
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=atlas["id"])
+    assert units.delete_unit(unit["id"]) is True
+    assert units.get_unit(unit["id"]) is None
+
+
+def test_delete_unit_returns_false_for_unknown_id():
+    assert units.delete_unit(999999) is False
+
+
+def test_delete_unit_does_not_delete_the_mech(campaign, atlas):
+    # "Quitar del mapa" — the mech stays in the campaign, just unplaced.
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=atlas["id"])
+    units.delete_unit(unit["id"])
+    assert mechs.get_mech(atlas["id"]) is not None
+
+
+def test_placing_a_mech_on_a_second_map_removes_it_from_the_first(campaign, atlas):
+    map_a = maps.create_map(campaign["id"], "Map A", width=4, height=4)
+    map_b = maps.create_map(campaign["id"], "Map B", width=4, height=4)
+    unit_a = units.create_unit(campaign["id"], map_a["id"], q=0, r=0, mech_id=atlas["id"])
+
+    unit_b = units.create_unit(campaign["id"], map_b["id"], q=1, r=1, mech_id=atlas["id"])
+
+    assert units.get_unit(unit_a["id"]) is None
+    assert units.get_unit(unit_b["id"]) is not None
+    assert units.list_units(map_a["id"]) == []
+    assert [u["id"] for u in units.list_units(map_b["id"])] == [unit_b["id"]]
+
+
+def test_placing_a_mech_twice_on_the_same_map_moves_it_not_duplicates(campaign, atlas):
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    first = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=atlas["id"])
+    second = units.create_unit(campaign["id"], m["id"], q=2, r=2, mech_id=atlas["id"])
+
+    assert units.get_unit(first["id"]) is None
+    remaining = units.list_units(m["id"])
+    assert [u["id"] for u in remaining] == [second["id"]]
+    assert (remaining[0]["q"], remaining[0]["r"]) == (2, 2)
+
+
 def test_create_unit_rejects_a_pending_mech(campaign, pilot):
     # Real user request: a mech the GM hasn't reviewed yet can't be
     # placed on the board — approval has to come first.

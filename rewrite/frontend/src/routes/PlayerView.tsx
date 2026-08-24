@@ -382,7 +382,11 @@ export function PlayerView() {
                 disabled={joinModelOptions.length === 0}
               >
                 <option value="">modelo…</option>
-                {joinModelOptions.map((m) => <option key={m.file} value={m.file}>{m.model}</option>)}
+                {joinModelOptions.map((m) => (
+                  <option key={m.file} value={m.file}>
+                    {MECH_CHASSIS_ASSETS[joinChassis]?.models[m.model] ? `🛠️ ${m.model}` : m.model}
+                  </option>
+                ))}
               </select>
             </div>
             <button onClick={join} disabled={!joinName || !joinChassis || joinPin.length !== 4}>Crear ficha</button>
@@ -395,6 +399,10 @@ export function PlayerView() {
   const pilot = pilots.find((p) => p.id === pilotId)
   const myMech = mechs.find((m) => m.pilot_id === pilotId)
   const myUnit = units.find((u) => u.pilot_id === pilotId)
+  // "Acciones" (movimiento, ataque, iniciativa…) no tiene sentido hasta
+  // que el GM haya aceptado tanto al piloto como al mech — real user
+  // request.
+  const canAct = pilot?.status === 'approved' && myMech?.status === 'approved'
 
   const visibleEnemies = units.filter(
     (u) => u.pilot_id !== pilotId && (visible[u.id] ?? []).includes(pilotId),
@@ -571,9 +579,11 @@ export function PlayerView() {
         <button className={tab === 'ficha' ? 'active' : ''} onClick={() => setTab('ficha')}>
           <span className="nav-icon">📋</span><span className="nav-label">Ficha</span>
         </button>
-        <button className={tab === 'acciones' ? 'active' : ''} onClick={() => setTab('acciones')}>
-          <span className="nav-icon">⚔️</span><span className="nav-label">Acciones</span>
-        </button>
+        {canAct && (
+          <button className={tab === 'acciones' ? 'active' : ''} onClick={() => setTab('acciones')}>
+            <span className="nav-icon">⚔️</span><span className="nav-label">Acciones</span>
+          </button>
+        )}
         <span className="player-tabs-campaign">{campaign?.name ?? ''}</span>
       </nav>
       {error && <div className="error-banner">{error} <button onClick={() => setError(null)}>×</button></div>}
@@ -624,7 +634,7 @@ export function PlayerView() {
         </section>
       )}
 
-      {tab === 'acciones' && (
+      {tab === 'acciones' && canAct && (
         <>
       {roundState && roundState.round_number > 0 && (
         // roundState.mode (not campaign.initiative_mode) — roundState
@@ -756,7 +766,11 @@ export function PlayerView() {
               disabled={editMechModelOptions.length === 0}
             >
               <option value="">modelo…</option>
-              {editMechModelOptions.map((m) => <option key={m.file} value={m.file}>{m.model}</option>)}
+              {editMechModelOptions.map((m) => (
+                <option key={m.file} value={m.file}>
+                  {MECH_CHASSIS_ASSETS[editMechChassis]?.models[m.model] ? `🛠️ ${m.model}` : m.model}
+                </option>
+              ))}
             </select>
           </div>
           <button onClick={submitEditRejectedMech} disabled={!editMechChassis}>Guardar y reenviar</button>

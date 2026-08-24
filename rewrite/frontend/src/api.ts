@@ -482,6 +482,11 @@ export const createUnit = (
   },
 ) => request<Unit>(`/api/maps/${mapId}/units`, { method: 'POST', body: JSON.stringify(body) })
 
+// "Quitar del mapa" — removes the token, not the mech/pilot it
+// represents (that's deleteMech/deletePilot above).
+export const deleteUnit = (unitId: number) =>
+  request<{ deleted: boolean }>(`/api/units/${unitId}`, { method: 'DELETE' })
+
 // ---- D&D 5e (ROADMAP.md Fase R4 — segundo sistema, slice mínimo) --------
 
 export interface DndCharacter {

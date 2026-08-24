@@ -97,6 +97,12 @@ def create_unit(
         if mech and mech["status"] != "approved":
             raise MechNotApproved(f"Mech {mech_id} is {mech['status']!r}, not approved")
     with db.connect() as conn:
+        # A mech can only be on one map at a time (real user request) —
+        # placing it here (even on a different map than before) replaces
+        # whatever unit it already had, instead of leaving a duplicate
+        # token behind on the old map.
+        if mech_id is not None:
+            conn.execute("DELETE FROM units WHERE mech_id = ?", (mech_id,))
         cur = conn.execute(
             """
             INSERT INTO units
@@ -106,6 +112,16 @@ def create_unit(
             (campaign_id, map_id, mech_id, pilot_id, q, r, facing_deg, is_ghost, not is_ghost, dnd_character_id),
         )
         return _get(conn, cur.lastrowid)
+
+
+def delete_unit(unit_id: int) -> bool:
+    """Removes a token from its map without touching the mech/pilot/
+    character it represents — the GM's "Quitar del mapa" action (real
+    user request), distinct from mechs.delete_mech which removes the
+    mech from the campaign entirely."""
+    with db.connect() as conn:
+        cur = conn.execute("DELETE FROM units WHERE id = ?", (unit_id,))
+        return cur.rowcount > 0
 
 
 def move_unit(unit_id: int, q: int, r: int, facing_deg: int | None = None) -> dict:

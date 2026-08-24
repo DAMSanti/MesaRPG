@@ -39,6 +39,7 @@ import {
   createUnit,
   deleteMech,
   deletePilot,
+  deleteUnit,
   getMechImport,
   getUnitVisibleEnemies,
   getWeaponCatalog,
@@ -187,9 +188,19 @@ function GMViewBattletech() {
   const [piloting, setPiloting] = useState(5)
   const [pilotFaction, setPilotFaction] = useState<Faction>('player')
   const [pilotColor, setPilotColor] = useState(suggestPilotColor(0))
+  // Belt-and-suspenders against an impatient double-click creating the
+  // same pilot twice (real user report — the same risk exists here as
+  // for submitMech below, even though only mechs were reported). The
+  // ref check is synchronous, so it also catches a second click that
+  // lands before React has re-rendered the disabled button — state
+  // alone (submittingPilot) can't guarantee that on its own.
+  const [submittingPilot, setSubmittingPilot] = useState(false)
+  const submittingPilotRef = useRef(false)
 
   const submitPilot = async () => {
-    if (!campaignId || !pilotName) return
+    if (!campaignId || !pilotName || submittingPilotRef.current) return
+    submittingPilotRef.current = true
+    setSubmittingPilot(true)
     try {
       const p = await createPilot(campaignId, {
         name: pilotName,
@@ -206,6 +217,9 @@ function GMViewBattletech() {
       refetch()
     } catch {
       setError('No se pudo crear el piloto.')
+    } finally {
+      submittingPilotRef.current = false
+      setSubmittingPilot(false)
     }
   }
 
@@ -266,8 +280,18 @@ function GMViewBattletech() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedModelFile])
 
+  // Same double-submit guard as submitPilot above — the actual reported
+  // bug: "guardara varias veces el mismo mech" from an impatient
+  // double-click, since createMech + its follow-up weapon/equipment
+  // POSTs take a moment. The ref check is synchronous so it also blocks
+  // a second click that lands before the disabled button has re-rendered.
+  const [submittingMech, setSubmittingMech] = useState(false)
+  const submittingMechRef = useRef(false)
+
   const submitMech = async () => {
-    if (!campaignId || !chassis || mechPilotId === '') return
+    if (!campaignId || !chassis || mechPilotId === '' || submittingMechRef.current) return
+    submittingMechRef.current = true
+    setSubmittingMech(true)
     try {
       const locs = buildMechLocationsPayload(locations)
       const m = await createMech(campaignId, {
@@ -309,6 +333,9 @@ function GMViewBattletech() {
       refetch()
     } catch {
       setError('No se pudo crear el mech. Revisa que armadura/estructura sean números válidos.')
+    } finally {
+      submittingMechRef.current = false
+      setSubmittingMech(false)
     }
   }
 
@@ -653,6 +680,19 @@ function GMViewBattletech() {
       refetch()
     } catch {
       setError('No se pudo eliminar el mech.')
+    }
+  }
+
+  // "Quitar del mapa" (real user request) — removes the token so the
+  // mech is free to be placed again, but leaves the mech itself (and
+  // its pilot) untouched in the campaign, unlike submitDeleteMech above.
+  const removeMechFromMap = async (mech: Mech, unit: Unit) => {
+    try {
+      await deleteUnit(unit.id)
+      setUnits((prev) => prev.filter((u) => u.id !== unit.id))
+      pushLog(`${mechCardName(mech)} quitado del mapa`)
+    } catch {
+      setError('No se pudo quitar el mech del mapa.')
     }
   }
 
@@ -1034,7 +1074,7 @@ function GMViewBattletech() {
             piloting={piloting} onPiloting={setPiloting}
             faction={pilotFaction} onFaction={setPilotFaction} showFaction
             color={pilotColor} onColor={setPilotColor}
-            onSubmit={submitPilot} submitLabel="Crear piloto" submitDisabled={!pilotName}
+            onSubmit={submitPilot} submitLabel={submittingPilot ? 'Creando…' : 'Crear piloto'} submitDisabled={!pilotName || submittingPilot}
           />
         </Modal>
       )}
@@ -1054,7 +1094,11 @@ function GMViewBattletech() {
               disabled={modelOptions.length === 0}
             >
               <option value="">modelo…</option>
-              {modelOptions.map((m) => <option key={m.file} value={m.file}>{m.model}</option>)}
+              {modelOptions.map((m) => (
+                <option key={m.file} value={m.file}>
+                  {MECH_CHASSIS_ASSETS[selectedChassis]?.models[m.model] ? `🛠️ ${m.model}` : m.model}
+                </option>
+              ))}
             </select>
             <select value={mechPilotId} onChange={(e) => setMechPilotId(e.target.value ? Number(e.target.value) : '')}>
               <option value="">piloto… (obligatorio)</option>
@@ -1062,7 +1106,9 @@ function GMViewBattletech() {
             </select>
           </div>
 
-          <button onClick={submitMech} disabled={!chassis || mechPilotId === ''}>Guardar</button>
+          <button onClick={submitMech} disabled={!chassis || mechPilotId === '' || submittingMech}>
+            {submittingMech ? 'Guardando…' : 'Guardar'}
+          </button>
         </Modal>
       )}
 
@@ -1075,6 +1121,7 @@ function GMViewBattletech() {
       {mechMenu && (() => {
         const menuPilot = pilots.find((p) => p.id === mechMenu.mech.pilot_id)
         const showRollInitiative = campaign?.initiative_mode === 'individual' && menuPilot?.faction === 'enemy'
+        const menuUnit = units.find((u) => u.mech_id === mechMenu.mech.id)
         return (
           <DropdownMenu
             x={mechMenu.x} y={mechMenu.y}
@@ -1095,6 +1142,9 @@ function GMViewBattletech() {
               >
                 Tirar iniciativa
               </button>
+            )}
+            {menuUnit && (
+              <button onClick={() => { removeMechFromMap(mechMenu.mech, menuUnit); setMechMenu(null) }}>Quitar del mapa</button>
             )}
             <button onClick={() => { openEditMech(mechMenu.mech); setMechMenu(null) }}>Editar</button>
             <button className="danger" onClick={() => { setConfirmDeleteMech(mechMenu.mech); setMechMenu(null) }}>Eliminar</button>
