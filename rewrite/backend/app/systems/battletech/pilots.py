@@ -1,3 +1,6 @@
+import hashlib
+import secrets
+
 from ... import db
 
 # player = a player's own character; enemy = GM-controlled hostile;
@@ -23,6 +26,10 @@ class InvalidStatusTransition(ValueError):
     pass
 
 
+class InvalidPin(ValueError):
+    pass
+
+
 def _check_faction(faction: str) -> None:
     if faction not in FACTIONS:
         raise UnknownFaction(f"Unknown faction {faction!r}, expected one of {sorted(FACTIONS)}")
@@ -31,6 +38,40 @@ def _check_faction(faction: str) -> None:
 def _check_status(status: str) -> None:
     if status not in STATUSES:
         raise UnknownStatus(f"Unknown status {status!r}, expected one of {sorted(STATUSES)}")
+
+
+def _check_pin(pin: str) -> None:
+    if len(pin) != 4 or not pin.isdigit():
+        raise InvalidPin(f"PIN must be exactly 4 digits, got {pin!r}")
+
+
+def _hash_pin(pin: str, salt: str) -> str:
+    # sha256 + a per-pilot random salt, not bcrypt — see db.py's own
+    # comment on the pin_hash/pin_salt columns for why a heavier
+    # password-hashing scheme isn't worth it for a 4-digit PIN.
+    return hashlib.sha256((salt + pin).encode()).hexdigest()
+
+
+def set_pin(pilot_id: int, pin: str) -> None:
+    _check_pin(pin)
+    salt = secrets.token_hex(8)
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE pilots SET pin_hash = ?, pin_salt = ? WHERE id = ?",
+            (_hash_pin(pin, salt), salt, pilot_id),
+        )
+
+
+def verify_pin(pilot_id: int, pin: str) -> bool:
+    """False for a wrong PIN, an unknown pilot, AND a pilot with no PIN
+    set at all — callers that want to know "does this pilot even need a
+    PIN" should check `has_pin` from get_pilot/list_pilots instead of
+    inferring it from a verify_pin(..., "") failure."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT pin_hash, pin_salt FROM pilots WHERE id = ?", (pilot_id,)).fetchone()
+    if not row or not row["pin_hash"]:
+        return False
+    return row["pin_hash"] == _hash_pin(pin, row["pin_salt"])
 
 
 def create_pilot(
@@ -43,9 +84,12 @@ def create_pilot(
     status: str = "approved",
     owner_token: str | None = None,
     color: str | None = None,
+    pin: str | None = None,
 ) -> dict:
     _check_faction(faction)
     _check_status(status)
+    if pin is not None:
+        _check_pin(pin)  # fail before writing anything, not after
     with db.connect() as conn:
         if color is not None:
             cur = conn.execute(
@@ -63,7 +107,11 @@ def create_pilot(
                 """,
                 (campaign_id, name, callsign, gunnery, piloting, faction, status, owner_token),
             )
-        return _get(conn, cur.lastrowid)
+        pilot_id = cur.lastrowid
+    if pin is not None:
+        set_pin(pilot_id, pin)
+    with db.connect() as conn:
+        return _get(conn, pilot_id)
 
 
 def list_pilots(campaign_id: int) -> list[dict]:
@@ -71,12 +119,13 @@ def list_pilots(campaign_id: int) -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, campaign_id, name, callsign, gunnery, piloting, faction,
-                   hits, status, owner_token, review_note, color, created_at
+                   hits, status, owner_token, review_note, color, created_at,
+                   (pin_hash IS NOT NULL) AS has_pin
             FROM pilots WHERE campaign_id = ? ORDER BY id
             """,
             (campaign_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [{**dict(r), "has_pin": bool(r["has_pin"])} for r in rows]
 
 
 def review_pilot(pilot_id: int, decision: str, note: str | None = None) -> dict | None:
@@ -148,9 +197,12 @@ def _get(conn, pilot_id: int) -> dict | None:
     row = conn.execute(
         """
         SELECT id, campaign_id, name, callsign, gunnery, piloting, faction,
-               hits, status, owner_token, review_note, color, created_at
+               hits, status, owner_token, review_note, color, created_at,
+               (pin_hash IS NOT NULL) AS has_pin
         FROM pilots WHERE id = ?
         """,
         (pilot_id,),
     ).fetchone()
-    return dict(row) if row else None
+    if not row:
+        return None
+    return {**dict(row), "has_pin": bool(row["has_pin"])}

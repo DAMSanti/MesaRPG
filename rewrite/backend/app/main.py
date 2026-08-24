@@ -180,6 +180,12 @@ class PilotIn(BaseModel):
     status: str = "approved"
     owner_token: str | None = None
     color: str | None = None
+    # 4-digit PIN a player sets when creating their own character from the
+    # shared pick-a-pilot list (see /api/pilots/{id}/verify-pin below) —
+    # optional so the GM's own pilot-creation path (which never prompts
+    # for one) keeps working unchanged; a pilot with no PIN stays freely
+    # selectable, same as before this existed.
+    pin: str | None = None
 
 
 @app.post("/api/campaigns/{campaign_id}/pilots")
@@ -190,9 +196,9 @@ def create_pilot(
     try:
         created = pilots.create_pilot(
             campaign_id, body.name, body.callsign, body.gunnery, body.piloting, body.faction,
-            body.status, body.owner_token, body.color,
+            body.status, body.owner_token, body.color, body.pin,
         )
-    except (pilots.UnknownFaction, pilots.UnknownStatus) as exc:
+    except (pilots.UnknownFaction, pilots.UnknownStatus, pilots.InvalidPin) as exc:
         raise HTTPException(422, str(exc)) from exc
     return _sanitize_pilot(created, x_device_token)
 
@@ -238,6 +244,23 @@ async def patch_pilot(
     for campaign_id, map_id in affected_maps:
         await _broadcast_visibility(campaign_id, map_id)
     return _sanitize_pilot(updated, x_device_token)
+
+
+class VerifyPinIn(BaseModel):
+    pin: str
+
+
+@app.post("/api/pilots/{pilot_id}/verify-pin")
+def verify_pilot_pin(pilot_id: int, body: VerifyPinIn) -> dict:
+    """Gates *picking* an already-approved pilot from PlayerView's shared
+    list — a separate concern from `_require_owner` above, which only
+    ever gated *editing* a pending/rejected draft. No lockout/rate-limit:
+    a 4-digit PIN at a casual home table doesn't need one, and adding it
+    would only make it easy for a player to lock themselves out."""
+    _require_pilot(pilot_id)
+    if not pilots.verify_pin(pilot_id, body.pin):
+        raise HTTPException(403, "PIN incorrecto")
+    return {"ok": True}
 
 
 class ReviewIn(BaseModel):

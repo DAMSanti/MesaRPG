@@ -141,3 +141,57 @@ def test_delete_pilot_unpilots_but_does_not_delete_their_mech(campaign):
     survivor = mechs.get_mech(m["id"])
     assert survivor is not None
     assert survivor["pilot_id"] is None
+
+
+# ---- PIN (jugador escoge su propio personaje de una lista compartida) --
+
+def test_create_pilot_without_pin_has_no_pin(campaign):
+    p = pilots.create_pilot(campaign["id"], "GM-made")
+    assert p["has_pin"] is False
+    assert "pin" not in p
+    assert "pin_hash" not in p
+    assert "pin_salt" not in p
+
+
+def test_create_pilot_with_pin_sets_has_pin(campaign):
+    p = pilots.create_pilot(campaign["id"], "Player-made", pin="1234")
+    assert p["has_pin"] is True
+    assert "pin" not in p
+    assert "pin_hash" not in p
+
+
+def test_create_pilot_rejects_a_non_4_digit_pin(campaign):
+    with pytest.raises(pilots.InvalidPin):
+        pilots.create_pilot(campaign["id"], "Sloppy", pin="123")
+    with pytest.raises(pilots.InvalidPin):
+        pilots.create_pilot(campaign["id"], "Sloppy", pin="12a4")
+    with pytest.raises(pilots.InvalidPin):
+        pilots.create_pilot(campaign["id"], "Sloppy", pin="123456")
+
+
+def test_verify_pin_accepts_the_right_pin(campaign):
+    p = pilots.create_pilot(campaign["id"], "Player-made", pin="4242")
+    assert pilots.verify_pin(p["id"], "4242") is True
+
+
+def test_verify_pin_rejects_the_wrong_pin(campaign):
+    p = pilots.create_pilot(campaign["id"], "Player-made", pin="4242")
+    assert pilots.verify_pin(p["id"], "0000") is False
+
+
+def test_verify_pin_is_false_for_a_pilot_without_one(campaign):
+    p = pilots.create_pilot(campaign["id"], "GM-made")
+    assert pilots.verify_pin(p["id"], "0000") is False
+
+
+def test_verify_pin_is_false_for_an_unknown_pilot():
+    assert pilots.verify_pin(999999, "1234") is False
+
+
+def test_list_pilots_includes_has_pin_and_never_the_hash(campaign):
+    pilots.create_pilot(campaign["id"], "Player-made", pin="4242")
+    listed = pilots.list_pilots(campaign["id"])
+    assert listed[0]["has_pin"] is True
+    assert "pin" not in listed[0]
+    assert "pin_hash" not in listed[0]
+    assert "pin_salt" not in listed[0]

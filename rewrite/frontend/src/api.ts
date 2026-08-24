@@ -217,6 +217,10 @@ export interface Pilot {
   review_note: string | null
   color: string
   is_own: boolean
+  /** Whether this pilot has a 4-digit PIN set (never the PIN/hash
+   * itself, which never leaves the server) — a pilot without one is
+   * freely selectable from PlayerView's shared list, no prompt. */
+  has_pin: boolean
 }
 
 export interface MechLocation {
@@ -283,12 +287,28 @@ export const createPilot = (
     status?: SheetStatus
     owner_token?: string
     color?: string
+    pin?: string
   },
 ) =>
   request<Pilot>(`/api/campaigns/${campaignId}/pilots`, {
     method: 'POST',
     body: JSON.stringify(body),
   })
+
+/** Returns false for a wrong PIN (an expected, handle-able outcome —
+ * show "PIN incorrecto" and let the player retry) rather than throwing;
+ * still throws for a genuine connectivity/server failure, same as every
+ * other function here. */
+export async function verifyPilotPin(pilotId: number, pin: string): Promise<boolean> {
+  const res = await fetch(`${API_URL}/api/pilots/${pilotId}/verify-pin`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pin }),
+  })
+  if (res.status === 403) return false
+  if (!res.ok) throw new Error(`POST /api/pilots/${pilotId}/verify-pin → ${res.status}`)
+  return true
+}
 
 export const reviewPilot = (pilotId: number, decision: 'approved' | 'rejected', note?: string) =>
   request<Pilot>(`/api/pilots/${pilotId}/review`, {

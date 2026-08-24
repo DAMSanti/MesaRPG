@@ -361,6 +361,18 @@ def init_db() -> None:
         # unit has exactly one of mech_id or dnd_character_id set,
         # depending on the owning campaign's system.
         _ensure_column(conn, "units", "dnd_character_id", "INTEGER REFERENCES dnd_characters(id) ON DELETE SET NULL")
+        # Pilot PIN (requested directly — "el jugador escoge su personaje
+        # de una lista compartida, le pedirá un PIN de 4 dígitos"). Hashed
+        # with a per-pilot random salt (app/systems/battletech/pilots.py's
+        # _hash_pin) — sha256, not bcrypt: a 4-digit PIN only has 10,000
+        # possibilities regardless of the hash function, so the goal here
+        # is "don't store it in plain text where a casual DB browse reveals
+        # it," not real password-grade security, and this needs no new
+        # dependency. NULL/NULL means no PIN set — a pilot created before
+        # this feature (or by the GM directly, which doesn't prompt for a
+        # PIN) stays freely selectable, same as today.
+        _ensure_column(conn, "pilots", "pin_hash", "TEXT")
+        _ensure_column(conn, "pilots", "pin_salt", "TEXT")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

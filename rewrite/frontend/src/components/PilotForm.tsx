@@ -14,6 +14,12 @@ interface Props {
   showFaction?: boolean
   color?: string
   onColor?: (v: string) => void
+  /** 4-digit PIN, shown only when both are given — PlayerView's own
+   * "Crear mi ficha" passes these so a player sets a PIN for their new
+   * character; GMView's pilot form omits them (the GM never needs one,
+   * has full access regardless). */
+  pin?: string
+  onPin?: (v: string) => void
   onSubmit: () => void
   submitLabel: string
   submitDisabled?: boolean
@@ -28,7 +34,7 @@ interface Props {
  * it (none currently) can omit the swatch entirely. */
 export function PilotForm({
   name, onName, callsign, onCallsign, gunnery, onGunnery, piloting, onPiloting,
-  faction, onFaction, showFaction = false, color, onColor,
+  faction, onFaction, showFaction = false, color, onColor, pin, onPin,
   onSubmit, submitLabel, submitDisabled, hideSubmit = false,
 }: Props) {
   return (
@@ -37,6 +43,19 @@ export function PilotForm({
       <input placeholder="callsign" value={callsign} onChange={(e) => onCallsign(e.target.value)} />
       <label>gunnery <input type="number" value={gunnery} onChange={(e) => onGunnery(Number(e.target.value))} style={{ width: 48 }} /></label>
       <label>piloting <input type="number" value={piloting} onChange={(e) => onPiloting(Number(e.target.value))} style={{ width: 48 }} /></label>
+      {pin !== undefined && onPin && (
+        <label>
+          PIN (4 dígitos)
+          <input
+            type="password"
+            inputMode="numeric"
+            maxLength={4}
+            value={pin}
+            onChange={(e) => onPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            style={{ width: 56 }}
+          />
+        </label>
+      )}
       {showFaction && faction && onFaction && (
         <select value={faction} onChange={(e) => onFaction(e.target.value as Faction)}>
           {FACTIONS.map((f) => <option key={f} value={f}>{FACTION_LABELS[f]}</option>)}

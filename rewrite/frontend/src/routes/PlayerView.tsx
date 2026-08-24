@@ -4,6 +4,7 @@ import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import { useTableSocket } from '../ws'
 import { PilotForm } from '../components/PilotForm'
+import { PinPrompt } from '../components/PinPrompt'
 import { MechLocationsGrid } from '../components/MechLocationsGrid'
 import { MechRecordSheet } from '../components/MechRecordSheet'
 import { MechImportSelector } from '../components/MechImportSelector'
@@ -70,6 +71,17 @@ export function PlayerView() {
   const [weaponId, setWeaponId] = useState<number | ''>('')
   const [selectedTarget, setSelectedTarget] = useState<Unit | null>(null)
   const [firingVolley, setFiringVolley] = useState(false)
+  // "¿Quién eres?" starts in 'pick' mode (list of existing pilots + a
+  // "crear nuevo" button) — the pilot/mech creation form (below) only
+  // shows once the player explicitly asks for it, instead of always
+  // being visible alongside the picker (real user request: quitar esa
+  // sección de la pantalla inicial). pendingPilot is which pilot from
+  // the list is currently waiting on a correct PIN before `choose()`
+  // actually runs — see PinPrompt.tsx's own doc comment for why this
+  // asks every time rather than remembering a device.
+  const [joinMode, setJoinMode] = useState<'pick' | 'create'>('pick')
+  const [pendingPilot, setPendingPilot] = useState<Pilot | null>(null)
+  const [joinPin, setJoinPin] = useState('')
   const [joinName, setJoinName] = useState('')
   const [joinCallsign, setJoinCallsign] = useState('')
   const [joinGunnery, setJoinGunnery] = useState(4)
@@ -154,7 +166,7 @@ export function PlayerView() {
   // a la espera de que el GM los apruebe o rechace (cada uno por
   // separado — ver la sección "Fichas pendientes" en /gm).
   const join = async () => {
-    if (campaignId == null || !joinName || !joinChassis) return
+    if (campaignId == null || !joinName || !joinChassis || joinPin.length !== 4) return
     const token = getDeviceToken()
     try {
       const p = await createPilot(campaignId, {
@@ -165,6 +177,7 @@ export function PlayerView() {
         status: 'pending',
         owner_token: token,
         color: joinColor,
+        pin: joinPin,
       })
       const m = await createMech(campaignId, {
         chassis: joinChassis,
@@ -205,62 +218,90 @@ export function PlayerView() {
     // Un jugador solo ve pilotos ya aprobados o los suyos propios — no
     // puede ver ni "robar" el borrador pendiente/rechazado de otro.
     const visiblePilots = pilots.filter((p) => p.status === 'approved' || p.is_own)
+
+    const pickPilot = (p: Pilot) => {
+      if (p.has_pin) setPendingPilot(p)
+      else choose(p.id)
+    }
+
     return (
       <div className="player-view">
         <h1>¿Quién eres?</h1>
         {loading && <p className="loading">Cargando…</p>}
         {error && <div className="error-banner">{error} <button onClick={() => setError(null)}>×</button></div>}
 
-        {visiblePilots.length > 0 && (
-          <div className="pilot-picker">
-            {visiblePilots.map((p) => (
-              <button key={p.id} onClick={() => choose(p.id)}>
-                {p.name} {p.callsign && `"${p.callsign}"`}
-                {p.status !== 'approved' && <span className={`status-tag status-${p.status}`}>{p.status}</span>}
-              </button>
-            ))}
-          </div>
+        {pendingPilot && (
+          <PinPrompt
+            pilotId={pendingPilot.id}
+            pilotName={pendingPilot.name}
+            onSuccess={() => {
+              choose(pendingPilot.id)
+              setPendingPilot(null)
+            }}
+            onCancel={() => setPendingPilot(null)}
+          />
         )}
 
-        <section>
-          <h2>Crear mi ficha</h2>
-          <p className="hint">Rellénala como en la hoja de papel — el GM la revisará y la aprobará o te pedirá cambios.</p>
-          <h3 className="step-label">Piloto</h3>
-          <PilotForm
-            name={joinName} onName={setJoinName}
-            callsign={joinCallsign} onCallsign={setJoinCallsign}
-            gunnery={joinGunnery} onGunnery={setJoinGunnery}
-            piloting={joinPiloting} onPiloting={setJoinPiloting}
-            color={joinColor} onColor={setJoinColor}
-            onSubmit={join} submitLabel="Crear ficha" submitDisabled={!joinName || !joinChassis} hideSubmit
-          />
-          <h3 className="step-label">Mech</h3>
-          <MechImportSelector onImport={importJoinMech} />
-          <div className="row">
-            <select value={joinChassis} onChange={(e) => setJoinChassis(e.target.value)}>
-              <option value="">chasis…</option>
-              {chassisOptions.map((c) => (
-                <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
-              ))}
-            </select>
-            <input placeholder="modelo" value={joinModel} onChange={(e) => setJoinModel(e.target.value)} />
-            <label>ton <input type="number" value={joinTonnage} onChange={(e) => setJoinTonnage(Number(e.target.value))} style={{ width: 56 }} /></label>
-            <label>walk <input type="number" value={joinWalkMp} onChange={(e) => setJoinWalkMp(Number(e.target.value))} style={{ width: 48 }} /></label>
-            <label>run <input type="number" value={joinRunMp} onChange={(e) => setJoinRunMp(Number(e.target.value))} style={{ width: 48 }} /></label>
-            <label>disipadores <input type="number" value={joinHeatSinks} onChange={(e) => setJoinHeatSinks(Number(e.target.value))} style={{ width: 48 }} /></label>
-          </div>
-          <MechLocationsGrid locations={joinLocations} onChange={setJoinLocations} />
-          <h3 className="step-label">Vista previa de la hoja</h3>
-          <MechRecordSheet
-            mech={previewMechFromLocationsForm(joinChassis, joinModel, joinLocations, {
-              tonnage: joinTonnage, walk_mp: joinWalkMp, run_mp: joinRunMp, jump_mp: 0,
-            })}
-            pilot={{ gunnery: joinGunnery, piloting: joinPiloting }}
-            readOnly
-            previewFullHealth
-          />
-          <button onClick={join} disabled={!joinName || !joinChassis}>Crear ficha</button>
-        </section>
+        {joinMode === 'pick' ? (
+          <>
+            {visiblePilots.length > 0 ? (
+              <div className="pilot-picker">
+                {visiblePilots.map((p) => (
+                  <button key={p.id} onClick={() => pickPilot(p)}>
+                    {p.name} {p.callsign && `"${p.callsign}"`}
+                    {p.has_pin && ' 🔒'}
+                    {p.status !== 'approved' && <span className={`status-tag status-${p.status}`}>{p.status}</span>}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              !loading && <p className="hint">Todavía no hay personajes en esta partida — crea el tuyo.</p>
+            )}
+            <button onClick={() => setJoinMode('create')}>+ Crear nuevo personaje</button>
+          </>
+        ) : (
+          <section>
+            <button className="link-back" onClick={() => setJoinMode('pick')}>‹ Volver</button>
+            <h2>Crear mi ficha</h2>
+            <p className="hint">Rellénala como en la hoja de papel — el GM la revisará y la aprobará o te pedirá cambios.</p>
+            <h3 className="step-label">Piloto</h3>
+            <PilotForm
+              name={joinName} onName={setJoinName}
+              callsign={joinCallsign} onCallsign={setJoinCallsign}
+              gunnery={joinGunnery} onGunnery={setJoinGunnery}
+              piloting={joinPiloting} onPiloting={setJoinPiloting}
+              color={joinColor} onColor={setJoinColor}
+              pin={joinPin} onPin={setJoinPin}
+              onSubmit={join} submitLabel="Crear ficha" submitDisabled={!joinName || !joinChassis || joinPin.length !== 4} hideSubmit
+            />
+            <h3 className="step-label">Mech</h3>
+            <MechImportSelector onImport={importJoinMech} />
+            <div className="row">
+              <select value={joinChassis} onChange={(e) => setJoinChassis(e.target.value)}>
+                <option value="">chasis…</option>
+                {chassisOptions.map((c) => (
+                  <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
+                ))}
+              </select>
+              <input placeholder="modelo" value={joinModel} onChange={(e) => setJoinModel(e.target.value)} />
+              <label>ton <input type="number" value={joinTonnage} onChange={(e) => setJoinTonnage(Number(e.target.value))} style={{ width: 56 }} /></label>
+              <label>walk <input type="number" value={joinWalkMp} onChange={(e) => setJoinWalkMp(Number(e.target.value))} style={{ width: 48 }} /></label>
+              <label>run <input type="number" value={joinRunMp} onChange={(e) => setJoinRunMp(Number(e.target.value))} style={{ width: 48 }} /></label>
+              <label>disipadores <input type="number" value={joinHeatSinks} onChange={(e) => setJoinHeatSinks(Number(e.target.value))} style={{ width: 48 }} /></label>
+            </div>
+            <MechLocationsGrid locations={joinLocations} onChange={setJoinLocations} />
+            <h3 className="step-label">Vista previa de la hoja</h3>
+            <MechRecordSheet
+              mech={previewMechFromLocationsForm(joinChassis, joinModel, joinLocations, {
+                tonnage: joinTonnage, walk_mp: joinWalkMp, run_mp: joinRunMp, jump_mp: 0,
+              })}
+              pilot={{ gunnery: joinGunnery, piloting: joinPiloting }}
+              readOnly
+              previewFullHealth
+            />
+            <button onClick={join} disabled={!joinName || !joinChassis || joinPin.length !== 4}>Crear ficha</button>
+          </section>
+        )}
       </div>
     )
   }

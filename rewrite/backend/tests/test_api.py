@@ -270,6 +270,52 @@ def test_create_pilot_pending_with_owner_token_hides_token_but_flags_is_own():
         assert listed_with_header[0]["is_own"] is True
 
 
+def test_create_pilot_with_pin_never_leaks_it_but_flags_has_pin():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        p = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Player-made", "pin": "4242"}).json()
+        assert p["has_pin"] is True
+        assert "pin" not in p
+        assert "pin_hash" not in p
+
+        listed = c.get(f"/api/campaigns/{camp['id']}/pilots").json()
+        assert listed[0]["has_pin"] is True
+        assert "pin" not in listed[0]
+
+
+def test_create_pilot_with_invalid_pin_422s():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        res = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Sloppy", "pin": "12"})
+        assert res.status_code == 422
+
+
+def test_create_pilot_without_pin_has_pin_false():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        p = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "GM-made"}).json()
+        assert p["has_pin"] is False
+
+
+def test_verify_pin_endpoint_accepts_correct_pin_and_rejects_wrong_one():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        p = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Player-made", "pin": "1357"}).json()
+
+        wrong = c.post(f"/api/pilots/{p['id']}/verify-pin", json={"pin": "0000"})
+        assert wrong.status_code == 403
+
+        right = c.post(f"/api/pilots/{p['id']}/verify-pin", json={"pin": "1357"})
+        assert right.status_code == 200
+        assert right.json() == {"ok": True}
+
+
+def test_verify_pin_endpoint_404s_for_unknown_pilot():
+    with client() as c:
+        res = c.post("/api/pilots/999999/verify-pin", json={"pin": "1234"})
+        assert res.status_code == 404
+
+
 def test_review_and_resubmit_pilot_round_trip():
     with client() as c:
         camp = c.post("/api/campaigns", json={"name": "API Test"}).json()

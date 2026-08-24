@@ -149,6 +149,16 @@
   margin-top: 12px;
 }
 
+.link-back {
+  background: transparent;
+  border: none;
+  color: var(--accent);
+  padding: 0;
+  min-height: auto;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
 button {
   background: var(--surface-hover);
   border: 1px solid var(--accent);
