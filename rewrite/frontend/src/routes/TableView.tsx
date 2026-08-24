@@ -7,7 +7,6 @@ import { HexMap, useAttackVfxQueue } from '../components/HexMap'
 import { KillReplay } from '../components/KillReplay'
 import { TableBackground } from '../components/TableBackground'
 import { BoardWalls } from '../components/BoardWalls'
-import { NavBar } from '../components/NavBar'
 import { useTableSocket } from '../ws'
 import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
@@ -290,10 +289,6 @@ function TableViewBattletech() {
         )}
       </div>
 
-      <div className="hud-nav">
-        <NavBar campaignId={campaignId} current="/" variant="overlay" />
-      </div>
-
       {units.length > 0 && (
         <div className="los-debug">
           <span>LoS debug</span>
@@ -375,7 +370,6 @@ function TableViewDnd({ campaignId }: { campaignId: number }) {
 
   return (
     <div className="table-view">
-      <NavBar campaignId={campaignId} current="/" />
       <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
         <color attach="background" args={['#0f1a18']} />
         <ambientLight intensity={0.6} />

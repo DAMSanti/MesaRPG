@@ -7,7 +7,7 @@ import { TerrainDecor } from '../components/TerrainDecor'
 import { BUILDING_MIN_HEIGHT } from '../components/HexMap'
 import { TableBackground } from '../components/TableBackground'
 import { RoadMarkings } from '../components/RoadMarkings'
-import { NavBar } from '../components/NavBar'
+import { NavBar, GM_LINKS } from '../components/NavBar'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import {
   BIOMES,
@@ -273,7 +273,7 @@ export function MapEditorView() {
 
   return (
     <div className="map-editor">
-      <NavBar campaignId={campaignId} current="/mapeditor" />
+      <NavBar campaignId={campaignId} current="/mapeditor" links={GM_LINKS} />
       <header>
         <h1>Editor de mapas — campaña #{campaignId}</h1>
       </header>

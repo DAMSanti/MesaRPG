@@ -10,6 +10,17 @@ export const LINKS: readonly NavLink[] = [
   { path: '/player', label: 'Jugador', icon: '🧑‍🚀' },
 ] as const
 
+// GM/staff "session" nav — just this page and the map editor, not the
+// shared-table/player-facing views a GM mid-session doesn't need to jump
+// to from either of these two screens. Shared between GMView and
+// MapEditorView (identical set, requested directly: "que el menú
+// superior [del editor de mapas] quede como el de GM") rather than two
+// separately-maintained copies that could drift.
+export const GM_LINKS: readonly NavLink[] = [
+  { path: '/gm', label: 'GM', icon: '🎛️' },
+  { path: '/mapeditor', label: 'Creación de Mapas', icon: '🗺️' },
+] as const
+
 /**
  * Persistent nav between mesa/GM/editor/jugador (ROADMAP.md S4) — GM/staff
  * facing only. Players never see this: they only ever open the link the GM

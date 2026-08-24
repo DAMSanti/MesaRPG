@@ -5,7 +5,7 @@ import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import { useMapState } from '../useMapState'
 import { useTableSocket } from '../ws'
-import { NavBar, type NavLink } from '../components/NavBar'
+import { NavBar, GM_LINKS } from '../components/NavBar'
 import { PilotForm } from '../components/PilotForm'
 import { MechRecordSheet } from '../components/MechRecordSheet'
 import { HexMap, useAttackVfxQueue } from '../components/HexMap'
@@ -74,14 +74,6 @@ import {
   type WeaponStats,
 } from '../api'
 import './GMView.css'
-
-// GM's own nav is trimmed to just this page and the map editor — Mesa and
-// Jugador are the shared-table/player-facing views, not places a GM
-// mid-session needs to jump to from here.
-const GM_NAV_LINKS: NavLink[] = [
-  { path: '/gm', label: 'GM', icon: '🎛️' },
-  { path: '/mapeditor', label: 'Creación de Mapas', icon: '🗺️' },
-]
 
 /** The BattleTech GM screen — everything this file did before Fase R4
  * (D&D 5e as a second system). Renamed, otherwise untouched: see the
@@ -824,7 +816,7 @@ function GMViewBattletech() {
 
   return (
     <div className="gm-view">
-      <NavBar campaignId={campaignId} current="/gm" links={GM_NAV_LINKS} />
+      <NavBar campaignId={campaignId} current="/gm" links={GM_LINKS} />
       <h1>GM — {campaign?.name ?? `campaña #${campaignId}`}</h1>
       {loading && <p className="loading">Cargando…</p>}
       {error && <div className="error-banner">{error} <button onClick={() => setError(null)}>×</button></div>}
@@ -1287,7 +1279,7 @@ function GMViewDnd({ campaignId }: { campaignId: number }) {
 
   return (
     <div className="gm-view">
-      <NavBar campaignId={campaignId} current="/gm" links={GM_NAV_LINKS} />
+      <NavBar campaignId={campaignId} current="/gm" links={GM_LINKS} />
       <div style={{ display: 'flex', height: 'calc(100vh - var(--nav-height, 52px))' }}>
         <div style={{ flex: 1, position: 'relative' }}>
           {map ? (
