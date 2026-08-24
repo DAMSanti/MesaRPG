@@ -1,11 +1,14 @@
 """Minimal game-system registry (ROADMAP.md S0).
 
-Deliberately NOT the plugin contract of Fase R4 — no rules engine, no
-character sheet schema, no tokens. Just enough to stop "grid = hexagon"
-being an unstated assumption baked into maps.py: each system says what
-kind of grid it uses, nothing else. D&D 5e is registered with zero rules
-content, purely to force `grid_type="square"` to be real in the data
-model instead of a promise nobody has tested.
+Just enough to stop "grid = hexagon" being an unstated assumption baked
+into maps.py: each system says what kind of grid it uses, nothing else.
+The real rules content for each system lives in its own package
+(app/systems/battletech/, app/systems/dnd5e/ — ROADMAP.md Fase R4),
+dispatched by separate endpoint families in main.py rather than a
+formal `GameSystem` interface here — with only 2 systems of genuinely
+different shape (mech+pilot pair vs. a single character sheet), forcing
+a common interface from a sample size of 2 would have been premature
+abstraction. This file stays a plain id -> {name, grid_type} registry.
 """
 
 GAME_SYSTEMS: dict[str, dict[str, str]] = {

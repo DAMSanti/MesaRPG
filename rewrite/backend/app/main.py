@@ -1,9 +1,12 @@
-"""Vertical-slice backend — MesaRPG rewrite (ROADMAP.md Fase R0).
+"""MesaRPG rewrite backend (ROADMAP.md Fase R0 onward).
 
-Now covers: multi-campaign persistence (campaigns, pilots, mechs with
-per-location armor/structure) and a roll flow scoped per campaign. Still
-not the rules engine (Fase R2) and still not a game-system plugin
-contract — see rewrite/README.md for exactly what's in and out of scope.
+Two game systems live behind this one API today: BattleTech (the
+original, full rules engine — app/systems/battletech/) and D&D 5e (Fase
+R4, a deliberately minimal validation slice — app/systems/dnd5e/). Map/
+unit endpoints are shared (already generic by grid_type since Fase S0);
+character/combat/round endpoints are separate families per system, not
+a forced common interface — see rewrite/README.md for exactly what's in
+and out of scope for each.
 """
 
 from contextlib import asynccontextmanager
