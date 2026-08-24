@@ -3,10 +3,11 @@ import { DropdownMenu } from './DropdownMenu'
 import './UnitContextMenu.css'
 
 /** Opens at the mouse position when a unit is clicked on the GM's map.
- * Atacar is gated by `canAct` — see rounds.ts's activeTurnPilotIds for
- * what that means; app/systems/battletech/turns.py itself stays
- * advisory/non-blocking, this is a stricter frontend UX layered on the
- * same data, not a backend behavior change.
+ * Atacar is gated by `canAct` — see rounds.ts's activeAttackPilotIds for
+ * what that means (initiative order, skipping anyone without a real
+ * target); app/systems/battletech/turns.py itself stays advisory/non-
+ * blocking, this is a stricter frontend UX layered on the same data,
+ * not a backend behavior change.
  *
  * There's deliberately no unrestricted "Mover" here anymore — Caminar/
  * Correr/Saltar (showPhaseMovement below) are the only way to move a
@@ -20,6 +21,7 @@ import './UnitContextMenu.css'
  * this menu button specifically is gone. */
 export function UnitContextMenu({
   unit, mech, canAct, x, y, onAttack, onClose,
+  showAttack,
   showRollInitiative, canRollInitiative, onRollInitiative,
   showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement,
   acted, onMarkActed,
@@ -31,14 +33,25 @@ export function UnitContextMenu({
   y: number
   onAttack: () => void
   onClose: () => void
+  /** The round is actually in the ranged or melee phase right now — real
+   * user request: an action that doesn't correspond to the current
+   * phase should be gone from the menu, not just greyed out. `canAct`
+   * still gates whether THIS pilot specifically may act within that
+   * phase (initiative order / has a target — rounds.ts's
+   * activeAttackPilotIds), shown as disabled+hint same as before. */
+  showAttack?: boolean
   /** Individual initiative mode + this unit's pilot is an enemy (the GM
    * rolls for their own side; players roll their own from PlayerView) —
-   * see GMView's needsInitiative/rollInitiativeForPilot. */
+   * see GMView's needsInitiative/rollInitiativeForPilot. Also requires
+   * the round to actually be in its initiative phase (same reasoning
+   * as showAttack above). */
   showRollInitiative?: boolean
   canRollInitiative?: boolean
   onRollInitiative?: () => void
-  /** This pilot is somewhere in this round's movement_order at all —
-   * see GMView's roundState.movement_order. */
+  /** This pilot is somewhere in this round's movement_order AND the
+   * round is actually in its movement phase right now — see GMView's
+   * roundState.movement_order (same phase-match reasoning as
+   * showAttack above). */
   showPhaseMovement?: boolean
   /** It's specifically this pilot's turn to move right now — see
    * rounds.ts's activeMoverPilotId. */
@@ -53,7 +66,8 @@ export function UnitContextMenu({
    * "saltar movimiento"). */
   onSkipMovement?: () => void
   /** Whether this pilot has already ended their activation this round —
-   * shown regardless of phase, unlike the movement/attack actions above. */
+   * shown regardless of phase, unlike the movement/attack actions above
+   * (marking acted is a GM utility, not tied to one specific phase). */
   acted?: boolean
   onMarkActed?: () => void
 }) {
@@ -64,8 +78,12 @@ export function UnitContextMenu({
       {showRollInitiative && (
         <button disabled={!canRollInitiative} onClick={onRollInitiative}>Tirar iniciativa</button>
       )}
-      {!canAct && <div className="unit-menu-hint">no es su turno</div>}
-      <button disabled={!canAct} onClick={onAttack}>Atacar</button>
+      {showAttack && (
+        <>
+          {!canAct && <div className="unit-menu-hint">no es su turno</div>}
+          <button disabled={!canAct} onClick={onAttack}>Atacar</button>
+        </>
+      )}
       {showPhaseMovement && (
         <>
           {!canPhaseMove && <div className="unit-menu-hint">no es su turno de moverse</div>}

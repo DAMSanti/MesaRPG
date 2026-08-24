@@ -421,14 +421,13 @@ function GMViewBattletech() {
     }
   }
 
-  // ---- mapa interactivo: clic en un mech → menú (Atacar, solo si ese
-  // piloto todavía tiene un objetivo real esta fase — rounds.ts's
-  // activeAttackPilotIds, NO el orden de iniciativa: un piloto sin
-  // objetivo (sin alcance/LoS/munición) nunca bloquea el turno de nadie,
-  // ver su propio comentario), o arrastrarlo libremente (sin gating — el
-  // GM siempre puede reposicionar la miniatura). ----
+  // ---- mapa interactivo: clic en un mech → menú (Atacar, gated por
+  // orden de iniciativa — rounds.ts's activeAttackPilotIds — saltando
+  // automáticamente a quien no tenga un objetivo real esta fase, ver su
+  // propio comentario), o arrastrarlo libremente (sin gating — el GM
+  // siempre puede reposicionar la miniatura). ----
   const canAct = (unit: Unit) =>
-    unit.pilot_id != null && roundState != null && activeAttackPilotIds(roundState).has(unit.pilot_id)
+    unit.pilot_id != null && roundState != null && activeAttackPilotIds(roundState, units).has(unit.pilot_id)
   const mechForUnit = (unit: Unit) => mechs.find((m) => m.id === unit.mech_id) ?? null
 
   // ---- iniciativa manual por piloto (modo individual únicamente — modo
@@ -1018,7 +1017,7 @@ function GMViewBattletech() {
                   units={units}
                   needsInitiativePilotIds={needsInitiativePilotIds}
                   activeMoverPilotId={activeMover}
-                  activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState) : undefined}
+                  activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}
                   moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
                   targetableHexes={targetableHexes}
                   walkPaths={walkPaths}
@@ -1030,7 +1029,10 @@ function GMViewBattletech() {
                   onDraggingChange={setIsDraggingUnit}
                 />
               </Suspense>
-              <OrbitControls enablePan enableRotate={!isDraggingUnit} minPolarAngle={0} maxPolarAngle={0} />
+              {/* dampingFactor explicit — see TableView.tsx's own
+                  comment on this same fix (endless slow spin after a
+                  drag/rotate release, real user report). */}
+              <OrbitControls enablePan enableRotate={!isDraggingUnit} minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
             </Canvas>
           </div>
         )}
@@ -1296,6 +1298,13 @@ function GMViewBattletech() {
 
       {menu && (() => {
         const menuUnitPilot = pilots.find((p) => p.id === menu.unit.pilot_id)
+        // Real user request: an action that doesn't correspond to the
+        // round's CURRENT phase disappears from the menu entirely,
+        // instead of sitting there greyed out — canAct/canPhaseMove
+        // below still separately gate whether it's specifically THIS
+        // pilot's turn within a phase that does match (shown as
+        // disabled+hint, same as before).
+        const menuPhase = roundState ? currentPhase(roundState) : 'none'
         return (
           <UnitContextMenu
             unit={menu.unit}
@@ -1305,10 +1314,11 @@ function GMViewBattletech() {
             y={menu.y}
             onAttack={() => { setPickingTargetFor(menu.unit.id); setMenu(null) }}
             onClose={() => setMenu(null)}
-            showRollInitiative={campaign?.initiative_mode === 'individual' && menuUnitPilot?.faction === 'enemy'}
+            showAttack={menuPhase === 'ranged' || menuPhase === 'melee'}
+            showRollInitiative={menuPhase === 'initiative' && campaign?.initiative_mode === 'individual' && menuUnitPilot?.faction === 'enemy'}
             canRollInitiative={menuUnitPilot != null && needsInitiative(menuUnitPilot.id)}
             onRollInitiative={() => { if (menuUnitPilot) rollInitiativeForPilot(menuUnitPilot.id); setMenu(null) }}
-            showPhaseMovement={roundState?.movement_order.includes(menu.unit.pilot_id ?? -1) ?? false}
+            showPhaseMovement={menuPhase === 'movement' && (roundState?.movement_order.includes(menu.unit.pilot_id ?? -1) ?? false)}
             canPhaseMove={menu.unit.pilot_id != null && activeMover === menu.unit.pilot_id}
             onPhaseMove={(type) => { startPhaseMovement(menu.unit, type); setMenu(null) }}
             onRotate={() => {
@@ -1394,7 +1404,9 @@ function GMViewDnd({ campaignId }: { campaignId: number }) {
               <ambientLight intensity={0.6} />
               <directionalLight position={[10, 20, 10]} intensity={1} castShadow />
               <SquareMap map={map} units={units} onTileClick={onTileClick} selectedUnitId={selectedUnit?.id ?? null} />
-              <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} />
+              {/* dampingFactor explicit — see the battletech map's own
+                  Canvas above (same fix, same reason). */}
+              <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
             </Canvas>
           ) : (
             <p style={{ padding: 20, color: 'var(--text-secondary)' }}>

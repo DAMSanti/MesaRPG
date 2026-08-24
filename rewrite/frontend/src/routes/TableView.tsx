@@ -330,7 +330,7 @@ function TableViewBattletech() {
                 losDebugHexes={losDebug.hexes}
                 needsInitiativePilotIds={pilotsNeedingInitiative(roundState, units)}
                 activeMoverPilotId={roundState ? activeMoverPilotId(roundState) : null}
-                activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState) : undefined}
+                activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}
                 moveHighlightHexes={activeMovement ? new Set(activeMovement.hexes.keys()) : undefined}
                 walkPaths={walkPaths}
                 activeAttack={activeAttackVfx}
@@ -351,7 +351,13 @@ function TableViewBattletech() {
             />
           ))}
         </Physics>
-        <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} />
+        {/* dampingFactor explicit — drei's OrbitControls defaults
+            enableDamping to true but leaves three.js's own default
+            dampingFactor (0.05, very little friction), which is why a
+            drag/rotate used to keep spinning for a long time after
+            release (real user report). 0.2 keeps a little inertia
+            without the endless slow spin. */}
+        <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
       </Canvas>
 
       {replay && <KillReplay label={replay} onDone={() => setReplay(null)} />}
@@ -376,7 +382,13 @@ function TableViewDnd({ campaignId }: { campaignId: number }) {
         <directionalLight position={[4, 8, 3]} intensity={1.4} castShadow />
         <TableBackground />
         {map && <SquareMap map={map} units={units} />}
-        <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} />
+        {/* dampingFactor explicit — drei's OrbitControls defaults
+            enableDamping to true but leaves three.js's own default
+            dampingFactor (0.05, very little friction), which is why a
+            drag/rotate used to keep spinning for a long time after
+            release (real user report). 0.2 keeps a little inertia
+            without the endless slow spin. */}
+        <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
       </Canvas>
     </div>
   )

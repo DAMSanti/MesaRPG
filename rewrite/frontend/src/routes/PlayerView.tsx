@@ -666,7 +666,7 @@ export function PlayerView() {
             )
           })()}
           {(() => {
-            const canAttackNow = !!(roundState && pilot && activeAttackPilotIds(roundState).has(pilot.id))
+            const canAttackNow = !!(roundState && pilot && activeAttackPilotIds(roundState, units).has(pilot.id))
             return (
               <li className={canAttackNow ? '' : 'phase-action-disabled'}>
                 <span className="phase-action-label">Atacar</span>

@@ -80,25 +80,53 @@ export function activeMoverPilotId(round: RoundState): number | null {
 }
 
 /** Who may actually attack right now, during the ranged/melee phases —
- * deliberately NOT initiative order (activeTurnPilotIds above). A pilot
- * with no real target (no range/LOS/ammo for ranged, nobody adjacent for
- * melee) was jamming the whole phase before this existed: they were
- * still "next" in strict initiative order, so activeTurnPilotIds kept
- * pointing at them, nobody else's canAct passed, and the round could
- * never move on since a pilot with nothing to shoot has no natural way
- * to end up in acted_pilot_ids. Turn order for these two phases is
- * instead just "anyone still holding a real target" — matches this
- * engine's own documented stance that turn order is advisory, not
- * blocking (see turns.py's module docstring), and needs no separate
- * "skip" bookkeeping: a targetless pilot was simply never eligible. */
-export function activeAttackPilotIds(round: RoundState): Set<number> {
+ * initiative order (real user request: "no discrimina por iniciativa...
+ * permite atacar a todos a la vez"), but skipping past anyone with no
+ * real target (no range/LOS/ammo for ranged, nobody adjacent for melee)
+ * instead of jamming on them — a strict activeTurnPilotIds-style walk
+ * that stops at a targetless pilot would get stuck forever, since a
+ * pilot with nothing to shoot has no natural way to end up in
+ * acted_pilot_ids. So: walk the rolls lowest-total-first (same "loser
+ * goes first" rule as movement), and the first pilot (individual mode)
+ * or first not-yet-exhausted faction's still-eligible pilots (team
+ * mode) that's both un-acted AND actually holds a target is the one(s)
+ * allowed to act — never more than one pilot in individual mode, never
+ * more than one faction's worth in team mode (matches
+ * activeTurnPilotIds' own team-mode group semantics). `units` (not a
+ * `Pilot[]`) is the faction lookup for team mode, since round.rolls has
+ * no per-pilot entries there (faction-level rolls only) — units already
+ * carry pilot_faction denormalized (units.py's own _get), so every
+ * caller that already renders the map has this on hand without a
+ * second fetch. */
+export function activeAttackPilotIds(round: RoundState, units: Unit[]): Set<number> {
   const phase = currentPhase(round)
-  const ids =
+  const eligible =
     phase === 'ranged' ? round.ranged_target_pilot_ids
       : phase === 'melee' ? round.melee_target_pilot_ids
         : []
+  if (eligible.length === 0) return new Set()
+  const eligibleSet = new Set(eligible)
   const acted = new Set(round.acted_pilot_ids)
-  return new Set(ids.filter((id) => !acted.has(id)))
+  const sortedRolls = [...round.rolls].sort((a, b) => a.total - b.total)
+
+  if (round.mode === 'individual') {
+    for (const r of sortedRolls) {
+      if (r.pilot_id != null && eligibleSet.has(r.pilot_id) && !acted.has(r.pilot_id)) {
+        return new Set([r.pilot_id])
+      }
+    }
+    return new Set()
+  }
+
+  const factionOf = new Map<number, string>()
+  for (const u of units) {
+    if (u.pilot_id != null && u.pilot_faction != null) factionOf.set(u.pilot_id, u.pilot_faction)
+  }
+  for (const r of sortedRolls) {
+    const factionEligible = eligible.filter((id) => factionOf.get(id) === r.faction && !acted.has(id))
+    if (factionEligible.length > 0) return new Set(factionEligible)
+  }
+  return new Set()
 }
 
 /** The round's current global phase — requested directly so TableView,

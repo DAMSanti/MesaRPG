@@ -323,7 +323,11 @@ function Canvas3D({
           ))}
         </group>
       </Suspense>
-      <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} />
+      {/* dampingFactor explicit — see TableView.tsx's own comment on
+          this same fix (drei defaults enableDamping true but leaves
+          three.js's very low 0.05 dampingFactor, which read as an
+          endless slow spin after releasing a drag). */}
+      <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
     </Canvas>
   )
 }
