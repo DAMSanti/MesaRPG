@@ -9,6 +9,8 @@ import { NavBar, type NavLink } from '../components/NavBar'
 import { PilotForm } from '../components/PilotForm'
 import { MechRecordSheet } from '../components/MechRecordSheet'
 import { HexMap, useAttackVfxQueue } from '../components/HexMap'
+import { SquareMap } from '../components/SquareMap'
+import { DndCharacterSheet } from '../components/DndCharacterSheet'
 import { TableBackground } from '../components/TableBackground'
 import { UnitContextMenu } from '../components/UnitContextMenu'
 import { FacingPicker } from '../components/FacingPicker'
@@ -41,6 +43,7 @@ import {
   getUnitVisibleEnemies,
   getWeaponCatalog,
   listCampaigns,
+  listDndCharacters,
   listMechChassis,
   listMechModels,
   listMechs,
@@ -58,6 +61,7 @@ import {
   updateMech,
   updatePilot,
   type Campaign,
+  type DndCharacter,
   type InitiativeMode,
   type Mech,
   type MechImportData,
@@ -79,7 +83,11 @@ const GM_NAV_LINKS: NavLink[] = [
   { path: '/mapeditor', label: 'Creación de Mapas', icon: '🗺️' },
 ]
 
-export function GMView() {
+/** The BattleTech GM screen — everything this file did before Fase R4
+ * (D&D 5e as a second system). Renamed, otherwise untouched: see the
+ * real `GMView` export at the bottom of this file, which just decides
+ * whether to mount this or GMViewDnd based on the campaign's system. */
+function GMViewBattletech() {
   const campaignId = useCampaignId()
   const { activeMapId, roundState, visibility, lastAttack } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
@@ -1239,4 +1247,104 @@ export function GMView() {
       )}
     </div>
   )
+}
+
+/** D&D 5e's own GM screen (ROADMAP.md Fase R4 — slice mínimo). Much
+ * smaller than GMViewBattletech on purpose: a square map (SquareMap.tsx,
+ * not HexMap.tsx — see its own doc comment for why), a character
+ * sheet/attack/initiative panel (DndCharacterSheet.tsx), and one
+ * interaction this slice actually needs — clicking an empty tile places
+ * whichever character is selected in the sheet. No move-after-placement,
+ * no ghost tokens, no fog of war (see this Fase's own design notes in
+ * ROADMAP.md) — placing IS the only board action a D&D character has
+ * here beyond attacking. */
+function GMViewDnd({ campaignId }: { campaignId: number }) {
+  const { activeMapId } = useTableSocket(campaignId)
+  const mapId = useMapId(campaignId, activeMapId)
+  const { map, units, setUnits } = useMapState(mapId, null)
+  const [characters, setCharacters] = useState<DndCharacter[]>([])
+  const [selectedCharacterId, setSelectedCharacterId] = useState<number | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    listDndCharacters(campaignId)
+      .then(setCharacters)
+      .catch(() => setError('No se pudo conectar con el servidor.'))
+  }, [campaignId])
+
+  const placedCharacterIds = new Set(units.map((u) => u.dnd_character_id).filter((id): id is number => id != null))
+  const selectedUnit = units.find((u) => u.dnd_character_id === selectedCharacterId)
+
+  const onTileClick = async (q: number, r: number) => {
+    if (mapId == null || selectedCharacterId == null || placedCharacterIds.has(selectedCharacterId)) return
+    try {
+      const unit = await createUnit(mapId, { q, r, dnd_character_id: selectedCharacterId })
+      setUnits((prev) => [...prev, unit])
+    } catch {
+      setError('No se pudo colocar el personaje en el mapa.')
+    }
+  }
+
+  return (
+    <div className="gm-view">
+      <NavBar campaignId={campaignId} current="/gm" links={GM_NAV_LINKS} />
+      <div style={{ display: 'flex', height: 'calc(100vh - var(--nav-height, 52px))' }}>
+        <div style={{ flex: 1, position: 'relative' }}>
+          {map ? (
+            <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
+              <color attach="background" args={['#0f1a18']} />
+              <ambientLight intensity={0.6} />
+              <directionalLight position={[10, 20, 10]} intensity={1} castShadow />
+              <SquareMap map={map} units={units} onTileClick={onTileClick} selectedUnitId={selectedUnit?.id ?? null} />
+              <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} />
+            </Canvas>
+          ) : (
+            <p style={{ padding: 20, color: 'var(--text-secondary)' }}>
+              Sin mapa activo — crea uno cuadrado desde el editor de mapas.
+            </p>
+          )}
+        </div>
+        <div style={{ width: 360, padding: 12, overflowY: 'auto' }}>
+          {error && <p style={{ color: 'var(--danger)' }}>{error}</p>}
+          {selectedCharacterId != null && !placedCharacterIds.has(selectedCharacterId) && (
+            <p style={{ fontSize: 12, color: 'var(--accent-2)' }}>Click en una casilla del mapa para colocarlo.</p>
+          )}
+          <DndCharacterSheet
+            campaignId={campaignId}
+            characters={characters}
+            selectedCharacterId={selectedCharacterId}
+            onSelectCharacter={setSelectedCharacterId}
+            onCharacterCreated={(c) => setCharacters((prev) => [...prev, c])}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Real entry point (replaces the old direct `GMView` export) — decides
+ * BattleTech vs D&D 5e from the campaign's own `system` and mounts the
+ * matching screen. Defaults to the BattleTech path while the campaign
+ * is still loading (system === null), so an existing BattleTech table
+ * sees zero behavior change — the only new branch is the one that fires
+ * once a `dnd5e` campaign is confirmed. */
+export function GMView() {
+  const campaignId = useCampaignId()
+  const [system, setSystem] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (campaignId == null) return
+    let cancelled = false
+    listCampaigns().then((all) => {
+      const found = all.find((c) => c.id === campaignId)
+      if (!cancelled) setSystem(found?.system ?? 'battletech')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId])
+
+  if (campaignId == null) return null
+  if (system === 'dnd5e') return <GMViewDnd campaignId={campaignId} />
+  return <GMViewBattletech />
 }

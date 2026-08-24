@@ -11,9 +11,13 @@ import { NavBar } from '../components/NavBar'
 import { useTableSocket } from '../ws'
 import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
-import { getUnitVisibleHexes, moveUnitWithMp, reportInitiative, type MovementType, type ReachableHex, type Unit } from '../api'
+import {
+  getUnitVisibleHexes, listCampaigns, moveUnitWithMp, reportInitiative,
+  type MovementType, type ReachableHex, type Unit,
+} from '../api'
 import { useMapState } from '../useMapState'
 import { activeAttackPilotIds, activeMoverPilotId, currentPhase, formatRolls, PHASE_LABELS, pilotsNeedingInitiative } from '../rounds'
+import { SquareMap } from '../components/SquareMap'
 import './TableView.css'
 
 // Debug-only LoS view (see HexMap's LosDebugOverlay + app/units.py's
@@ -138,7 +142,10 @@ function InitiativeDice({
   )
 }
 
-export function TableView() {
+/** The BattleTech shared-table screen — everything this file did before
+ * Fase R4 (D&D 5e as a second system). Renamed, otherwise untouched:
+ * see the real `TableView` export at the bottom of this file. */
+function TableViewBattletech() {
   const campaignId = useCampaignId()
   const {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState, initiativeRollRequest,
@@ -355,4 +362,53 @@ export function TableView() {
       {replay && <KillReplay label={replay} onDone={() => setReplay(null)} />}
     </div>
   )
+}
+
+/** D&D 5e's own shared-table screen (ROADMAP.md Fase R4 — slice mínimo)
+ * — a passive display, same spirit as the BattleTech one (fixed cenital
+ * camera, no interaction), but without physics/dice/kill-replay, none
+ * of which this slice's D&D rules use yet. */
+function TableViewDnd({ campaignId }: { campaignId: number }) {
+  const { activeMapId, visibility, lastAttack } = useTableSocket(campaignId)
+  const mapId = useMapId(campaignId, activeMapId)
+  const { map, units } = useMapState(mapId, visibility ?? lastAttack)
+
+  return (
+    <div className="table-view">
+      <NavBar campaignId={campaignId} current="/" />
+      <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
+        <color attach="background" args={['#0f1a18']} />
+        <ambientLight intensity={0.6} />
+        <directionalLight position={[4, 8, 3]} intensity={1.4} castShadow />
+        <TableBackground />
+        {map && <SquareMap map={map} units={units} />}
+        <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} />
+      </Canvas>
+    </div>
+  )
+}
+
+/** Real entry point (replaces the old direct `TableView` export) —
+ * same BattleTech-default-while-loading dispatch pattern as GMView's
+ * own wrapper (see its doc comment): zero behavior change for an
+ * existing BattleTech table. */
+export function TableView() {
+  const campaignId = useCampaignId()
+  const [system, setSystem] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (campaignId == null) return
+    let cancelled = false
+    listCampaigns().then((all) => {
+      const found = all.find((c) => c.id === campaignId)
+      if (!cancelled) setSystem(found?.system ?? 'battletech')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [campaignId])
+
+  if (campaignId == null) return null
+  if (system === 'dnd5e') return <TableViewDnd campaignId={campaignId} />
+  return <TableViewBattletech />
 }
