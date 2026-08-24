@@ -1010,3 +1010,103 @@ def test_request_movement_broadcasts_movement_started_over_websocket():
             assert message["unit_id"] == unit["id"]
             assert message["movement_type"] == "walk"
             assert len(message["hexes"]) > 0
+
+
+# ---- D&D 5e (ROADMAP.md Fase R4 — segundo sistema, slice mínimo) --------
+
+
+def _dnd_campaign(c):
+    return c.post("/api/campaigns", json={"name": "D&D API Test", "system": "dnd5e"}).json()
+
+
+def test_dnd_endpoints_422_on_a_battletech_campaign():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "BT Test"}).json()
+        assert c.post(f"/api/campaigns/{camp['id']}/dnd/characters", json={"name": "Elowen"}).status_code == 422
+        assert c.get(f"/api/campaigns/{camp['id']}/dnd/characters").status_code == 422
+        assert c.get(f"/api/campaigns/{camp['id']}/dnd/round").status_code == 422
+        assert c.post(f"/api/campaigns/{camp['id']}/dnd/round/start").status_code == 422
+
+
+def test_create_and_list_dnd_character():
+    with client() as c:
+        camp = _dnd_campaign(c)
+        created = c.post(
+            f"/api/campaigns/{camp['id']}/dnd/characters",
+            json={"name": "Elowen", "dex": 16, "ac": 14, "hp_max": 18},
+        ).json()
+        assert created["dex"] == 16
+        assert created["hp_current"] == 18
+
+        listed = c.get(f"/api/campaigns/{camp['id']}/dnd/characters").json()
+        assert any(ch["id"] == created["id"] for ch in listed)
+
+
+def test_place_dnd_character_as_a_unit_on_a_square_map():
+    with client() as c:
+        camp = _dnd_campaign(c)
+        char = c.post(f"/api/campaigns/{camp['id']}/dnd/characters", json={"name": "Thorn"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "Tavern", "width": 6, "height": 6}).json()
+        unit = c.post(
+            f"/api/maps/{m['id']}/units", json={"q": 1, "r": 1, "dnd_character_id": char["id"]}
+        ).json()
+        assert unit["dnd_character_id"] == char["id"]
+        assert unit["dnd_name"] == "Thorn"
+        assert unit["mech_id"] is None
+
+
+def test_dnd_attack_endpoint_broadcasts_and_applies_damage(monkeypatch):
+    from app.systems.dnd5e import combat as dnd_combat_module
+    with client() as c:
+        camp = _dnd_campaign(c)
+        attacker = c.post(f"/api/campaigns/{camp['id']}/dnd/characters", json={"name": "Thorn"}).json()
+        target = c.post(
+            f"/api/campaigns/{camp['id']}/dnd/characters", json={"name": "Elowen", "ac": 10, "hp_max": 10}
+        ).json()
+        monkeypatch.setattr(dnd_combat_module, "_roll_die", lambda sides: 15 if sides == 20 else 4)
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(
+                f"/api/campaigns/{camp['id']}/dnd/attack",
+                json={
+                    "attacker_id": attacker["id"], "target_id": target["id"],
+                    "attack_mod": 0, "damage_dice": "1d6",
+                },
+            )
+            assert res.status_code == 200
+            body = res.json()
+            assert body["hit"] is True
+            assert body["damage"] == 4
+            message = ws.receive_json()
+            assert message["type"] == "dnd_attack_result"
+            assert message["damage"] == 4
+
+        updated = c.get(f"/api/campaigns/{camp['id']}/dnd/characters").json()
+        assert next(ch for ch in updated if ch["id"] == target["id"])["hp_current"] == 6
+
+
+def test_dnd_round_lifecycle_via_api(monkeypatch):
+    from app.systems.dnd5e import turns as dnd_turns_module
+    with client() as c:
+        camp = _dnd_campaign(c)
+        a = c.post(f"/api/campaigns/{camp['id']}/dnd/characters", json={"name": "Elowen", "dex": 18}).json()
+        b = c.post(f"/api/campaigns/{camp['id']}/dnd/characters", json={"name": "Thorn", "dex": 10}).json()
+        monkeypatch.setattr(dnd_turns_module, "_roll_d20", lambda: 10)
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/campaigns/{camp['id']}/dnd/round/start")
+            assert res.status_code == 200
+            state = res.json()
+            assert state["round_number"] == 1
+            assert [r["character_id"] for r in state["rolls"]] == [a["id"], b["id"]]
+            started_msg = ws.receive_json()
+            assert started_msg["type"] == "dnd_round_started"
+
+            res = c.post(f"/api/campaigns/{camp['id']}/dnd/round/act", json={"character_id": a["id"]})
+            assert res.status_code == 200
+            assert res.json()["acted_character_ids"] == [a["id"]]
+            updated_msg = ws.receive_json()
+            assert updated_msg["type"] == "dnd_round_updated"
+
+        fetched = c.get(f"/api/campaigns/{camp['id']}/dnd/round").json()
+        assert fetched["acted_character_ids"] == [a["id"]]

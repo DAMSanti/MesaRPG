@@ -231,3 +231,46 @@ def test_attack_side_defaults_to_front_when_attacker_and_target_share_a_hex():
     target = {"q": 0, "r": 0, "facing_deg": 45}
     attacker = {"q": 0, "r": 0}
     assert units.attack_side(attacker, target, "hex") == "front"
+
+
+# ---- D&D units (ROADMAP.md Fase R4 — a unit has mech_id/pilot_id OR
+# dnd_character_id, never both, depending on the owning campaign's
+# system) -------------------------------------------------------------
+
+def test_create_dnd_unit_has_no_battletech_fields(dnd_campaign):
+    from app.systems.dnd5e import characters
+    char = characters.create_character(dnd_campaign["id"], "Elowen", ac=15, hp_max=12)
+    m = maps.create_map(dnd_campaign["id"], "Tavern", width=6, height=6)
+    unit = units.create_unit(dnd_campaign["id"], m["id"], q=1, r=2, dnd_character_id=char["id"])
+
+    assert unit["mech_id"] is None
+    assert unit["pilot_id"] is None
+    assert unit["dnd_character_id"] == char["id"]
+    assert unit["dnd_name"] == "Elowen"
+    assert unit["dnd_ac"] == 15
+    assert unit["dnd_hp_current"] == 12
+    assert unit["dnd_hp_max"] == 12
+
+
+def test_dnd_unit_round_trips_through_list_units(dnd_campaign):
+    from app.systems.dnd5e import characters
+    char = characters.create_character(dnd_campaign["id"], "Thorn")
+    m = maps.create_map(dnd_campaign["id"], "Tavern", width=6, height=6)
+    units.create_unit(dnd_campaign["id"], m["id"], q=0, r=0, dnd_character_id=char["id"])
+
+    listed = units.list_units(m["id"])
+    assert len(listed) == 1
+    assert listed[0]["dnd_character_id"] == char["id"]
+    assert listed[0]["dnd_name"] == "Thorn"
+
+
+def test_multiple_dnd_characters_placed_same_campaign(dnd_campaign):
+    from app.systems.dnd5e import characters
+    a = characters.create_character(dnd_campaign["id"], "Elowen")
+    b = characters.create_character(dnd_campaign["id"], "Thorn")
+    m = maps.create_map(dnd_campaign["id"], "Tavern", width=6, height=6)
+    units.create_unit(dnd_campaign["id"], m["id"], q=0, r=0, dnd_character_id=a["id"])
+    units.create_unit(dnd_campaign["id"], m["id"], q=1, r=1, dnd_character_id=b["id"])
+
+    names = {u["dnd_name"] for u in units.list_units(m["id"])}
+    assert names == {"Elowen", "Thorn"}

@@ -98,6 +98,16 @@ export interface Unit {
    * this specific mech instead of the generic placeholder. */
   mech_chassis: string | null
   mech_model: string | null
+  /** D&D 5e equivalent of mech_id/pilot_id above (ROADMAP.md Fase R4) —
+   * a unit has exactly one of mech_id or dnd_character_id set, never
+   * both, depending on the owning campaign's system. dnd_name/_ac/
+   * _hp_current/_hp_max are joined server-side, same pattern as
+   * mech_chassis/mech_model. */
+  dnd_character_id: number | null
+  dnd_name: string | null
+  dnd_ac: number | null
+  dnd_hp_current: number | null
+  dnd_hp_max: number | null
 }
 
 export interface Visibility {
@@ -446,8 +456,82 @@ export const createUnit = (
     pilot_id?: number
     facing_deg?: number
     is_ghost?: boolean
+    dnd_character_id?: number
   },
 ) => request<Unit>(`/api/maps/${mapId}/units`, { method: 'POST', body: JSON.stringify(body) })
+
+// ---- D&D 5e (ROADMAP.md Fase R4 — segundo sistema, slice mínimo) --------
+
+export interface DndCharacter {
+  id: number
+  campaign_id: number
+  name: string
+  str: number
+  dex: number
+  con: number
+  int: number
+  wis: number
+  cha: number
+  ac: number
+  hp_current: number
+  hp_max: number
+  proficiency_bonus: number
+  created_at: string
+}
+
+export const abilityModifier = (score: number) => Math.floor((score - 10) / 2)
+
+export const createDndCharacter = (
+  campaignId: number,
+  body: {
+    name: string
+    str?: number
+    dex?: number
+    con?: number
+    int?: number
+    wis?: number
+    cha?: number
+    ac?: number
+    hp_max?: number
+    proficiency_bonus?: number
+  },
+) => request<DndCharacter>(`/api/campaigns/${campaignId}/dnd/characters`, { method: 'POST', body: JSON.stringify(body) })
+
+export const listDndCharacters = (campaignId: number) =>
+  request<DndCharacter[]>(`/api/campaigns/${campaignId}/dnd/characters`)
+
+export interface DndAttackResult {
+  attacker_id: number
+  target_id: number
+  roll: number
+  attack_mod: number
+  total: number
+  hit: boolean
+  damage: number
+}
+
+export const dndAttack = (
+  campaignId: number,
+  body: { attacker_id: number; target_id: number; attack_mod: number; damage_dice: string },
+) => request<DndAttackResult>(`/api/campaigns/${campaignId}/dnd/attack`, { method: 'POST', body: JSON.stringify(body) })
+
+export interface DndRoundState {
+  campaign_id: number
+  round_number: number
+  rolls: { character_id: number; roll: number; name: string }[]
+  acted_character_ids: number[]
+}
+
+export const getDndRound = (campaignId: number) => request<DndRoundState>(`/api/campaigns/${campaignId}/dnd/round`)
+
+export const startDndRound = (campaignId: number) =>
+  request<DndRoundState>(`/api/campaigns/${campaignId}/dnd/round/start`, { method: 'POST' })
+
+export const markDndRoundActed = (campaignId: number, characterId: number) =>
+  request<DndRoundState>(`/api/campaigns/${campaignId}/dnd/round/act`, {
+    method: 'POST',
+    body: JSON.stringify({ character_id: characterId }),
+  })
 
 export interface AttackIn {
   // Derived server-side from the attacker's own pilot when

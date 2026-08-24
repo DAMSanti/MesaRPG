@@ -10,10 +10,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import campaigns, db, equipment, mapgen, maps, mech_templates, rolls, systems, table_session, units
 from .systems.battletech import combat, mechs, movement, pilots, turns, weapons
+from .systems.dnd5e import characters as dnd_characters
+from .systems.dnd5e import combat as dnd_combat
+from .systems.dnd5e import turns as dnd_turns
 from .ws import hub_manager, manager
 
 
@@ -646,6 +649,7 @@ class UnitIn(BaseModel):
     pilot_id: int | None = None
     facing_deg: int = 0
     is_ghost: bool = False
+    dnd_character_id: int | None = None
 
 
 @app.post("/api/maps/{map_id}/units")
@@ -660,6 +664,7 @@ async def create_unit(map_id: int, body: UnitIn) -> dict:
         pilot_id=body.pilot_id,
         facing_deg=body.facing_deg,
         is_ghost=body.is_ghost,
+        dnd_character_id=body.dnd_character_id,
     )
     # Placing a token (GM sidebar drag, or a freshly-created mech) used to
     # be invisible to an already-open Mesa view until something else
@@ -934,6 +939,99 @@ async def report_round_initiative(campaign_id: int, body: ReportInitiativeIn) ->
         if 1 <= die_value <= 6:
             rolls.insert_roll(campaign_id, "d6", die_value, body.pilot_id, label="iniciativa")
     await manager.broadcast(campaign_id, {"type": "round_updated", **result})
+    return result
+
+
+# ---- D&D 5e (ROADMAP.md Fase R4 — segundo sistema, slice mínimo de
+# validación de la arquitectura de plugins). Deliberadamente una familia
+# de endpoints separada, no una reutilización genérica de /attack o
+# /round/* de arriba — mech+piloto vs. una ficha única son formas
+# demasiado distintas para forzar una interfaz común con solo dos
+# sistemas reales de referencia (ver ROADMAP.md, Fase R4). Los endpoints
+# de mapa/unidad (arriba) SÍ se reutilizan tal cual — ya son genéricos
+# por grid_type desde la Fase S0. -------------------------------------
+
+
+def _require_dnd_campaign(campaign_id: int) -> dict:
+    campaign = _require_campaign(campaign_id)
+    if campaign["system"] != "dnd5e":
+        raise HTTPException(422, f"Campaign {campaign_id} is not a D&D 5e campaign")
+    return campaign
+
+
+class DndCharacterIn(BaseModel):
+    # Pydantic can't build a model with a field literally named `int`
+    # annotated `int` (collides internally, unlike a plain Python
+    # function parameter — see characters.create_character, which uses
+    # bare `str`/`int` params without issue). `str_`/`int_` + an alias
+    # keeps the wire format ("str": 16, "int": 8) matching D&D's own
+    # ability names — see create_dnd_character's model_dump(by_alias=True).
+    model_config = ConfigDict(populate_by_name=True)
+    name: str
+    str_: int = Field(10, alias="str")
+    dex: int = 10
+    con: int = 10
+    int_: int = Field(10, alias="int")
+    wis: int = 10
+    cha: int = 10
+    ac: int = 10
+    hp_max: int = 10
+    proficiency_bonus: int = 2
+
+
+@app.post("/api/campaigns/{campaign_id}/dnd/characters")
+def create_dnd_character(campaign_id: int, body: DndCharacterIn) -> dict:
+    _require_dnd_campaign(campaign_id)
+    return dnd_characters.create_character(campaign_id, **body.model_dump(by_alias=True))
+
+
+@app.get("/api/campaigns/{campaign_id}/dnd/characters")
+def get_dnd_characters(campaign_id: int) -> list[dict]:
+    _require_dnd_campaign(campaign_id)
+    return dnd_characters.list_characters(campaign_id)
+
+
+class DndAttackIn(BaseModel):
+    attacker_id: int
+    target_id: int
+    attack_mod: int
+    damage_dice: str
+
+
+@app.post("/api/campaigns/{campaign_id}/dnd/attack")
+async def dnd_attack(campaign_id: int, body: DndAttackIn) -> dict:
+    _require_dnd_campaign(campaign_id)
+    try:
+        result = dnd_combat.resolve_attack(body.attacker_id, body.target_id, body.attack_mod, body.damage_dice)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    await manager.broadcast(campaign_id, {"type": "dnd_attack_result", **result})
+    return result
+
+
+@app.get("/api/campaigns/{campaign_id}/dnd/round")
+def get_dnd_round(campaign_id: int) -> dict:
+    _require_dnd_campaign(campaign_id)
+    return dnd_turns.get_round(campaign_id)
+
+
+@app.post("/api/campaigns/{campaign_id}/dnd/round/start")
+async def start_dnd_round(campaign_id: int) -> dict:
+    _require_dnd_campaign(campaign_id)
+    result = dnd_turns.start_round(campaign_id)
+    await manager.broadcast(campaign_id, {"type": "dnd_round_started", **result})
+    return result
+
+
+class DndRoundActIn(BaseModel):
+    character_id: int
+
+
+@app.post("/api/campaigns/{campaign_id}/dnd/round/act")
+async def mark_dnd_round_acted(campaign_id: int, body: DndRoundActIn) -> dict:
+    _require_dnd_campaign(campaign_id)
+    result = dnd_turns.mark_acted(campaign_id, body.character_id)
+    await manager.broadcast(campaign_id, {"type": "dnd_round_updated", **result})
     return result
 
 

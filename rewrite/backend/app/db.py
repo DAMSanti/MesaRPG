@@ -218,6 +218,51 @@ CREATE TABLE IF NOT EXISTS table_session (
     active_campaign_id INTEGER REFERENCES campaigns(id) ON DELETE SET NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- D&D 5e (ROADMAP.md Fase R4 — segundo sistema, slice mínimo de
+-- validación de la arquitectura de plugins). Sin flujo de aprobación
+-- (a diferencia de pilots/mechs) — el GM crea la ficha directamente,
+-- como BattleTech antes de que existiera esa fase. Sin clases, conjuros,
+-- dotes ni condiciones a propósito — ver app/systems/dnd5e/ para el
+-- alcance exacto.
+CREATE TABLE IF NOT EXISTS dnd_characters (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    str INTEGER NOT NULL DEFAULT 10,
+    dex INTEGER NOT NULL DEFAULT 10,
+    con INTEGER NOT NULL DEFAULT 10,
+    int INTEGER NOT NULL DEFAULT 10,
+    wis INTEGER NOT NULL DEFAULT 10,
+    cha INTEGER NOT NULL DEFAULT 10,
+    ac INTEGER NOT NULL DEFAULT 10,
+    hp_current INTEGER NOT NULL DEFAULT 10,
+    hp_max INTEGER NOT NULL DEFAULT 10,
+    proficiency_bonus INTEGER NOT NULL DEFAULT 2,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Iniciativa D&D — mismo espíritu que bt_rounds/bt_round_rolls/
+-- bt_round_acted (una fila = la ronda actual, sin historial), pero sin
+-- ningún concepto de facción/equipo: v1 es una tirada individual por
+-- personaje (d20+DEX), no por bando.
+CREATE TABLE IF NOT EXISTS dnd_rounds (
+    campaign_id INTEGER PRIMARY KEY REFERENCES campaigns(id) ON DELETE CASCADE,
+    round_number INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS dnd_round_rolls (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    character_id INTEGER NOT NULL REFERENCES dnd_characters(id) ON DELETE CASCADE,
+    roll INTEGER NOT NULL,
+    PRIMARY KEY (campaign_id, character_id)
+);
+
+CREATE TABLE IF NOT EXISTS dnd_round_acted (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    character_id INTEGER NOT NULL REFERENCES dnd_characters(id) ON DELETE CASCADE,
+    PRIMARY KEY (campaign_id, character_id)
+);
 """
 
 # Standard BattleMech locations. Only torso locations carry rear armor.
@@ -311,6 +356,11 @@ def init_db() -> None:
         # (none confirmed as an official Total Warfare rule so far).
         _ensure_column(conn, "bt_round_rolls", "modifiers_json", "TEXT")
         _ensure_column(conn, "bt_round_rolls", "modifier_total", "INTEGER NOT NULL DEFAULT 0")
+        # D&D 5e (Fase R4) — additive, mirrors mech_id/pilot_id above but
+        # for a single-character system instead of a mech+pilot pair. A
+        # unit has exactly one of mech_id or dnd_character_id set,
+        # depending on the owning campaign's system.
+        _ensure_column(conn, "units", "dnd_character_id", "INTEGER REFERENCES dnd_characters(id) ON DELETE SET NULL")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

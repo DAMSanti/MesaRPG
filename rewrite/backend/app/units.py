@@ -79,15 +79,16 @@ def create_unit(
     pilot_id: int | None = None,
     facing_deg: int = 0,
     is_ghost: bool = False,
+    dnd_character_id: int | None = None,
 ) -> dict:
     with db.connect() as conn:
         cur = conn.execute(
             """
             INSERT INTO units
-                (campaign_id, map_id, mech_id, pilot_id, q, r, facing_deg, is_ghost, revealed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (campaign_id, map_id, mech_id, pilot_id, q, r, facing_deg, is_ghost, revealed, dnd_character_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (campaign_id, map_id, mech_id, pilot_id, q, r, facing_deg, is_ghost, not is_ghost),
+            (campaign_id, map_id, mech_id, pilot_id, q, r, facing_deg, is_ghost, not is_ghost, dnd_character_id),
         )
         return _get(conn, cur.lastrowid)
 
@@ -275,10 +276,13 @@ def _get(conn, unit_id: int) -> dict | None:
         """
         SELECT u.id, u.campaign_id, u.map_id, u.mech_id, u.pilot_id, u.q, u.r,
                u.facing_deg, u.is_ghost, u.revealed, u.created_at, p.faction AS pilot_faction,
-               m.chassis AS mech_chassis, m.model AS mech_model
+               m.chassis AS mech_chassis, m.model AS mech_model,
+               u.dnd_character_id, dc.name AS dnd_name, dc.ac AS dnd_ac,
+               dc.hp_current AS dnd_hp_current, dc.hp_max AS dnd_hp_max
         FROM units u
         LEFT JOIN pilots p ON p.id = u.pilot_id
         LEFT JOIN mechs m ON m.id = u.mech_id
+        LEFT JOIN dnd_characters dc ON dc.id = u.dnd_character_id
         WHERE u.id = ?
         """,
         (unit_id,),

@@ -29,6 +29,11 @@ def campaign():
 
 
 @pytest.fixture
+def dnd_campaign():
+    return campaigns.create_campaign("Test D&D Campaign", "dnd5e")
+
+
+@pytest.fixture
 def pilot(campaign):
     return pilots.create_pilot(campaign["id"], "Miriam Voss", callsign="Widow", gunnery=3, piloting=4)
 
