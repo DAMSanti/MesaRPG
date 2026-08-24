@@ -111,6 +111,11 @@
   white-space: nowrap;
 }
 
+.entity-card.status-pending {
+  border-color: var(--accent-2);
+  background: color-mix(in srgb, var(--accent-2) 16%, var(--surface-hover));
+}
+
 .entity-card-draggable {
   cursor: grab;
   user-select: none;
@@ -286,23 +291,18 @@ button.undo {
   flex-wrap: wrap;
 }
 
-.reject-form {
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
+.reject-note {
+  display: block;
   width: 100%;
-  margin-top: 4px;
-}
-
-.reject-form textarea {
-  flex: 1;
-  min-height: 40px;
+  min-height: 80px;
   font: inherit;
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 6px 8px;
+  margin-bottom: 10px;
+  resize: vertical;
 }
 
 .round-info {

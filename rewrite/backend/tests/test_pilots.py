@@ -1,5 +1,6 @@
 import pytest
 
+from app import campaigns
 from app.systems.battletech import pilots
 
 
@@ -195,3 +196,29 @@ def test_list_pilots_includes_has_pin_and_never_the_hash(campaign):
     assert "pin" not in listed[0]
     assert "pin_hash" not in listed[0]
     assert "pin_salt" not in listed[0]
+
+
+def test_create_pilot_rejects_a_second_pilot_for_the_same_owner_token(campaign):
+    pilots.create_pilot(campaign["id"], "First Try", owner_token="device-1")
+    with pytest.raises(pilots.DuplicateOwnerPilot):
+        pilots.create_pilot(campaign["id"], "Second Try", owner_token="device-1")
+
+
+def test_create_pilot_allows_different_owner_tokens(campaign):
+    a = pilots.create_pilot(campaign["id"], "Device A", owner_token="device-a")
+    b = pilots.create_pilot(campaign["id"], "Device B", owner_token="device-b")
+    assert a["id"] != b["id"]
+
+
+def test_create_pilot_without_owner_token_is_never_deduped(campaign):
+    # GM-created pilots never pass owner_token — must stay unrestricted.
+    a = pilots.create_pilot(campaign["id"], "GM Pilot One")
+    b = pilots.create_pilot(campaign["id"], "GM Pilot Two")
+    assert a["id"] != b["id"]
+
+
+def test_create_pilot_allows_same_owner_token_in_different_campaigns(campaign):
+    other = campaigns.create_campaign("Other Campaign")
+    a = pilots.create_pilot(campaign["id"], "Same Device", owner_token="device-x")
+    b = pilots.create_pilot(other["id"], "Same Device", owner_token="device-x")
+    assert a["id"] != b["id"]

@@ -832,7 +832,7 @@ function GMViewBattletech() {
             {pilots.map((p) => (
               <Tooltip key={p.id} content={<>G{p.gunnery}/P{p.piloting}</>}>
                 <div
-                  className="entity-card"
+                  className={`entity-card${p.status === 'pending' ? ' status-pending' : ''}`}
                   onClick={(e) => setPilotMenu({ pilot: p, x: e.clientX, y: e.clientY })}
                 >
                   <span className="entity-card-name">{p.name}{p.callsign && ` "${p.callsign}"`}</span>
@@ -863,7 +863,7 @@ function GMViewBattletech() {
                   }
                 >
                   <div
-                    className="entity-card entity-card-draggable"
+                    className={`entity-card entity-card-draggable${m.status === 'pending' ? ' status-pending' : ''}`}
                     style={{ '--entity-faction-color': mechFactionColor(m) } as CSSProperties}
                     onPointerDown={(e) => {
                       e.preventDefault()
@@ -1007,18 +1007,7 @@ function GMViewBattletech() {
                   <li key={p.id}>
                     #{p.id} {p.name} {p.callsign && `"${p.callsign}"`} — G{p.gunnery}/P{p.piloting}
                     <button type="button" onClick={() => approvePilot(p.id)}>Aprobar</button>
-                    <button type="button" onClick={() => setRejectingPilotId(p.id)}>Rechazar</button>
-                    {rejectingPilotId === p.id && (
-                      <div className="reject-form">
-                        <textarea
-                          placeholder="qué hay que corregir…"
-                          value={rejectNote}
-                          onChange={(e) => setRejectNote(e.target.value)}
-                        />
-                        <button type="button" onClick={() => submitRejectPilot(p.id)}>Confirmar rechazo</button>
-                        <button type="button" onClick={() => { setRejectingPilotId(null); setRejectNote('') }}>Cancelar</button>
-                      </div>
-                    )}
+                    <button type="button" onClick={() => { setRejectingPilotId(p.id); setRejectNote('') }}>Rechazar</button>
                   </li>
                 ))}
               </ul>
@@ -1032,18 +1021,7 @@ function GMViewBattletech() {
                   <li key={m.id}>
                     #{m.id} {m.chassis} {m.model} — {m.tonnage}t
                     <button type="button" onClick={() => approveMech(m.id)}>Aprobar</button>
-                    <button type="button" onClick={() => setRejectingMechId(m.id)}>Rechazar</button>
-                    {rejectingMechId === m.id && (
-                      <div className="reject-form">
-                        <textarea
-                          placeholder="qué hay que corregir…"
-                          value={rejectNote}
-                          onChange={(e) => setRejectNote(e.target.value)}
-                        />
-                        <button type="button" onClick={() => submitRejectMech(m.id)}>Confirmar rechazo</button>
-                        <button type="button" onClick={() => { setRejectingMechId(null); setRejectNote('') }}>Cancelar</button>
-                      </div>
-                    )}
+                    <button type="button" onClick={() => { setRejectingMechId(m.id); setRejectNote('') }}>Rechazar</button>
                   </li>
                 ))}
               </ul>
@@ -1120,6 +1098,12 @@ function GMViewBattletech() {
             onClose={() => setMechMenu(null)}
           >
             <button onClick={() => { setViewingMechId(mechMenu.mech.id); setMechMenu(null) }}>Ver ficha</button>
+            {mechMenu.mech.status === 'pending' && (
+              <>
+                <button onClick={() => { approveMech(mechMenu.mech.id); setMechMenu(null) }}>✓ Aprobar</button>
+                <button onClick={() => { setRejectingMechId(mechMenu.mech.id); setRejectNote(''); setMechMenu(null) }}>✗ Rechazar</button>
+              </>
+            )}
             {showRollInitiative && (
               <button
                 disabled={!needsInitiative(menuPilot!.id)}
@@ -1140,10 +1124,49 @@ function GMViewBattletech() {
           title={pilotMenu.pilot.name}
           onClose={() => setPilotMenu(null)}
         >
+          {pilotMenu.pilot.status === 'pending' && (
+            <>
+              <button onClick={() => { approvePilot(pilotMenu.pilot.id); setPilotMenu(null) }}>✓ Aprobar</button>
+              <button onClick={() => { setRejectingPilotId(pilotMenu.pilot.id); setRejectNote(''); setPilotMenu(null) }}>✗ Rechazar</button>
+            </>
+          )}
           <button onClick={() => { openEditPilot(pilotMenu.pilot); setPilotMenu(null) }}>Editar</button>
           <button className="danger" onClick={() => { setConfirmDeletePilot(pilotMenu.pilot); setPilotMenu(null) }}>Eliminar</button>
         </DropdownMenu>
       )}
+
+      {rejectingPilotId != null && (() => {
+        const p = pilots.find((x) => x.id === rejectingPilotId)
+        return (
+          <Modal title={`Rechazar a ${p?.name ?? 'piloto'}`} onClose={() => { setRejectingPilotId(null); setRejectNote('') }}>
+            <textarea
+              className="reject-note"
+              placeholder="qué hay que corregir…"
+              value={rejectNote}
+              onChange={(e) => setRejectNote(e.target.value)}
+            />
+            <button type="button" onClick={() => submitRejectPilot(rejectingPilotId)}>Confirmar rechazo</button>
+          </Modal>
+        )
+      })()}
+
+      {rejectingMechId != null && (() => {
+        const m = mechs.find((x) => x.id === rejectingMechId)
+        return (
+          <Modal
+            title={`Rechazar ${m ? `${m.chassis} ${m.model ?? ''}`.trim() : 'mech'}`}
+            onClose={() => { setRejectingMechId(null); setRejectNote('') }}
+          >
+            <textarea
+              className="reject-note"
+              placeholder="qué hay que corregir…"
+              value={rejectNote}
+              onChange={(e) => setRejectNote(e.target.value)}
+            />
+            <button type="button" onClick={() => submitRejectMech(rejectingMechId)}>Confirmar rechazo</button>
+          </Modal>
+        )
+      })()}
 
       {editingPilot && (
         <Modal title={`Editar ${editingPilot.name}`} onClose={() => setEditingPilot(null)}>

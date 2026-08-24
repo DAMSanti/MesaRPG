@@ -6,25 +6,24 @@ import { useTableSocket } from '../ws'
 import { PilotForm } from '../components/PilotForm'
 import { PinPrompt } from '../components/PinPrompt'
 import { Modal } from '../components/Modal'
-import { MechLocationsGrid } from '../components/MechLocationsGrid'
 import { MechRecordSheet } from '../components/MechRecordSheet'
-import { MechImportSelector } from '../components/MechImportSelector'
 import { WeaponVolleyPanel } from '../components/WeaponVolleyPanel'
 import { FirstPersonView } from '../components/FirstPersonView'
-import {
-  buildMechLocationsPayload, emptyLocationsForm, locationsFormFromMechLocationIn, previewMechFromLocationsForm,
-} from '../characterSheet'
+import { buildMechLocationsPayload, emptyLocationsForm, locationsFormFromMechLocationIn } from '../characterSheet'
 import { getDeviceToken } from '../deviceToken'
 import {
+  addMechEquipment,
   addMechWeapon,
   attack,
   createMech,
   createPilot,
+  getMechImport,
   getUnits,
   getVisibility,
   getWeaponCatalog,
   listCampaigns,
   listMechChassis,
+  listMechModels,
   listMechs,
   listPilots,
   markRoundActed,
@@ -38,6 +37,7 @@ import {
   type Campaign,
   type Mech,
   type MechImportData,
+  type MechModelResult,
   type MovementType,
   type Pilot,
   type Unit,
@@ -88,15 +88,22 @@ export function PlayerView() {
   const [joinGunnery, setJoinGunnery] = useState(4)
   const [joinPiloting, setJoinPiloting] = useState(5)
   const [joinColor, setJoinColor] = useState(() => suggestPilotColor(pilots.length))
+  // Chassis → model, same two cascading dropdowns as GMView's own "Nuevo
+  // mech" modal (real user request: "copia la forma de hacerlo de GM
+  // view") — tonnage/movement/armor/structure all come from the picked
+  // model file, never typed by hand here.
   const [joinChassis, setJoinChassis] = useState('')
   const [chassisOptions, setChassisOptions] = useState<string[]>([])
   const [joinModel, setJoinModel] = useState('')
+  const [joinModelOptions, setJoinModelOptions] = useState<MechModelResult[]>([])
+  const [joinSelectedModelFile, setJoinSelectedModelFile] = useState('')
   const [joinTonnage, setJoinTonnage] = useState(50)
   const [joinWalkMp, setJoinWalkMp] = useState(4)
   const [joinRunMp, setJoinRunMp] = useState(6)
   const [joinHeatSinks, setJoinHeatSinks] = useState(10)
   const [joinLocations, setJoinLocations] = useState(emptyLocationsForm())
   const [joinPendingWeapons, setJoinPendingWeapons] = useState<{ weapon_name: string; location: string }[]>([])
+  const [joinPendingEquipment, setJoinPendingEquipment] = useState<{ equipment_name: string; location: string }[]>([])
   const [joinPendingCriticals, setJoinPendingCriticals] = useState<Record<string, string[]>>({})
   const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
   const [loading, setLoading] = useState(true)
@@ -126,6 +133,21 @@ export function PlayerView() {
   useEffect(() => {
     listMechChassis().then(setChassisOptions).catch(() => {})
   }, [])
+
+  useEffect(() => {
+    if (!joinChassis) {
+      setJoinModelOptions([])
+      return
+    }
+    listMechModels(joinChassis).then(setJoinModelOptions).catch(() => setJoinModelOptions([]))
+    setJoinSelectedModelFile('')
+  }, [joinChassis])
+
+  useEffect(() => {
+    if (!joinSelectedModelFile) return
+    getMechImport(joinSelectedModelFile).then(importJoinMech).catch(() => setError('No se pudo cargar ese modelo del catálogo.'))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [joinSelectedModelFile])
 
   useEffect(() => {
     refetch()
@@ -159,6 +181,7 @@ export function PlayerView() {
     setJoinHeatSinks(data.heat_sinks)
     setJoinLocations(locationsFormFromMechLocationIn(data.locations))
     setJoinPendingWeapons(data.weapons)
+    setJoinPendingEquipment(data.equipment)
     setJoinPendingCriticals(data.criticals)
   }
 
@@ -196,6 +219,9 @@ export function PlayerView() {
       for (const w of joinPendingWeapons) {
         await addMechWeapon(m.id, w.weapon_name, w.location, token).catch(() => {})
       }
+      for (const eq of joinPendingEquipment) {
+        await addMechEquipment(m.id, eq.equipment_name, eq.location, token).catch(() => {})
+      }
       // Without this, the URL switches to the new pilot but `pilots` state
       // hasn't caught up yet (the fetch effect doesn't depend on pilotId),
       // so the view briefly renders blank — found by auditing, not assumed.
@@ -223,6 +249,10 @@ export function PlayerView() {
     const visiblePilots = pilots.filter(
       (p) => (p.status === 'approved' || p.is_own) && p.faction === 'player',
     )
+    // Cada jugador (cada dispositivo) solo puede tener un piloto propio
+    // — el backend ya lo impide (pilots.py's DuplicateOwnerPilot), esto
+    // solo evita ofrecer el botón cuando ya no tiene sentido.
+    const hasOwnPilot = pilots.some((p) => p.is_own)
 
     const pickPilot = (p: Pilot) => {
       if (p.has_pin) setPendingPilot(p)
@@ -260,11 +290,13 @@ export function PlayerView() {
         ) : (
           !loading && <p className="hint">Todavía no hay personajes en esta partida — crea el tuyo.</p>
         )}
-        <button onClick={() => setJoinMode('create')}>+ Crear nuevo personaje</button>
+        {!hasOwnPilot && (
+          <button onClick={() => setJoinMode('create')}>+ Crear nuevo personaje</button>
+        )}
 
         {joinMode === 'create' && (
           <Modal title="Crear mi ficha" onClose={() => setJoinMode('pick')}>
-            <p className="hint">Rellénala como en la hoja de papel — el GM la revisará y la aprobará o te pedirá cambios.</p>
+            <p className="hint">El GM la revisará y la aprobará o te pedirá cambios.</p>
             <h3 className="step-label">Piloto</h3>
             <PilotForm
               name={joinName} onName={setJoinName}
@@ -276,7 +308,6 @@ export function PlayerView() {
               onSubmit={join} submitLabel="Crear ficha" submitDisabled={!joinName || !joinChassis || joinPin.length !== 4} hideSubmit
             />
             <h3 className="step-label">Mech</h3>
-            <MechImportSelector onImport={importJoinMech} />
             <div className="row">
               <select value={joinChassis} onChange={(e) => setJoinChassis(e.target.value)}>
                 <option value="">chasis…</option>
@@ -284,22 +315,15 @@ export function PlayerView() {
                   <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
                 ))}
               </select>
-              <input placeholder="modelo" value={joinModel} onChange={(e) => setJoinModel(e.target.value)} />
-              <label>ton <input type="number" value={joinTonnage} onChange={(e) => setJoinTonnage(Number(e.target.value))} style={{ width: 56 }} /></label>
-              <label>walk <input type="number" value={joinWalkMp} onChange={(e) => setJoinWalkMp(Number(e.target.value))} style={{ width: 48 }} /></label>
-              <label>run <input type="number" value={joinRunMp} onChange={(e) => setJoinRunMp(Number(e.target.value))} style={{ width: 48 }} /></label>
-              <label>disipadores <input type="number" value={joinHeatSinks} onChange={(e) => setJoinHeatSinks(Number(e.target.value))} style={{ width: 48 }} /></label>
+              <select
+                value={joinSelectedModelFile}
+                onChange={(e) => setJoinSelectedModelFile(e.target.value)}
+                disabled={joinModelOptions.length === 0}
+              >
+                <option value="">modelo…</option>
+                {joinModelOptions.map((m) => <option key={m.file} value={m.file}>{m.model}</option>)}
+              </select>
             </div>
-            <MechLocationsGrid locations={joinLocations} onChange={setJoinLocations} />
-            <h3 className="step-label">Vista previa de la hoja</h3>
-            <MechRecordSheet
-              mech={previewMechFromLocationsForm(joinChassis, joinModel, joinLocations, {
-                tonnage: joinTonnage, walk_mp: joinWalkMp, run_mp: joinRunMp, jump_mp: 0,
-              })}
-              pilot={{ gunnery: joinGunnery, piloting: joinPiloting }}
-              readOnly
-              previewFullHealth
-            />
             <button onClick={join} disabled={!joinName || !joinChassis || joinPin.length !== 4}>Crear ficha</button>
           </Modal>
         )}

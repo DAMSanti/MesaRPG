@@ -30,6 +30,10 @@ class InvalidPin(ValueError):
     pass
 
 
+class DuplicateOwnerPilot(ValueError):
+    pass
+
+
 def _check_faction(faction: str) -> None:
     if faction not in FACTIONS:
         raise UnknownFaction(f"Unknown faction {faction!r}, expected one of {sorted(FACTIONS)}")
@@ -91,6 +95,21 @@ def create_pilot(
     if pin is not None:
         _check_pin(pin)  # fail before writing anything, not after
     with db.connect() as conn:
+        # One pilot per device per campaign (real user request) — a
+        # device's owner_token is how PlayerView's self-serve join flow
+        # identifies "this player", so a second pilot with the same
+        # token would just be a duplicate character for the same
+        # person, not a second player. GM-created pilots pass no
+        # owner_token at all, so they're never subject to this.
+        if owner_token is not None:
+            existing = conn.execute(
+                "SELECT id FROM pilots WHERE campaign_id = ? AND owner_token = ?",
+                (campaign_id, owner_token),
+            ).fetchone()
+            if existing:
+                raise DuplicateOwnerPilot(
+                    f"This device already has a pilot in campaign {campaign_id} (#{existing['id']})"
+                )
         if color is not None:
             cur = conn.execute(
                 """

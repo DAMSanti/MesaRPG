@@ -297,6 +297,20 @@ def test_create_pilot_without_pin_has_pin_false():
         assert p["has_pin"] is False
 
 
+def test_create_pilot_with_duplicate_owner_token_409s():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        c.post(
+            f"/api/campaigns/{camp['id']}/pilots",
+            json={"name": "First", "owner_token": "dup-tok"},
+        )
+        res = c.post(
+            f"/api/campaigns/{camp['id']}/pilots",
+            json={"name": "Second", "owner_token": "dup-tok"},
+        )
+        assert res.status_code == 409
+
+
 def test_verify_pin_endpoint_accepts_correct_pin_and_rejects_wrong_one():
     with client() as c:
         camp = c.post("/api/campaigns", json={"name": "API Test"}).json()

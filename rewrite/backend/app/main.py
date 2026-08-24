@@ -200,6 +200,8 @@ def create_pilot(
         )
     except (pilots.UnknownFaction, pilots.UnknownStatus, pilots.InvalidPin) as exc:
         raise HTTPException(422, str(exc)) from exc
+    except pilots.DuplicateOwnerPilot as exc:
+        raise HTTPException(409, str(exc)) from exc
     return _sanitize_pilot(created, x_device_token)
 
 
