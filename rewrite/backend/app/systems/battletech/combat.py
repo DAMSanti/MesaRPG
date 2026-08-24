@@ -38,7 +38,7 @@ infantry/ProtoMechs.
 
 import secrets
 
-from ... import db
+from ... import db, events
 from ...hexgrid import Hex
 from ...hexgrid import distance as hex_distance
 from ...hexgrid import has_los
@@ -377,13 +377,20 @@ def resolve_attack(
         side = "front"
 
     weapon_name = None
+    weapon_undo_info = None
     if weapon_id is not None:
         weapon_name = mech_weapon["weapon_name"]
         damage = stats["damage"]
+        ammo_before = mech_weapon["ammo_remaining"]
         mechs.use_ammo(weapon_id)
         attacker_mech = mechs.get_mech(mech_weapon["mech_id"])
-        other_modifiers += heat_penalty(attacker_mech["heat_current"])
+        heat_before = attacker_mech["heat_current"]  # before this shot's own heat is added below
+        other_modifiers += heat_penalty(heat_before)
         mechs.add_heat(mech_weapon["mech_id"], stats["heat"])
+        weapon_undo_info = {
+            "mech_weapon_id": weapon_id, "ammo_before": ammo_before,
+            "attacker_mech_id": mech_weapon["mech_id"], "heat_before": heat_before,
+        }
     if damage is None:
         raise ValueError("resolve_attack requires either `damage` or `weapon_id`")
     if target_mech_id is None:
@@ -418,6 +425,10 @@ def resolve_attack(
         "mech_destroyed": False,
     }
 
+    attack_payload: dict = {"result": result}
+    if weapon_undo_info:
+        attack_payload["weapon"] = weapon_undo_info
+
     if hit:
         loc_d1, loc_d2, loc_roll = roll_2d6()
         location, is_crit = HIT_LOCATION_TABLES[side][loc_roll]
@@ -432,43 +443,18 @@ def resolve_attack(
             result["damage"] = damage_result
             # Official rule: CT or Head internal structure destroyed = whole mech destroyed.
             result["mech_destroyed"] = damage_result["destroyed"] and location in ("CT", "HD")
-            _record_action(conn, campaign_id, "attack", {"before": damage_result, "result": result})
+            attack_payload["before"] = damage_result
+            summary = f"Ataque {weapon_name or 'manual'} → impacto en {location} (tirada {roll})"
+            if result["mech_destroyed"]:
+                summary += " — ¡MECH DESTRUIDO!"
+            events.log_event(conn, campaign_id, "attack", summary, attack_payload)
+    else:
+        # A miss still consumes ammo/adds heat when a real weapon fired
+        # (see weapon_undo_info above) — logged (and undoable) too, not
+        # just hits, so undo can restore that even when the shot missed
+        # (previously not tracked at all — a real gap this fixes).
+        with db.connect() as conn:
+            summary = f"Ataque {weapon_name or 'manual'} → fallo (tirada {roll})"
+            events.log_event(conn, campaign_id, "attack", summary, attack_payload)
 
     return result
-
-
-def _record_action(conn, campaign_id: int, action_type: str, payload: dict) -> None:
-    import json
-
-    conn.execute(
-        "INSERT INTO combat_actions (campaign_id, action_type, payload) VALUES (?, ?, ?)",
-        (campaign_id, action_type, json.dumps(payload)),
-    )
-
-
-def undo_last_action(campaign_id: int) -> dict | None:
-    import json
-
-    with db.connect() as conn:
-        row = conn.execute(
-            """
-            SELECT id, action_type, payload FROM combat_actions
-            WHERE campaign_id = ? AND undone = 0
-            ORDER BY id DESC LIMIT 1
-            """,
-            (campaign_id,),
-        ).fetchone()
-        if not row:
-            return None
-
-        payload = json.loads(row["payload"])
-        if row["action_type"] == "attack":
-            before = payload["before"]
-            conn.execute(
-                f"UPDATE mech_locations SET {before['armor_field']} = ?, structure_current = ? "
-                "WHERE mech_id = ? AND location = ?",
-                (before["armor_before"], before["structure_before"], before["mech_id"], before["location"]),
-            )
-
-        conn.execute("UPDATE combat_actions SET undone = 1 WHERE id = ?", (row["id"],))
-        return {"action_id": row["id"], "action_type": row["action_type"], "reverted": payload}

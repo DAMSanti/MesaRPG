@@ -43,7 +43,7 @@ without a full phase-by-phase turn structure.
 import json
 import random
 
-from ... import campaigns, db, units
+from ... import campaigns, db, events, units
 from . import mechs, pilots, weapons
 
 # NPCs are non-aggressive by definition (ROADMAP.md S2 follow-up) — they
@@ -112,7 +112,17 @@ def start_round(campaign_id: int) -> dict:
                 faction_rolls = {f: _roll_2d6() for f in factions_present}
         rolls = [(f, None, roll) for f, roll in faction_rolls.items()]
 
+    # Snapshot every mech's heat BEFORE dissipate_all_heat below floors
+    # it at zero — undoing "empezar ronda" needs the exact prior value
+    # (real user request: undo covers round starts too), which can't be
+    # recovered afterward if a mech's heat had already dropped to 0.
+    heat_before = {m["id"]: m["heat_current"] for m in mechs.list_mechs(campaign_id)}
+
     with db.connect() as conn:
+        prev_round_row = conn.execute(
+            "SELECT round_number FROM bt_rounds WHERE campaign_id = ?", (campaign_id,)
+        ).fetchone()
+        prev_round_number = prev_round_row["round_number"] if prev_round_row else 0
         conn.execute(
             """
             INSERT INTO bt_rounds (campaign_id, round_number)
@@ -129,6 +139,10 @@ def start_round(campaign_id: int) -> dict:
                 "INSERT INTO bt_round_rolls (campaign_id, faction, pilot_id, roll) VALUES (?, ?, ?, ?)",
                 (campaign_id, faction, pilot_id, roll),
             )
+        events.log_event(
+            conn, campaign_id, "round_started", f"Ronda {prev_round_number + 1} iniciada",
+            {"prev_round_number": prev_round_number, "heat_before": heat_before},
+        )
         state = _get(conn, campaign_id, mode)
 
     # Closest mapping this app has to the real Heat Phase without a full
@@ -211,6 +225,10 @@ def report_pilot_initiative(campaign_id: int, pilot_id: int, roll: int) -> dict:
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (campaign_id, pilot["faction"], pilot_id, roll, json.dumps(modifiers), modifier_total),
+            )
+            events.log_event(
+                conn, campaign_id, "initiative_rolled", f"Iniciativa de {pilot['name']}: {roll}",
+                {"pilot_id": pilot_id},
             )
         return _get(conn, campaign_id, mode)
 

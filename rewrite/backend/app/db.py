@@ -144,11 +144,18 @@ CREATE TABLE IF NOT EXISTS units (
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
-CREATE TABLE IF NOT EXISTS combat_actions (
+-- Persistent campaign history + generic undo (real user request: "el
+-- registro debe guardar todo... TODO!!!" + "deshacer cualquier acción").
+-- Supersedes the old BattleTech-only combat_actions table (same shape,
+-- just generalized) — event_type covers every module (pilots/mechs/
+-- maps/units/turns/combat), not just attacks. See app/events.py.
+CREATE TABLE IF NOT EXISTS campaign_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
-    action_type TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    summary TEXT NOT NULL,
     payload TEXT NOT NULL,
+    undoable INTEGER NOT NULL DEFAULT 1,
     undone INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

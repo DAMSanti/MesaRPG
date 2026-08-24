@@ -16,7 +16,7 @@ path — a deliberate fidelity cut, not an oversight.
 
 import random
 
-from . import campaigns, db, maps
+from . import campaigns, db, events, maps
 
 # (elevation, blocks_los, los_points) — the mechanical meaning of each
 # terrain label. Generators may override elevation per-tile (hills/
@@ -563,4 +563,5 @@ def generate_map(campaign_id: int, name: str, width: int, height: int, biome: st
                 """,
                 (map_id, c[0], c[1], elevation, blocks_los, los_points, terrain),
             )
+        events.log_event(conn, campaign_id, "map_generated", f"Mapa generado: {name} ({biome})", {"map_id": map_id})
         return maps._get(conn, map_id)

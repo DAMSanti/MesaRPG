@@ -13,6 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from app import campaigns as campaigns_module
+from app import events
 from app.systems.battletech import mechs, pilots, turns
 from tests.conftest import ATLAS_LOCATIONS
 
@@ -39,6 +40,42 @@ def test_starting_a_new_round_dissipates_heat_for_every_mech(campaign):
     mechs.add_heat(m["id"], 15)
     turns.start_round(campaign["id"])
     assert mechs.get_mech(m["id"])["heat_current"] == 5  # 15 - 10 heat sinks
+
+
+def test_undo_round_started_restores_round_number_and_heat(campaign):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Hot", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS, heat_sinks=10,
+    )
+    mechs.add_heat(m["id"], 15)
+    turns.start_round(campaign["id"])
+    assert mechs.get_mech(m["id"])["heat_current"] == 5
+
+    events.undo_last_event(campaign["id"])
+    assert turns.get_round(campaign["id"])["round_number"] == 0
+    assert mechs.get_mech(m["id"])["heat_current"] == 15
+
+
+def test_undo_round_started_after_two_rounds_restores_the_second(campaign):
+    turns.start_round(campaign["id"])
+    turns.start_round(campaign["id"])
+    assert turns.get_round(campaign["id"])["round_number"] == 2
+    events.undo_last_event(campaign["id"])
+    assert turns.get_round(campaign["id"])["round_number"] == 1
+
+
+def test_undo_initiative_rolled_removes_only_that_pilot(campaign):
+    campaigns_module.set_initiative_mode(campaign["id"], "individual")
+    p1 = pilots.create_pilot(campaign["id"], "One", faction="player")
+    p2 = pilots.create_pilot(campaign["id"], "Two", faction="enemy")
+    turns.start_round(campaign["id"])
+    turns.report_pilot_initiative(campaign["id"], p1["id"], 7)
+    turns.report_pilot_initiative(campaign["id"], p2["id"], 9)
+
+    events.undo_last_event(campaign["id"])
+    state = turns.get_round(campaign["id"])
+    remaining_pilot_ids = {r["pilot_id"] for r in state["rolls"]}
+    assert remaining_pilot_ids == {p1["id"]}
 
 
 def test_team_mode_rolls_once_per_faction_present(campaign, pilot):

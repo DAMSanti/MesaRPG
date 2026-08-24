@@ -21,12 +21,24 @@ export interface GameSystem {
   grid_type: 'hex' | 'square'
 }
 
+// Carries the HTTP status so a caller can distinguish e.g. a 409 "can't
+// be done" from a generic failure (GMView's undo button uses this to
+// show a specific message for a not-undoable event — see events.py's
+// NotUndoable) instead of every non-2xx response looking the same.
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
-  if (!res.ok) throw new Error(`${init?.method ?? 'GET'} ${path} → ${res.status}`)
+  if (!res.ok) throw new ApiError(res.status, `${init?.method ?? 'GET'} ${path} → ${res.status}`)
   return res.json()
 }
 
@@ -610,6 +622,24 @@ export const attack = (campaignId: number, body: AttackIn) =>
 
 export const undoLastAction = (campaignId: number) =>
   request(`/api/campaigns/${campaignId}/undo`, { method: 'POST' })
+
+// Persistent campaign history (real user request: "el registro debe
+// guardar todo... TODO!!!") — every pilot/mech/map/round/unit/attack
+// mutation logs one of these server-side (see app/events.py). undoable
+// is what "Deshacer última acción" actually checks before reverting.
+export interface CampaignEvent {
+  id: number
+  campaign_id: number
+  event_type: string
+  summary: string
+  payload: Record<string, unknown>
+  undoable: boolean
+  undone: boolean
+  created_at: string
+}
+
+export const listCampaignEvents = (campaignId: number) =>
+  request<CampaignEvent[]>(`/api/campaigns/${campaignId}/events`)
 
 // Round/initiative tracking (ROADMAP.md S2) — simplified v1: rolls
 // initiative once per round and tracks which pilots have activated, but

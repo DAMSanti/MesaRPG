@@ -13,7 +13,7 @@
 
 import math
 
-from . import db
+from . import db, events
 from .hexgrid import Hex, has_los
 from .hexgrid import distance as hex_distance
 from .maps import get_map, tiles_lookup
@@ -111,7 +111,11 @@ def create_unit(
             """,
             (campaign_id, map_id, mech_id, pilot_id, q, r, facing_deg, is_ghost, not is_ghost, dnd_character_id),
         )
-        return _get(conn, cur.lastrowid)
+        unit_id = cur.lastrowid
+        if mech_id is not None:
+            name = f"{mech['chassis']} {mech['model'] or ''}".strip() if mech else f"mech #{mech_id}"
+            events.log_event(conn, campaign_id, "unit_placed", f"{name} colocado en el mapa", {"unit_id": unit_id})
+        return _get(conn, unit_id)
 
 
 def delete_unit(unit_id: int) -> bool:
@@ -120,18 +124,38 @@ def delete_unit(unit_id: int) -> bool:
     user request), distinct from mechs.delete_mech which removes the
     mech from the campaign entirely."""
     with db.connect() as conn:
+        snapshot = _get(conn, unit_id)
         cur = conn.execute("DELETE FROM units WHERE id = ?", (unit_id,))
+        if cur.rowcount and snapshot:
+            name = f"{snapshot['mech_chassis']} {snapshot['mech_model'] or ''}".strip() if snapshot.get("mech_chassis") else f"unidad #{unit_id}"
+            events.log_event(
+                conn, snapshot["campaign_id"], "unit_removed", f"{name} quitado del mapa",
+                {"snapshot": {
+                    "map_id": snapshot["map_id"], "mech_id": snapshot["mech_id"], "pilot_id": snapshot["pilot_id"],
+                    "q": snapshot["q"], "r": snapshot["r"], "facing_deg": snapshot["facing_deg"],
+                    "is_ghost": snapshot["is_ghost"], "revealed": snapshot["revealed"],
+                    "dnd_character_id": snapshot["dnd_character_id"],
+                }},
+            )
         return cur.rowcount > 0
 
 
 def move_unit(unit_id: int, q: int, r: int, facing_deg: int | None = None) -> dict:
     with db.connect() as conn:
+        prev = conn.execute(
+            "SELECT campaign_id, q, r, facing_deg FROM units WHERE id = ?", (unit_id,)
+        ).fetchone()
         if facing_deg is None:
             conn.execute("UPDATE units SET q = ?, r = ? WHERE id = ?", (q, r, unit_id))
         else:
             conn.execute(
                 "UPDATE units SET q = ?, r = ?, facing_deg = ? WHERE id = ?",
                 (q, r, facing_deg, unit_id),
+            )
+        if prev:
+            events.log_event(
+                conn, prev["campaign_id"], "unit_moved", "Unidad movida",
+                {"unit_id": unit_id, "prev_q": prev["q"], "prev_r": prev["r"], "prev_facing_deg": prev["facing_deg"]},
             )
         return _get(conn, unit_id)
 

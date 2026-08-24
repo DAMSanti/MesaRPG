@@ -1,7 +1,7 @@
 import hashlib
 import secrets
 
-from ... import db
+from ... import db, events
 
 # player = a player's own character; enemy = GM-controlled hostile;
 # npc = non-aggressive (merchants, quest contacts, etc.) — Battletech only
@@ -89,6 +89,7 @@ def create_pilot(
     owner_token: str | None = None,
     color: str | None = None,
     pin: str | None = None,
+    _log: bool = True,
 ) -> dict:
     _check_faction(faction)
     _check_status(status)
@@ -127,6 +128,12 @@ def create_pilot(
                 (campaign_id, name, callsign, gunnery, piloting, faction, status, owner_token),
             )
         pilot_id = cur.lastrowid
+        # _log=False only from events.py's own _undo_pilot_deleted (this
+        # IS the recreate step of undoing a delete) — without it, undoing
+        # a delete would log its own fresh "pilot_created" event, and undo
+        # would never run out of history to revert (infinite regrowth).
+        if _log:
+            events.log_event(conn, campaign_id, "pilot_created", f"Piloto creado: {name}", {"pilot_id": pilot_id})
     if pin is not None:
         set_pin(pilot_id, pin)
     with db.connect() as conn:
@@ -151,10 +158,17 @@ def review_pilot(pilot_id: int, decision: str, note: str | None = None) -> dict 
     if decision not in ("approved", "rejected"):
         raise UnknownStatus(f"Unknown review decision {decision!r}, expected 'approved' or 'rejected'")
     with db.connect() as conn:
+        prev = conn.execute("SELECT campaign_id, name, status, review_note FROM pilots WHERE id = ?", (pilot_id,)).fetchone()
         conn.execute(
             "UPDATE pilots SET status = ?, review_note = ? WHERE id = ?",
             (decision, note if decision == "rejected" else None, pilot_id),
         )
+        if prev:
+            verb = "aprobado" if decision == "approved" else "rechazado"
+            events.log_event(
+                conn, prev["campaign_id"], "pilot_reviewed", f"Piloto {verb}: {prev['name']}",
+                {"pilot_id": pilot_id, "prev_status": prev["status"], "prev_review_note": prev["review_note"]},
+            )
         return _get(conn, pilot_id)
 
 
@@ -166,6 +180,10 @@ def resubmit_pilot(pilot_id: int) -> dict | None:
         conn.execute(
             "UPDATE pilots SET status = 'pending', review_note = NULL WHERE id = ?",
             (pilot_id,),
+        )
+        events.log_event(
+            conn, pilot["campaign_id"], "pilot_resubmitted", f"Piloto reenviado: {pilot['name']}",
+            {"pilot_id": pilot_id, "prev_review_note": pilot["review_note"]},
         )
         return _get(conn, pilot_id)
 
@@ -193,17 +211,39 @@ def update_pilot(
     if not fields:
         return get_pilot(pilot_id)
     with db.connect() as conn:
+        prev = conn.execute(
+            "SELECT campaign_id, name, callsign, gunnery, piloting, faction, color FROM pilots WHERE id = ?",
+            (pilot_id,),
+        ).fetchone()
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         conn.execute(f"UPDATE pilots SET {set_clause} WHERE id = ?", (*fields.values(), pilot_id))
+        # `hits` alone is live combat bookkeeping (wound-track clicks
+        # during play, from both GMView and PlayerView), not a "ficha
+        # edited" event — logging every click would flood the history.
+        # An edit touching any OTHER field (the GM's "Editar" modal)
+        # still logs, hits included if it was part of that same call.
+        if prev and set(fields) - {"hits"}:
+            events.log_event(
+                conn, prev["campaign_id"], "pilot_updated", f"Piloto editado: {prev['name']}",
+                {"pilot_id": pilot_id, "before": dict(prev)},
+            )
         return _get(conn, pilot_id)
 
 
-def delete_pilot(pilot_id: int) -> bool:
+def delete_pilot(pilot_id: int, _log: bool = True) -> bool:
     """GM-initiated removal. `mechs.pilot_id` and `units.pilot_id` are
     `ON DELETE SET NULL` (db.py) — any mech/unit that had this pilot
-    survives, just unpiloted, rather than cascading further deletes."""
+    survives, just unpiloted, rather than cascading further deletes.
+    `_log=False` only from events.py's own _undo_pilot_created — see
+    create_pilot's matching comment on why undo mustn't log itself."""
     with db.connect() as conn:
+        snapshot = _get(conn, pilot_id)
         cur = conn.execute("DELETE FROM pilots WHERE id = ?", (pilot_id,))
+        if _log and cur.rowcount and snapshot:
+            events.log_event(
+                conn, snapshot["campaign_id"], "pilot_deleted", f"Piloto borrado: {snapshot['name']}",
+                {"snapshot": snapshot},
+            )
         return cur.rowcount > 0
 
 

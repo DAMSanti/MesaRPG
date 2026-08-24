@@ -79,7 +79,10 @@ def test_attack_and_undo_round_trip_via_api():
 
         # gunnery 0 => target number 0, but a natural 2 is still an
         # automatic miss regardless (real BT rule) — ~1/36, retry rather
-        # than assume the first roll hits.
+        # than assume the first roll hits. Every attempt (hit or miss) now
+        # logs its own undoable event (real user request: misses used to
+        # be untracked entirely), so this campaign's history has more
+        # than just the hit in it by the time the loop breaks.
         for _ in range(20):
             result = c.post(
                 f"/api/campaigns/{camp['id']}/attack",
@@ -92,8 +95,17 @@ def test_attack_and_undo_round_trip_via_api():
         undo = c.post(f"/api/campaigns/{camp['id']}/undo")
         assert undo.status_code == 200
 
-        second_undo = c.post(f"/api/campaigns/{camp['id']}/undo")
-        assert second_undo.status_code == 404
+        # Drain the rest of the history (any earlier misses, then the
+        # mech's own creation) — 404 only once nothing is left to undo.
+        drained = 0
+        for _ in range(30):
+            res = c.post(f"/api/campaigns/{camp['id']}/undo")
+            if res.status_code == 404:
+                break
+            assert res.status_code == 200
+            drained += 1
+        else:
+            raise AssertionError("undo never reached 404 — history didn't drain")
 
 
 def test_attack_against_unknown_campaign_404s():

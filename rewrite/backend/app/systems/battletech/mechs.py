@@ -9,7 +9,7 @@ way `assets/markers`... er, the same way a GM would fill in a paper
 sheet's boxes by hand.
 """
 
-from ... import db, equipment
+from ... import db, equipment, events
 from ...critical_layout import generate_default_criticals
 from ...db import MECH_LOCATIONS, REAR_ARMOR_LOCATIONS
 from . import weapons
@@ -52,6 +52,7 @@ def create_mech(
     status: str = "approved",
     owner_token: str | None = None,
     criticals: dict[str, list[str]] | None = None,
+    _log: bool = True,
 ) -> dict:
     _validate_locations(locations)
     _check_status(status)
@@ -109,6 +110,14 @@ def create_mech(
             # ficha's Critical Hit Table showed nothing at all.
             _write_generated_criticals(conn, mech_id, [])
 
+        # _log=False only from events.py's own _undo_mech_deleted (this
+        # IS the recreate step of undoing a delete) — see pilots.py's
+        # create_pilot for why this guard has to exist at all.
+        if _log:
+            events.log_event(
+                conn, campaign_id, "mech_created", f"Mech creado: {chassis} {model or ''}".strip(),
+                {"mech_id": mech_id},
+            )
         return _get(conn, mech_id)
 
 
@@ -254,12 +263,22 @@ def update_mech(
     if not fields:
         return get_mech(mech_id)
     with db.connect() as conn:
+        prev = conn.execute(
+            "SELECT campaign_id, chassis, model, tonnage, walk_mp, run_mp, jump_mp, heat_sinks, pilot_id "
+            "FROM mechs WHERE id = ?",
+            (mech_id,),
+        ).fetchone()
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         conn.execute(f"UPDATE mechs SET {set_clause} WHERE id = ?", (*fields.values(), mech_id))
+        if prev:
+            events.log_event(
+                conn, prev["campaign_id"], "mech_updated", f"Mech editado: {prev['chassis']} {prev['model'] or ''}".strip(),
+                {"mech_id": mech_id, "before": dict(prev)},
+            )
         return _get(conn, mech_id)
 
 
-def delete_mech(mech_id: int) -> bool:
+def delete_mech(mech_id: int, _log: bool = True) -> bool:
     """GM-initiated removal. `mech_locations`/`mech_weapons`/
     `mech_equipment`/`mech_criticals` are `ON DELETE CASCADE` (db.py), so those clean up
     on their own — but `units.mech_id` is only `ON DELETE SET NULL`,
@@ -268,12 +287,21 @@ def delete_mech(mech_id: int) -> bool:
     unit with no mech_id, which reads as a bug here, not "no mech" by
     design). Look the affected units up before deleting the mech (their
     mech_id is about to be nulled by the FK, so this query has to run
-    first), then remove those tokens outright."""
+    first), then remove those tokens outright. `_log=False` only from
+    events.py's own _undo_mech_created — see create_mech's matching
+    comment on why undo mustn't log itself."""
     with db.connect() as conn:
+        snapshot = _get(conn, mech_id)
         unit_ids = [r["id"] for r in conn.execute("SELECT id FROM units WHERE mech_id = ?", (mech_id,)).fetchall()]
         cur = conn.execute("DELETE FROM mechs WHERE id = ?", (mech_id,))
         for unit_id in unit_ids:
             conn.execute("DELETE FROM units WHERE id = ?", (unit_id,))
+        if _log and cur.rowcount and snapshot:
+            events.log_event(
+                conn, snapshot["campaign_id"], "mech_deleted",
+                f"Mech borrado: {snapshot['chassis']} {snapshot['model'] or ''}".strip(),
+                {"snapshot": snapshot},
+            )
         return cur.rowcount > 0
 
 
@@ -281,10 +309,17 @@ def review_mech(mech_id: int, decision: str, note: str | None = None) -> dict | 
     if decision not in ("approved", "rejected"):
         raise UnknownStatus(f"Unknown review decision {decision!r}, expected 'approved' or 'rejected'")
     with db.connect() as conn:
+        prev = conn.execute("SELECT campaign_id, chassis, model, status, review_note FROM mechs WHERE id = ?", (mech_id,)).fetchone()
         conn.execute(
             "UPDATE mechs SET status = ?, review_note = ? WHERE id = ?",
             (decision, note if decision == "rejected" else None, mech_id),
         )
+        if prev:
+            verb = "aprobado" if decision == "approved" else "rechazado"
+            events.log_event(
+                conn, prev["campaign_id"], "mech_reviewed", f"Mech {verb}: {prev['chassis']} {prev['model'] or ''}".strip(),
+                {"mech_id": mech_id, "prev_status": prev["status"], "prev_review_note": prev["review_note"]},
+            )
         return _get(conn, mech_id)
 
 
@@ -296,6 +331,10 @@ def resubmit_mech(mech_id: int) -> dict | None:
         conn.execute(
             "UPDATE mechs SET status = 'pending', review_note = NULL WHERE id = ?",
             (mech_id,),
+        )
+        events.log_event(
+            conn, mech["campaign_id"], "mech_resubmitted", f"Mech reenviado: {mech['chassis']} {mech['model'] or ''}".strip(),
+            {"mech_id": mech_id, "prev_review_note": mech["review_note"]},
         )
         return _get(conn, mech_id)
 

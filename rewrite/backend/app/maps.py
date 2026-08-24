@@ -1,4 +1,4 @@
-from . import campaigns, db
+from . import campaigns, db, events
 
 
 def _hex_rect(width: int, height: int) -> list[tuple[int, int]]:
@@ -24,6 +24,7 @@ def create_map(
     height: int,
     elevations: dict[tuple[int, int], int] | None = None,
     blocked: set[tuple[int, int]] | None = None,
+    _log: bool = True,
 ) -> dict:
     """Grid shape follows the campaign's game system (ROADMAP.md S0) —
     hex rectangle for Battletech, square for D&D 5e. Not caller-chosen, so a
@@ -51,6 +52,11 @@ def create_map(
                 """,
                 (map_id, q, r, elevations.get((q, r), 0), (q, r) in blocked),
             )
+        # _log=False only from events.py's own _undo_map_deleted (this IS
+        # the recreate step of undoing a delete) — see pilots.py's
+        # create_pilot for why this guard has to exist at all.
+        if _log:
+            events.log_event(conn, campaign_id, "map_created", f"Mapa creado: {name}", {"map_id": map_id})
         return _get(conn, map_id)
 
 
@@ -59,17 +65,25 @@ def get_map(map_id: int) -> dict | None:
         return _get(conn, map_id)
 
 
-def delete_map(map_id: int) -> bool:
+def delete_map(map_id: int, _log: bool = True) -> bool:
     """hex_tiles/units both cascade on map_id (db.py's own FK
     declarations), so this alone cleans up everything on the map itself.
     campaigns.active_map_id has no FK constraint at all though (it
     predates that column existing as a real reference — db.py's own
     migration comment), so a campaign that had THIS map projected would
     otherwise keep pointing at a now-nonexistent id; cleared here rather
-    than left dangling for whichever caller reads it next to discover."""
+    than left dangling for whichever caller reads it next to discover.
+    `_log=False` only from events.py's own _undo_map_created/
+    _undo_map_generated — see create_map's matching comment."""
     with db.connect() as conn:
+        snapshot = _get(conn, map_id)
         conn.execute("UPDATE campaigns SET active_map_id = NULL WHERE active_map_id = ?", (map_id,))
         cur = conn.execute("DELETE FROM maps WHERE id = ?", (map_id,))
+        if _log and cur.rowcount and snapshot:
+            events.log_event(
+                conn, snapshot["campaign_id"], "map_deleted", f"Mapa borrado: {snapshot['name']}",
+                {"snapshot": snapshot},
+            )
         return cur.rowcount > 0
 
 

@@ -1,6 +1,6 @@
 import pytest
 
-from app import maps, units
+from app import events, maps, units
 from app.systems.battletech import mechs, pilots
 from tests.conftest import ATLAS_LOCATIONS
 
@@ -348,3 +348,38 @@ def test_multiple_dnd_characters_placed_same_campaign(dnd_campaign):
 
     names = {u["dnd_name"] for u in units.list_units(m["id"])}
     assert names == {"Elowen", "Thorn"}
+
+
+def test_undo_unit_placed_deletes_it(campaign, pilot):
+    m = maps.create_map(campaign["id"], "Field", width=4, height=4)
+    mech = _mech(campaign["id"], pilot_id=pilot["id"])
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=mech["id"])
+
+    events.undo_last_event(campaign["id"])
+    assert units.get_unit(unit["id"]) is None
+
+
+def test_undo_unit_removed_recreates_it_at_the_same_spot(campaign, pilot):
+    m = maps.create_map(campaign["id"], "Field", width=4, height=4)
+    mech = _mech(campaign["id"], pilot_id=pilot["id"])
+    unit = units.create_unit(campaign["id"], m["id"], q=2, r=3, mech_id=mech["id"], facing_deg=120)
+
+    units.delete_unit(unit["id"])
+    assert units.list_units(m["id"]) == []
+
+    events.undo_last_event(campaign["id"])
+    remaining = units.list_units(m["id"])
+    assert len(remaining) == 1
+    assert (remaining[0]["q"], remaining[0]["r"], remaining[0]["facing_deg"]) == (2, 3, 120)
+    assert remaining[0]["mech_id"] == mech["id"]
+
+
+def test_undo_unit_moved_restores_prior_position(campaign, pilot):
+    m = maps.create_map(campaign["id"], "Field", width=6, height=6)
+    mech = _mech(campaign["id"], pilot_id=pilot["id"])
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=mech["id"])
+    units.move_unit(unit["id"], q=4, r=5, facing_deg=90)
+
+    events.undo_last_event(campaign["id"])
+    after = units.get_unit(unit["id"])
+    assert (after["q"], after["r"], after["facing_deg"]) == (0, 0, 0)

@@ -33,6 +33,7 @@ import {
 import {
   addMechEquipment,
   addMechWeapon,
+  ApiError,
   attack,
   createMech,
   createPilot,
@@ -44,6 +45,7 @@ import {
   getUnitVisibleEnemies,
   getWeaponCatalog,
   listCampaigns,
+  listCampaignEvents,
   listDndCharacters,
   listMechChassis,
   listMechModels,
@@ -62,6 +64,7 @@ import {
   updateMech,
   updatePilot,
   type Campaign,
+  type CampaignEvent,
   type DndCharacter,
   type InitiativeMode,
   type Mech,
@@ -90,6 +93,7 @@ function GMViewBattletech() {
   const [campaign, setCampaign] = useState<Campaign | null>(null)
   const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
   const [log, setLog] = useState<string[]>([])
+  const [campaignEvents, setCampaignEvents] = useState<CampaignEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -100,6 +104,7 @@ function GMViewBattletech() {
       setMechs(await listMechs(campaignId))
       const all = await listCampaigns()
       setCampaign(all.find((c) => c.id === campaignId) ?? null)
+      setCampaignEvents(await listCampaignEvents(campaignId))
     } catch {
       setError('No se pudo conectar con el servidor. Reintentando en la próxima acción.')
     } finally {
@@ -369,10 +374,13 @@ function GMViewBattletech() {
     if (!campaignId) return
     try {
       await undoLastAction(campaignId)
-      pushLog('Última acción deshecha')
       refetch()
-    } catch {
-      pushLog('No hay nada que deshacer')
+    } catch (err) {
+      setError(
+        err instanceof ApiError && err.status === 409
+          ? 'Esa acción no se puede deshacer automáticamente.'
+          : 'No hay nada que deshacer.',
+      )
     }
   }
 
@@ -1060,9 +1068,21 @@ function GMViewBattletech() {
       <section>
         <h2>Registro</h2>
         <button onClick={submitUndo} className="undo">Deshacer última acción</button>
-        <ul className="log">
-          {log.map((line, i) => <li key={i}>{line}</li>)}
+        {/* Persisted campaign history (survives a reload — real user
+            request) — most in-session actions already produce their own
+            line here via app/events.py, so `log` below rarely has
+            anything of its own left to show beyond a failed action's
+            transient feedback (e.g. "no se pudo montar X"). */}
+        <ul className="log event-log">
+          {campaignEvents.map((e) => (
+            <li key={e.id} className={e.undone ? 'event-undone' : ''}>{e.summary}</li>
+          ))}
         </ul>
+        {log.length > 0 && (
+          <ul className="log">
+            {log.map((line, i) => <li key={i}>{line}</li>)}
+          </ul>
+        )}
       </section>
 
       {showPilotModal && (

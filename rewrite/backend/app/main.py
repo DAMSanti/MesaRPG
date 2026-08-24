@@ -15,7 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import campaigns, db, equipment, mapgen, maps, mech_templates, rolls, systems, table_session, units
+from . import campaigns, db, equipment, events, mapgen, maps, mech_templates, rolls, systems, table_session, units
 from .systems.battletech import combat, mechs, movement, pilots, turns, weapons
 from .systems.dnd5e import characters as dnd_characters
 from .systems.dnd5e import combat as dnd_combat
@@ -79,9 +79,17 @@ class ActiveMapIn(BaseModel):
 
 @app.post("/api/campaigns/{campaign_id}/active-map")
 async def set_active_map(campaign_id: int, body: ActiveMapIn) -> dict:
-    _require_campaign(campaign_id)
-    _require_map(body.map_id)
+    campaign = _require_campaign(campaign_id)
+    target_map = _require_map(body.map_id)
     result = campaigns.set_active_map(campaign_id, body.map_id)
+    # Logged here (not campaigns.py) since campaigns/maps already import
+    # each other in the other direction — see events.py's own docstring
+    # on why cross-module undo logging sometimes lives at this layer.
+    with db.connect() as conn:
+        events.log_event(
+            conn, campaign_id, "map_projected", f"Mapa proyectado: {target_map['name']}",
+            {"prev_active_map_id": campaign["active_map_id"]},
+        )
     # Without this, an already-open table view (`/`) never learns a
     # different map was projected — it only ever read active_map_id once
     # on mount (see useMapId.ts). Found by the user testing live.
@@ -927,14 +935,28 @@ async def attack(campaign_id: int, body: AttackIn) -> dict:
 @app.post("/api/campaigns/{campaign_id}/undo")
 async def undo(campaign_id: int) -> dict:
     campaign = _require_campaign(campaign_id)
-    result = combat.undo_last_action(campaign_id)
+    try:
+        result = events.undo_last_event(campaign_id)
+    except events.NotUndoable as exc:
+        raise HTTPException(409, "Esta acción no se puede deshacer automáticamente") from exc
     if not result:
         raise HTTPException(404, "No action to undo")
     await manager.broadcast(campaign_id, {"type": "action_undone", **result})
-    # Reverts armor/structure too — same live-sheet fix as /attack above.
+    # Whatever got reverted could be a pilot/mech/map (roster_updated) or
+    # a unit on the board (visibility) — broadcast both unconditionally
+    # rather than threading event_type-specific knowledge through here;
+    # cheap, and matches how every other mutation already stays "seamless"
+    # for open GM/player screens (real user report from the prior pass).
+    await manager.broadcast(campaign_id, {"type": "roster_updated"})
     if campaign["active_map_id"] is not None:
         await _broadcast_visibility(campaign_id, campaign["active_map_id"])
     return result
+
+
+@app.get("/api/campaigns/{campaign_id}/events")
+def get_campaign_events(campaign_id: int) -> list[dict]:
+    _require_campaign(campaign_id)
+    return events.list_events(campaign_id)
 
 
 # ---- rounds/initiative (ROADMAP.md S2 — simplified, see turns.py) ------

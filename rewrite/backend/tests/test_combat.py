@@ -1,5 +1,6 @@
 import pytest
 
+from app import events
 from app.systems.battletech import combat, mechs
 
 
@@ -234,7 +235,7 @@ def test_undo_restores_exact_prior_state(campaign, atlas):
         )
         if result["hit"] and result["location"] == "CT":
             break
-    undone = combat.undo_last_action(campaign["id"])
+    undone = events.undo_last_event(campaign["id"])
     assert undone is not None
     after = next(l for l in mechs.get_mech(atlas["id"])["locations"] if l["location"] == "CT")
     assert after["armor_current"] == before["armor_current"]
@@ -242,14 +243,44 @@ def test_undo_restores_exact_prior_state(campaign, atlas):
 
 
 def test_undo_with_nothing_to_undo_returns_none(campaign):
-    assert combat.undo_last_action(campaign["id"]) is None
+    assert events.undo_last_event(campaign["id"]) is None
 
 
 def test_undo_only_reverts_within_its_own_campaign(campaign, atlas):
     from app import campaigns as campaigns_module
 
     other_campaign = campaigns_module.create_campaign("Other")
-    assert combat.undo_last_action(other_campaign["id"]) is None
+    assert events.undo_last_event(other_campaign["id"]) is None
+
+
+def test_undo_a_miss_restores_ammo_and_heat(campaign, atlas):
+    from app.systems.battletech import mechs as mechs_module
+
+    attacker = mechs_module.create_mech(
+        campaign_id=campaign["id"], chassis="Attacker", tonnage=50, walk_mp=4, run_mp=6,
+        locations=[
+            {"location": loc["location"], "armor_max": loc["armor_max"], "structure_max": loc["structure_max"]}
+            for loc in atlas["locations"]
+        ],
+    )
+    loaded = mechs_module.add_weapon(attacker["id"], "AC/5", "RT")  # ammo-based, unlike lasers/PPC
+    weapon_id = loaded["weapons"][0]["id"]
+
+    # gunnery 12 vs a natural 2-12 roll always misses (target number
+    # unreachable) — guarantees the miss branch, still with a real weapon.
+    result = combat.resolve_attack(
+        campaign_id=campaign["id"], target_mech_id=atlas["id"], weapon_id=weapon_id, gunnery=12,
+    )
+    assert result["hit"] is False
+    mech_after_shot = mechs_module.get_mech(attacker["id"])
+    weapon_after_shot = mech_after_shot["weapons"][0]
+    assert weapon_after_shot["ammo_remaining"] == 19  # 1 shot fired out of 20
+
+    undone = events.undo_last_event(campaign["id"])
+    assert undone is not None
+    mech_after_undo = mechs_module.get_mech(attacker["id"])
+    assert mech_after_undo["heat_current"] < mech_after_shot["heat_current"]
+    assert mech_after_undo["weapons"][0]["ammo_remaining"] == 20
 
 
 # ---- minimum range / terrain / partial cover (Attack Modifiers Table) --

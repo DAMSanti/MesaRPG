@@ -1,4 +1,4 @@
-from app import campaigns, maps
+from app import campaigns, db, events, maps
 
 
 def test_update_tile_changes_elevation_and_blocks_los(campaign):
@@ -73,3 +73,57 @@ def test_delete_map_leaves_other_maps_and_active_map_untouched(campaign):
     assert maps.get_map(keep["id"]) is not None
     updated = campaigns.get_campaign(campaign["id"])
     assert updated["active_map_id"] == keep["id"]
+
+
+def test_undo_map_created_deletes_it(campaign):
+    m = maps.create_map(campaign["id"], "Undo me", width=3, height=3)
+    events.undo_last_event(campaign["id"])
+    assert maps.get_map(m["id"]) is None
+
+
+def test_undo_map_deleted_recreates_it_with_the_same_terrain(campaign):
+    m = maps.create_map(campaign["id"], "Restore me", width=3, height=3)
+    maps.update_tile(m["id"], q=0, r=0, terrain="forest", elevation=2, blocks_los=True)
+    maps.delete_map(m["id"])
+    events.undo_last_event(campaign["id"])
+
+    remaining = maps.list_maps(campaign["id"])
+    assert len(remaining) == 1
+    assert remaining[0]["name"] == "Restore me"
+    restored_tile = next(t for t in remaining[0]["tiles"] if t["q"] == 0 and t["r"] == 0)
+    assert restored_tile["terrain"] == "forest"
+    assert restored_tile["elevation"] == 2
+    assert restored_tile["blocks_los"] is True
+
+
+def test_undo_map_deleted_does_not_regrow_the_history(campaign):
+    m = maps.create_map(campaign["id"], "Cycle me", width=2, height=2)
+    maps.delete_map(m["id"])
+    undone = 0
+    for _ in range(10):
+        if events.undo_last_event(campaign["id"]) is None:
+            break
+        undone += 1
+    else:
+        raise AssertionError("undo never drained the history")
+    assert undone == 2  # map_deleted, then map_created
+
+
+def test_undo_map_projected_restores_prior_active_map(campaign):
+    # map_projected is logged at the main.py endpoint layer, not inside
+    # campaigns.set_active_map itself (see that endpoint's own comment on
+    # why) — this test logs it the same way that endpoint does, to
+    # exercise events.py's own undo dispatch for the type in isolation.
+    first = maps.create_map(campaign["id"], "First", width=2, height=2)
+    second = maps.create_map(campaign["id"], "Second", width=2, height=2)
+    campaigns.set_active_map(campaign["id"], first["id"])
+
+    with db.connect() as conn:
+        events.log_event(
+            conn, campaign["id"], "map_projected", "Mapa proyectado: Second",
+            {"prev_active_map_id": first["id"]},
+        )
+    campaigns.set_active_map(campaign["id"], second["id"])
+
+    events.undo_last_event(campaign["id"])
+    assert campaigns.get_campaign(campaign["id"])["active_map_id"] == first["id"]
