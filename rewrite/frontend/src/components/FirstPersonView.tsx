@@ -1,7 +1,7 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
-import { HexMap, type ActiveAttackVfx } from './HexMap'
+import { HexMap, useAttackVfxQueue } from './HexMap'
 import { MODEL_CHEST_FRACTION, MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
 import {
   attack, getMap, getUnitVisibleEnemies, getWeaponCatalog, markRoundActed, requestInitiative,
@@ -399,26 +399,10 @@ export function FirstPersonView({
 
   // Attack VFX — same derivation GMView/TableView do from their own
   // lastAttack + units, mounted into THIS cockpit's own HexMap instead of
-  // theirs (see the lastAttack prop's own doc comment above).
-  const attackVfxSeq = useRef(0)
-  const [activeAttackVfx, setActiveAttackVfx] = useState<ActiveAttackVfx | null>(null)
-  useEffect(() => {
-    if (!lastAttack || lastAttack.attacker_unit_id == null || lastAttack.target_unit_id == null) return
-    const attackerUnit = units.find((u) => u.id === lastAttack.attacker_unit_id)
-    const targetUnit = units.find((u) => u.id === lastAttack.target_unit_id)
-    if (!attackerUnit || !targetUnit) return
-    attackVfxSeq.current += 1
-    setActiveAttackVfx({
-      id: `${attackVfxSeq.current}`,
-      attackerQ: attackerUnit.q,
-      attackerR: attackerUnit.r,
-      targetQ: targetUnit.q,
-      targetR: targetUnit.r,
-      weaponName: lastAttack.weapon_name ?? '',
-      hit: lastAttack.hit,
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastAttack])
+  // theirs (see the lastAttack prop's own doc comment above), queued
+  // (see useAttackVfxQueue's own doc comment) so a fast attack resolving
+  // while a slower one still animates doesn't cut the first one off.
+  const { activeAttack: activeAttackVfx, onAttackEffectDone } = useAttackVfxQueue(lastAttack, units)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -639,7 +623,7 @@ export function FirstPersonView({
                   map={map}
                   units={sceneUnits}
                   activeAttack={activeAttackVfx}
-                  onAttackEffectDone={() => setActiveAttackVfx(null)}
+                  onAttackEffectDone={onAttackEffectDone}
                 />
               </Suspense>
               <EnemyMarkersController

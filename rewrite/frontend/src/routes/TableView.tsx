@@ -3,7 +3,7 @@ import { Canvas } from '@react-three/fiber'
 import { Physics } from '@react-three/rapier'
 import { OrbitControls } from '@react-three/drei'
 import { Die } from '../components/Die'
-import { HexMap, type ActiveAttackVfx } from '../components/HexMap'
+import { HexMap, useAttackVfxQueue } from '../components/HexMap'
 import { KillReplay } from '../components/KillReplay'
 import { TableBackground } from '../components/TableBackground'
 import { BoardWalls } from '../components/BoardWalls'
@@ -164,27 +164,10 @@ export function TableView() {
   }, [lastAttack])
 
   // Attack VFX — shared-table view gets the same laser/tracer/missile
-  // animation as GMView, derived the same way (see GMView's own
-  // activeAttackVfx doc comment).
-  const attackVfxSeq = useRef(0)
-  const [activeAttackVfx, setActiveAttackVfx] = useState<ActiveAttackVfx | null>(null)
-  useEffect(() => {
-    if (!lastAttack || lastAttack.attacker_unit_id == null || lastAttack.target_unit_id == null) return
-    const attackerUnit = units.find((u) => u.id === lastAttack.attacker_unit_id)
-    const targetUnit = units.find((u) => u.id === lastAttack.target_unit_id)
-    if (!attackerUnit || !targetUnit) return
-    attackVfxSeq.current += 1
-    setActiveAttackVfx({
-      id: `${attackVfxSeq.current}`,
-      attackerQ: attackerUnit.q,
-      attackerR: attackerUnit.r,
-      targetQ: targetUnit.q,
-      targetR: targetUnit.r,
-      weaponName: lastAttack.weapon_name ?? '',
-      hit: lastAttack.hit,
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastAttack])
+  // animation as GMView, derived the same way, queued (see
+  // useAttackVfxQueue's own doc comment) so a fast attack resolving
+  // while a slower one still animates doesn't cut the first one off.
+  const { activeAttack: activeAttackVfx, onAttackEffectDone } = useAttackVfxQueue(lastAttack, units)
 
   // GMView's/PlayerView's "Tirar iniciativa" button doesn't roll
   // anything itself anymore — it broadcasts "please throw dice for this
@@ -349,7 +332,7 @@ export function TableView() {
                 moveHighlightHexes={activeMovement ? new Set(activeMovement.hexes.keys()) : undefined}
                 walkPaths={walkPaths}
                 activeAttack={activeAttackVfx}
-                onAttackEffectDone={() => setActiveAttackVfx(null)}
+                onAttackEffectDone={onAttackEffectDone}
                 onTileClick={onTableTileClick}
                 physics
               />

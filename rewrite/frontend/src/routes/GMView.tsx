@@ -8,7 +8,7 @@ import { useTableSocket } from '../ws'
 import { NavBar, type NavLink } from '../components/NavBar'
 import { PilotForm } from '../components/PilotForm'
 import { MechRecordSheet } from '../components/MechRecordSheet'
-import { HexMap, type ActiveAttackVfx } from '../components/HexMap'
+import { HexMap, useAttackVfxQueue } from '../components/HexMap'
 import { TableBackground } from '../components/TableBackground'
 import { UnitContextMenu } from '../components/UnitContextMenu'
 import { FacingPicker } from '../components/FacingPicker'
@@ -161,29 +161,10 @@ export function GMView() {
   // Attack VFX (laser/PPC/tracer/missile/flamer) — only real board shots
   // carry attacker_unit_id/target_unit_id (see combat.py's
   // resolve_attack), so a narrative/manual attack with no real units
-  // just plays no animation. attackVfxSeq guarantees a fresh `id` per
-  // shot even if two attacks somehow resolve with identical roll/weapon,
-  // so HexMap always mounts a new AttackEffect instead of reusing one
-  // whose animation already finished.
-  const attackVfxSeq = useRef(0)
-  const [activeAttackVfx, setActiveAttackVfx] = useState<ActiveAttackVfx | null>(null)
-  useEffect(() => {
-    if (!lastAttack || lastAttack.attacker_unit_id == null || lastAttack.target_unit_id == null) return
-    const attackerUnit = units.find((u) => u.id === lastAttack.attacker_unit_id)
-    const targetUnit = units.find((u) => u.id === lastAttack.target_unit_id)
-    if (!attackerUnit || !targetUnit) return
-    attackVfxSeq.current += 1
-    setActiveAttackVfx({
-      id: `${attackVfxSeq.current}`,
-      attackerQ: attackerUnit.q,
-      attackerR: attackerUnit.r,
-      targetQ: targetUnit.q,
-      targetR: targetUnit.r,
-      weaponName: lastAttack.weapon_name ?? '',
-      hit: lastAttack.hit,
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastAttack])
+  // just plays no animation. Queued (see useAttackVfxQueue's own doc
+  // comment) so a fast attack resolving while a slower one is still
+  // animating doesn't cut the first one's VFX off mid-flight.
+  const { activeAttack: activeAttackVfx, onAttackEffectDone } = useAttackVfxQueue(lastAttack, units)
 
   // ---- pilot form (now lives inside a modal opened from the sidebar's
   // "+" button, not an always-visible inline section) ----
@@ -976,7 +957,7 @@ export function GMView() {
                   targetableHexes={targetableHexes}
                   walkPaths={walkPaths}
                   activeAttack={activeAttackVfx}
-                  onAttackEffectDone={() => setActiveAttackVfx(null)}
+                  onAttackEffectDone={onAttackEffectDone}
                   onUnitClick={onUnitClick}
                   onTileClick={onTileClick}
                   onUnitDragEnd={onUnitDragEnd}

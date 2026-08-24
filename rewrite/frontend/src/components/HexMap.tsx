@@ -4,7 +4,9 @@ import {
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
-import type { HexTileData, MapData, Unit } from '../api'
+import type {
+  AttackResult, HexTileData, MapData, Unit,
+} from '../api'
 import { Mech3D } from './Mech3D'
 import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
@@ -45,6 +47,63 @@ export interface ActiveAttackVfx {
   targetR: number
   weaponName: string
   hit: boolean
+}
+
+/** Turns a raw `lastAttack` broadcast into a QUEUED sequence of
+ * ActiveAttackVfx, one full animation at a time — GMView/TableView/
+ * FirstPersonView each used to hold this in a single `useState` that a
+ * new `lastAttack` immediately overwrote, which remounts HexMap's
+ * `AttackEffect` (its `key` changes) and kills whatever animation was
+ * still mid-flight. A real user report caught this directly: "si un
+ * laser se dispara antes de que los misiles lleguen al objetivo, parece
+ * que estos desaparecen" — a laser resolves near-instantly (~420ms)
+ * while a missile volley can still be arcing toward its target
+ * (~1.3-2s) when the next attack_result broadcast arrives; overwriting
+ * cut the missile's flight off mid-air. Now a new attack only starts
+ * playing immediately if nothing is currently animating; otherwise it
+ * queues and `onAttackEffectDone` (AttackEffect's own finish callback)
+ * advances to the next one — every attack's full VFX plays out in
+ * server-resolution order instead of the newest one clobbering
+ * whatever came before it. */
+export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, units: Unit[]) {
+  const seq = useRef(0)
+  const queueRef = useRef<ActiveAttackVfx[]>([])
+  const activeRef = useRef<ActiveAttackVfx | null>(null)
+  const [activeAttack, setActiveAttackState] = useState<ActiveAttackVfx | null>(null)
+
+  const setActive = (vfx: ActiveAttackVfx | null) => {
+    activeRef.current = vfx
+    setActiveAttackState(vfx)
+  }
+
+  useEffect(() => {
+    if (!lastAttack || lastAttack.attacker_unit_id == null || lastAttack.target_unit_id == null) return
+    const attackerUnit = units.find((u) => u.id === lastAttack.attacker_unit_id)
+    const targetUnit = units.find((u) => u.id === lastAttack.target_unit_id)
+    if (!attackerUnit || !targetUnit) return
+    seq.current += 1
+    const vfx: ActiveAttackVfx = {
+      id: `${seq.current}`,
+      attackerQ: attackerUnit.q,
+      attackerR: attackerUnit.r,
+      targetQ: targetUnit.q,
+      targetR: targetUnit.r,
+      weaponName: lastAttack.weapon_name ?? '',
+      hit: lastAttack.hit,
+    }
+    if (activeRef.current === null) {
+      setActive(vfx)
+    } else {
+      queueRef.current.push(vfx)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastAttack])
+
+  const onAttackEffectDone = () => {
+    setActive(queueRef.current.shift() ?? null)
+  }
+
+  return { activeAttack, onAttackEffectDone }
 }
 
 // World units per second a unit visually walks between hexes at — hex
