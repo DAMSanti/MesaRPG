@@ -62,19 +62,6 @@ export const MODEL_CHEST_FRACTION = 0.6
 // faint wash rather than recoloring the mech outright.
 const FACTION_TINT_STRENGTH = 0.22
 
-// Must match HexMap.tsx's own WALK_SPEED (world units/sec) — duplicated
-// rather than imported since HexMap.tsx imports THIS file (Mech3D),
-// so the reverse import would be circular. Used only to keep the walk
-// animation's timeScale in sync with how fast stepToward is actually
-// sliding the mech, below.
-const WALK_SPEED = 3.5
-// Tuned guess at how much ground (world units) one full authored Walk
-// cycle should cover to read as a real stride rather than the legs
-// sliding through the motion (real user report: "el loop es muy
-// sutil") — adjust this one number after watching it live, not the
-// ratio math around it.
-const HEX_STRIDE_REFERENCE = 1.6
-
 function Mech3DModel({ color, emissive, emissiveIntensity, chassis, model, isMoving }: Mech3DProps) {
   const url = resolveMechModelUrl(chassis, model)
   const { scene, animations } = useGLTF(url)
@@ -135,20 +122,6 @@ function Mech3DModel({ color, emissive, emissiveIntensity, chassis, model, isMov
     if (!idle && !walk) return
     const active = isMoving ? (walk ?? idle) : (idle ?? walk)
     const inactive = active === idle ? walk : idle
-    // Sync the walk cycle's playback speed to how fast HexMap's
-    // stepToward is actually sliding this mech across the ground,
-    // instead of always the clip's own authored pace — real user
-    // report: at HexMap's WALK_SPEED (world units/sec, unrelated to
-    // whatever ground speed this clip was originally animated for), the
-    // legs visibly slid rather than strode ("el loop es muy sutil").
-    // HEX_STRIDE_REFERENCE is a tuned guess at how much ground one full
-    // authored cycle should cover to read as a real stride rather than
-    // skating — adjust this single constant (not the ratio math) if a
-    // live look says it's still off.
-    if (walk && active === walk) {
-      const clipDuration = walk.getClip().duration
-      if (clipDuration > 0) walk.timeScale = WALK_SPEED / (HEX_STRIDE_REFERENCE / clipDuration)
-    }
     active?.reset().setLoop(THREE.LoopRepeat, Infinity).fadeIn(0.2).play()
     inactive?.fadeOut(0.2)
   }, [actions, isMoving])
