@@ -997,6 +997,11 @@ function GMViewBattletech() {
                   activeMoverPilotId={activeMover}
                   activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}
                   moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
+                  pathPreviewHexes={
+                    pendingFacing?.kind === 'move' && pendingFacing.path
+                      ? new Set(pendingFacing.path.map((p) => `${p.q},${p.r}`))
+                      : undefined
+                  }
                   targetableHexes={targetableHexes}
                   walkPaths={walkPaths}
                   activeAttack={activeAttackVfx}

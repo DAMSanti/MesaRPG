@@ -388,21 +388,42 @@ button.fp-phase-pill.clickable:hover {
   flex-direction: column;
   align-items: center;
   gap: 2px;
-}
-
-.fp-target-lock {
-  filter: drop-shadow(0 0 5px var(--danger));
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .fp-target-lock {
-    animation: fp-target-pulse 1.6s ease-in-out infinite;
-  }
+  /* The actual visual "this is targeted" cue is the in-scene outline
+     around the enemy's own 3D model now (Mech3D's outlineColor), not a
+     shape drawn here — this padding just keeps the tap target (the
+     caption text) comfortably larger than the text itself. */
+  padding: 18px 24px;
 }
 
 @keyframes fp-target-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.6; }
+}
+
+/* Off-screen edge indicator (real user request: "un triángulo rojo en
+   el borde de la pantalla en la dirección donde esté") — a sibling of
+   .fp-enemy-label, not a mode of it, since EnemyMarkersController
+   positions/rotates it independently (clamped to the viewport edge
+   along the enemy's real bearing, instead of centered on-screen). */
+.fp-offscreen-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 11;
+  display: none;
+  pointer-events: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.fp-offscreen-arrow {
+  filter: drop-shadow(0 0 5px var(--danger));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fp-offscreen-arrow {
+    animation: fp-target-pulse 1.6s ease-in-out infinite;
+  }
 }
 
 .fp-enemy-caption {
@@ -414,16 +435,16 @@ button.fp-phase-pill.clickable:hover {
 
 .fp-enemy-name {
   color: var(--danger);
-  font-size: 11px;
-  font-weight: 600;
+  font-size: 16px;
+  font-weight: 700;
   white-space: nowrap;
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
 }
 
 .fp-enemy-distance {
   color: var(--danger);
-  opacity: 0.8;
-  font-size: 10px;
+  opacity: 0.85;
+  font-size: 14px;
   text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
 }
 
@@ -440,12 +461,8 @@ button.fp-phase-pill.clickable:hover {
    detected contact tappable, matching the server's own permissive
    stance; this is the visual cue for "there's a real reason to tap this
    one right now". */
-.fp-enemy-label.in-range .fp-target-lock {
-  filter: drop-shadow(0 0 5px var(--danger)) drop-shadow(0 0 10px var(--danger));
-}
-
-.fp-enemy-label.selected .fp-target-lock {
-  filter: drop-shadow(0 0 5px var(--fp-hud-blue)) drop-shadow(0 0 12px var(--fp-hud-blue));
+.fp-enemy-label.in-range .fp-enemy-name {
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.8), 0 0 8px var(--danger);
 }
 
 .fp-enemy-label.selected .fp-enemy-name,
@@ -454,21 +471,25 @@ button.fp-phase-pill.clickable:hover {
 }
 
 /* Weapon-toggle HUD — bottom-center, appears once a target is tapped.
-   Same cyan/monospace cockpit language as .fp-topbar/.fp-phase-row
-   rather than a floating dialog, since this is a HUD readout. */
+   Real user request: restyle to match HudFrame's own angular cockpit
+   language (cut corners via clip-path instead of border-radius, thin
+   cyan hairlines, uppercase monospace) rather than the earlier rounded-
+   panel/pill-switch look, which read as a generic app dialog dropped
+   on top of the cockpit instead of a readout built into it. */
 .fp-weapon-hud {
   position: absolute;
-  bottom: 16px;
+  top: 50%;
   left: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   z-index: 15;
   width: min(420px, calc(100% - 32px));
-  background: rgba(18, 33, 31, 0.9);
+  background: rgba(10, 20, 22, 0.55);
   border: 1px solid var(--fp-hud-blue);
-  border-radius: 6px;
-  padding: 10px 12px;
+  clip-path: polygon(14px 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%, 0 14px);
+  padding: 12px 14px;
   font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
-  box-shadow: 0 0 16px rgba(31, 200, 255, 0.35);
+  box-shadow: 0 0 16px rgba(31, 200, 255, 0.3);
+  backdrop-filter: blur(2px);
 }
 
 .fp-weapon-hud-header {
@@ -477,34 +498,45 @@ button.fp-phase-pill.clickable:hover {
   align-items: center;
   color: var(--fp-hud-blue);
   font-size: 12px;
-  letter-spacing: 0.03em;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 6px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(31, 200, 255, 0.35);
 }
 
 .fp-weapon-hud-close {
   background: none;
-  border: none;
+  border: 1px solid var(--fp-hud-blue);
   color: var(--fp-hud-blue);
-  font-size: 16px;
+  width: 20px;
+  height: 20px;
   line-height: 1;
+  font-size: 13px;
   cursor: pointer;
+  clip-path: polygon(4px 0, 100% 0, 100% calc(100% - 4px), calc(100% - 4px) 100%, 0 100%, 0 4px);
+}
+
+.fp-weapon-hud-close:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .fp-weapon-hud-empty {
   color: var(--text-secondary);
   font-size: 11px;
   padding: 4px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .fp-weapon-hud-list {
   list-style: none;
-  margin: 0 0 8px;
+  margin: 0 0 10px;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   max-height: 200px;
   overflow-y: auto;
 }
@@ -513,7 +545,9 @@ button.fp-phase-pill.clickable:hover {
   display: grid;
   grid-template-columns: auto 1fr auto;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(31, 200, 255, 0.12);
 }
 
 .fp-weapon-hud-row.out-of-ammo {
@@ -523,6 +557,7 @@ button.fp-phase-pill.clickable:hover {
 .fp-weapon-hud-name {
   color: var(--text);
   font-size: 11px;
+  letter-spacing: 0.02em;
 }
 
 .fp-weapon-hud-stats {
@@ -531,16 +566,19 @@ button.fp-phase-pill.clickable:hover {
   white-space: nowrap;
 }
 
+/* Square bracket toggle — filled+glowing when armed, empty outline
+   when not, no sliding pill thumb. */
 .fp-weapon-toggle {
   position: relative;
-  width: 34px;
-  height: 18px;
-  border-radius: 9px;
+  width: 20px;
+  height: 20px;
+  border-radius: 0;
   border: 1px solid var(--fp-hud-blue);
   background: transparent;
   padding: 0;
   cursor: pointer;
   flex-shrink: 0;
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
 }
 
 .fp-weapon-toggle:disabled {
@@ -550,36 +588,29 @@ button.fp-phase-pill.clickable:hover {
 
 .fp-weapon-toggle.on {
   background: var(--fp-hud-blue);
-}
-
-.fp-weapon-toggle-thumb {
-  position: absolute;
-  top: 1px;
-  left: 1px;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--fp-hud-blue);
-  transition: transform 0.15s ease, background 0.15s ease;
-}
-
-.fp-weapon-toggle.on .fp-weapon-toggle-thumb {
-  transform: translateX(16px);
-  background: var(--bg-deep);
+  box-shadow: 0 0 8px rgba(31, 200, 255, 0.7);
 }
 
 .fp-weapon-hud-fire {
   width: 100%;
-  background: var(--danger);
-  color: var(--text);
-  border: none;
-  border-radius: 4px;
-  padding: 8px;
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+  padding: 9px;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   cursor: pointer;
   font-family: inherit;
   font-size: 13px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.fp-weapon-hud-fire:not(:disabled):hover {
+  background: var(--danger);
+  color: var(--bg-deep);
+  box-shadow: 0 0 12px rgba(227, 93, 93, 0.6);
 }
 
 .fp-weapon-hud-fire:disabled {

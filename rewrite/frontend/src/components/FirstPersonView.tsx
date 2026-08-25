@@ -1,9 +1,11 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import { useProgress } from '@react-three/drei'
+import { EffectComposer, Outline, Selection } from '@react-three/postprocessing'
+import { KernelSize } from 'postprocessing'
 import * as THREE from 'three'
 import { HexMap, useAttackVfxQueue } from './HexMap'
-import { MODEL_CHEST_FRACTION, MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
+import { MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
 import { ARMOR_GEOMETRY, ARMOR_VIEWBOX, type MechLocationCode } from '../mechSheetGeometry'
 import { FacingPicker } from './FacingPicker'
 import {
@@ -22,8 +24,8 @@ import './FirstPersonView.css'
 // cockpit camera sitting somewhere around its knees.
 const EYE_HEIGHT = MODEL_SCALE * MODEL_HEAD_FRACTION
 const LOOK_DISTANCE = 4
-// Reticle is 56px wide (TargetLockIcon) — a bit more than that so two
-// decluttered markers never touch.
+// Target silhouettes are ~56px wide at the fallback/near size — a bit
+// more than that so two decluttered markers never touch.
 const MARKER_MIN_SEPARATION = 64
 
 /** Fixed, non-orbiting camera — a snapshot of what this mech sees right
@@ -65,47 +67,95 @@ function SkyBackground() {
   return <primitive object={texture} attach="background" />
 }
 
+// Kept off the true viewport edge so an edge indicator never overlaps
+// HudFrame's own corner brackets/arcs.
+const OFFSCREEN_EDGE_MARGIN_PX = 46
+
+// Positions each detected enemy's tap target + caption (name/distance)
+// at its own projected chest point, same as before the outline rework —
+// the visual "this is targeted" cue now lives in the 3D scene itself
+// (Mech3D's outlineColor, a real edge-outline around the model's own
+// silhouette) rather than a flat DOM shape traced over its screen
+// projection, so this controller only needs one point per enemy again,
+// not a projected bounding box.
 function EnemyMarkersController({
-  enemies, centerX, centerZ, elevationAt, labelRefs,
+  enemies, centerX, centerZ, elevationAt, labelRefs, offscreenRefs,
 }: {
   enemies: VisibleEnemy[]
   centerX: number
   centerZ: number
   elevationAt: (q: number, r: number) => number
   labelRefs: React.RefObject<Record<number, HTMLDivElement | null>>
+  offscreenRefs: React.RefObject<Record<number, HTMLDivElement | null>>
 }) {
   useFrame((state) => {
     const { camera, size } = state
     const forward = camera.getWorldDirection(new THREE.Vector3())
+    const rightAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()))
+    const flatForward = new THREE.Vector3(forward.x, 0, forward.z).normalize()
+    const flatRight = new THREE.Vector3(rightAxis.x, 0, rightAxis.z).normalize()
+
     const candidates: { enemy: VisibleEnemy; px: number; py: number }[] = []
     for (const enemy of enemies) {
       const label = labelRefs.current[enemy.unit_id]
-      if (!label) continue
+      const arrow = offscreenRefs.current[enemy.unit_id]
+      if (!label || !arrow) continue
+
       const [rawX, rawZ] = hexToWorld(enemy.q, enemy.r)
-      const y = 0.3 + elevationAt(enemy.q, enemy.r) * 0.22 + MODEL_SCALE * MODEL_CHEST_FRACTION
-      const worldPos = new THREE.Vector3(rawX - centerX, y, rawZ - centerZ)
+      const lx = rawX - centerX, lz = rawZ - centerZ
+      // Real user request: the caption (chassis/model + distance) should
+      // float just above the mech, not sit centered on its torso — anchor
+      // at head height (MODEL_HEAD_FRACTION) plus a bit of clearance
+      // instead of MODEL_CHEST_FRACTION.
+      const y = 0.3 + elevationAt(enemy.q, enemy.r) * 0.22 + MODEL_SCALE * MODEL_HEAD_FRACTION + 0.3
+      const worldPos = new THREE.Vector3(lx, y, lz)
+
       // Three.js's project() doesn't clip points behind the camera — they
       // can still land inside the [-1,1] NDC box with bogus coordinates —
       // so this dot-product check has to run first, not be folded into
       // the NDC bounds check below.
-      if (worldPos.clone().sub(camera.position).dot(forward) <= 0) {
-        label.style.display = 'none'
-        continue
-      }
+      const inFront = worldPos.clone().sub(camera.position).dot(forward) > 0
       const ndc = worldPos.clone().project(camera)
-      if (ndc.x < -1 || ndc.x > 1 || ndc.y < -1 || ndc.y > 1) {
+      const onScreen = inFront && ndc.x >= -1 && ndc.x <= 1 && ndc.y >= -1 && ndc.y <= 1
+
+      if (!onScreen) {
         label.style.display = 'none'
+        // Bearing relative to where the camera is actually looking, in
+        // the horizontal (ground) plane only — vertical off-screen
+        // (a contact far above/below) isn't meaningful on these mostly-
+        // flat maps, and collapsing to a horizontal-only bearing keeps
+        // the arrow's direction legible at a glance either way.
+        const toEnemy = new THREE.Vector3(lx - camera.position.x, 0, lz - camera.position.z)
+        if (toEnemy.lengthSq() < 1e-6) {
+          arrow.style.display = 'none'
+          continue
+        }
+        toEnemy.normalize()
+        const bearing = Math.atan2(toEnemy.dot(flatRight), toEnemy.dot(flatForward))
+        const dirX = Math.sin(bearing)
+        const dirY = -Math.cos(bearing)
+        const halfW = size.width / 2 - OFFSCREEN_EDGE_MARGIN_PX
+        const halfH = size.height / 2 - OFFSCREEN_EDGE_MARGIN_PX
+        const s = Math.min(
+          Math.abs(dirX) > 1e-4 ? halfW / Math.abs(dirX) : Infinity,
+          Math.abs(dirY) > 1e-4 ? halfH / Math.abs(dirY) : Infinity,
+        )
+        const ex = size.width / 2 + dirX * s
+        const ey = size.height / 2 + dirY * s
+        arrow.style.display = 'flex'
+        arrow.style.transform = `translate(${ex}px, ${ey}px) translate(-50%, -50%) rotate(${(bearing * 180) / Math.PI}deg)`
         continue
       }
+      arrow.style.display = 'none'
       candidates.push({ enemy, px: (ndc.x * 0.5 + 0.5) * size.width, py: (-ndc.y * 0.5 + 0.5) * size.height })
     }
 
     // Declutter: two enemies roughly colinear with the observer project
     // to nearly the same screen point (a real and fairly common case,
-    // not just an edge case) — their reticles would stack exactly on
-    // top of each other and read as a single detected enemy. The
-    // nearer one keeps its true position; anything that would land on
-    // an already-placed marker gets nudged down until it clears.
+    // not just an edge case) — their labels would stack exactly on top
+    // of each other and read as a single detected enemy. The nearer one
+    // keeps its true position; anything that would land on an already-
+    // placed marker gets nudged down until it clears.
     candidates.sort((a, b) => a.enemy.distance - b.enemy.distance)
     const placed: { px: number; py: number }[] = []
     for (const c of candidates) {
@@ -139,47 +189,74 @@ function dotXs(from: number, to: number, step: number): number[] {
   return xs
 }
 
-/** One side's vertical gauge — a tick-marked ladder with a triangular
- * marker at the current value, same visual language on both sides
- * (HEAT on the left from the pilot's own mech, DIST to the nearest
- * detected enemy on the right — the two numeric readouts this cockpit
- * actually has real data for). */
-function Ladder({
-  x, label, value, max, mirror,
-}: { x: number; label: string; value: number; max: number; mirror?: boolean }) {
+/** Vertical thermometer-style HEAT gauge (real user request: "una línea
+ * roja como un termómetro" instead of the old tick-ladder + triangle
+ * marker) — a red fill rises inside a cyan tube as heat climbs, same
+ * 0..max scale/tick spacing the old Ladder used at this same HUD
+ * position. A separate short cyan marker partway up the tube pins
+ * exactly how many points this mech's own heat sinks are worth (real
+ * user request: "un marcador con la cantidad que los disipadores van a
+ * ser capaces de disipar") — mechs.py's dissipate_heat floors
+ * heat_current by exactly mech.heat_sinks at the top of every round, so
+ * this marker is that same number's position on the same scale the red
+ * fill uses, not a separate/derived value. */
+function Thermometer({
+  x, heat, max, dissipation,
+}: { x: number; heat: number; max: number; dissipation: number }) {
   const yTop = 220
   const yBottom = 480
+  const tubeWidth = 12
   const ticks = [0, 1, 2, 3].map((i) => {
     const frac = i / 3
     return { y: yTop + frac * (yBottom - yTop), val: Math.round(max * (1 - frac)) }
   })
-  const clamped = Math.max(0, Math.min(max, value))
-  const markerY = yTop + (1 - clamped / max) * (yBottom - yTop)
-  const sign = mirror ? -1 : 1
-  const tickX2 = x + 14 * sign
-  const textX = x + 22 * sign
-  const markerPoints = `${x - 4 * sign},${markerY} ${x - 16 * sign},${markerY - 7} ${x - 16 * sign},${markerY + 7}`
+  const clampedHeat = Math.max(0, Math.min(max, heat))
+  const fillY = yTop + (1 - clampedHeat / max) * (yBottom - yTop)
+  const clampedDissipation = Math.max(0, Math.min(max, dissipation))
+  const dissipationY = yTop + (1 - clampedDissipation / max) * (yBottom - yTop)
   return (
     <g>
-      <line x1={x} y1={yTop} x2={x} y2={yBottom} stroke={HUD_ACCENT} strokeWidth={1.5} opacity={0.6} />
       <text
         x={x} y={yTop - 14} fill={HUD_ACCENT} fontSize={13} textAnchor="middle"
         fontFamily="'Cascadia Mono', monospace" opacity={0.9}
       >
-        {label}
+        HEAT
       </text>
+      <rect
+        x={x - tubeWidth / 2} y={yTop} width={tubeWidth} height={yBottom - yTop} rx={tubeWidth / 2}
+        fill="none" stroke={HUD_ACCENT} strokeWidth={1.5} opacity={0.6}
+      />
+      <rect
+        x={x - tubeWidth / 2 + 2} y={fillY} width={tubeWidth - 4} height={Math.max(0, yBottom - fillY - 2)}
+        rx={(tubeWidth - 4) / 2} fill={HUD_DANGER} opacity={0.85}
+      />
       {ticks.map((t) => (
         <g key={t.y}>
-          <line x1={x} y1={t.y} x2={tickX2} y2={t.y} stroke={HUD_ACCENT} strokeWidth={1.5} opacity={0.6} />
+          <line x1={x + tubeWidth / 2} y1={t.y} x2={x + tubeWidth / 2 + 8} y2={t.y} stroke={HUD_ACCENT} strokeWidth={1.5} opacity={0.6} />
           <text
-            x={textX} y={t.y + 4} fill={HUD_ACCENT} fontSize={11}
-            textAnchor={mirror ? 'end' : 'start'} fontFamily="'Cascadia Mono', monospace" opacity={0.8}
+            x={x + tubeWidth / 2 + 14} y={t.y + 4} fill={HUD_ACCENT} fontSize={11}
+            textAnchor="start" fontFamily="'Cascadia Mono', monospace" opacity={0.8}
           >
             {t.val}
           </text>
         </g>
       ))}
-      <polygon points={markerPoints} fill={HUD_ACCENT} opacity={0.95} />
+      <polygon
+        points={`${x - tubeWidth / 2 - 3},${dissipationY} ${x - tubeWidth / 2 - 13},${dissipationY - 6} ${x - tubeWidth / 2 - 13},${dissipationY + 6}`}
+        fill={HUD_ACCENT} opacity={0.95}
+      />
+      <text
+        x={x - tubeWidth / 2 - 17} y={dissipationY + 4} fill={HUD_ACCENT} fontSize={10}
+        textAnchor="end" fontFamily="'Cascadia Mono', monospace" opacity={0.85}
+      >
+        -{Math.round(dissipation)}
+      </text>
+      <text
+        x={x} y={yBottom + 22} fill={HUD_DANGER} fontSize={16} fontWeight={700}
+        textAnchor="middle" fontFamily="'Cascadia Mono', monospace"
+      >
+        {Math.round(heat)}
+      </text>
     </g>
   )
 }
@@ -288,27 +365,22 @@ function HudFrame({ heat, mech }: { heat: number; mech: Mech | null }) {
       <CornerBracket x={40} y={660} flipY />
       <CornerBracket x={1160} y={660} flipX flipY />
 
-      <Ladder x={90} label="HEAT" value={heat} max={HEAT_MAX} />
+      <Thermometer x={90} heat={heat} max={HEAT_MAX} dissipation={mech?.heat_sinks ?? 0} />
       <MechHealthDiagram mech={mech} x={1000} y={230} width={190} height={218} />
     </svg>
   )
 }
 
-/** Circular lock-on reticle marking a detected enemy, per the user's
- * reference image — replaces the earlier plain rectangular tag. */
-function TargetLockIcon() {
-  const ticks = [0, 45, 90, 135, 180, 225, 270, 315]
+/** Edge-of-screen indicator for a detected enemy currently outside the
+ * frustum (real user request: "un triángulo rojo en el borde de la
+ * pantalla en la dirección donde esté") — EnemyMarkersController clamps
+ * this to the viewport edge along the enemy's real horizontal bearing
+ * and sets the rotation to match, this just draws the triangle pointing
+ * "up" in its own local space so the parent's rotate() aims it. */
+function OffscreenArrow() {
   return (
-    <svg width="56" height="56" viewBox="0 0 56 56" className="fp-target-lock">
-      <circle cx={28} cy={28} r={20} fill="none" stroke={HUD_DANGER} strokeWidth={1.4} />
-      <circle cx={28} cy={28} r={2.5} fill={HUD_DANGER} />
-      {ticks.map((deg) => {
-        const rad = (deg * Math.PI) / 180
-        const x1 = 28 + 20 * Math.cos(rad), y1 = 28 + 20 * Math.sin(rad)
-        const x2 = 28 + 25 * Math.cos(rad), y2 = 28 + 25 * Math.sin(rad)
-        return <line key={deg} x1={x1} y1={y1} x2={x2} y2={y2} stroke={HUD_DANGER} strokeWidth={1.4} />
-      })}
-      <polygon points="28,2 24,9 32,9" fill={HUD_DANGER} />
+    <svg width="28" height="28" viewBox="0 0 28 28" className="fp-offscreen-arrow">
+      <polygon points="14,2 24,22 4,22" fill={HUD_DANGER} />
     </svg>
   )
 }
@@ -366,12 +438,10 @@ function WeaponHud({
                   aria-checked={on}
                   disabled={outOfAmmo || firing}
                   onClick={() => toggle(w.id)}
-                >
-                  <span className="fp-weapon-toggle-thumb" />
-                </button>
+                />
                 <span className="fp-weapon-hud-name">{w.weapon_name}</span>
                 <span className="fp-weapon-hud-stats">
-                  {stats ? `${stats.short}/${stats.medium}/${stats.long}` : '—'}
+                  {stats ? `DMG:${stats.damage}   HEAT:${stats.heat}` : '—'}
                   {w.ammo_remaining != null && ` · ${w.ammo_remaining}`}
                 </span>
               </li>
@@ -439,6 +509,13 @@ export function FirstPersonView({
   const [enemies, setEnemies] = useState<VisibleEnemy[]>([])
   const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
   const labelRefs = useRef<Record<number, HTMLDivElement | null>>({})
+  // Edge-of-screen arrow for a detected enemy currently outside the
+  // frustum/behind the camera (real user request: "un triángulo rojo en
+  // el borde de la pantalla en la dirección donde esté") — a sibling of
+  // the label rather than a mode of it, since the two need independent
+  // transforms (label centers on the enemy's own screen position, this
+  // clamps to the viewport edge and rotates to point at it).
+  const offscreenRefs = useRef<Record<number, HTMLDivElement | null>>({})
 
   // Click-and-drag look — offset from the mech's own facing_deg, clamped
   // to ±90° (LOOK_YAW_LIMIT_DEG) so the total sweep is exactly 180°,
@@ -576,7 +653,10 @@ export function FirstPersonView({
   // the remaining MP budget can actually afford there; 'rotate' has no
   // hex at all — same q/r the unit is already standing on.
   type FpvPendingFacing =
-    | { kind: 'move'; movementType: MovementType; q: number; r: number; x: number; y: number; allowedFacings?: number[] }
+    | {
+        kind: 'move'; movementType: MovementType; q: number; r: number; x: number; y: number
+        allowedFacings?: number[]; path?: { q: number; r: number }[]
+      }
     | { kind: 'rotate' }
     | null
   const [pendingFacing, setPendingFacing] = useState<FpvPendingFacing>(null)
@@ -615,10 +695,20 @@ export function FirstPersonView({
     if (hex) {
       setPendingFacing({
         kind: 'move', movementType: movementHighlight.movementType, q, r,
-        x: clientX, y: clientY, allowedFacings: hex.facings,
+        x: clientX, y: clientY, allowedFacings: hex.facings, path: hex.path,
       })
     }
     // A click outside the highlighted set just cancels the pick, same as GMView.
+  }
+
+  // Real user request: clicking directly on a detected enemy's own 3D
+  // model (inside its outline, not just its floating caption above)
+  // should also open the weapon HUD during the ranged/melee phase —
+  // same gate/target set the caption's own onClick already uses.
+  const onFpvUnitClick = (clickedUnit: Unit) => {
+    if (!canAttack) return
+    if (!visibleEnemyUnitIds.has(clickedUnit.id)) return
+    setSelectedTargetId(clickedUnit.id)
   }
 
   const onFpvRotate = () => {
@@ -926,40 +1016,74 @@ export function FirstPersonView({
             onContextMenu={(e) => e.preventDefault()}
           >
             <Canvas shadows camera={{ fov: 70 }}>
-              <SkyBackground />
-              <ambientLight intensity={1.2} />
-              <directionalLight
-                position={[4, 8, 3]} intensity={1.8} castShadow
-                shadow-mapSize={[2048, 2048]}
-                shadow-camera-left={-30} shadow-camera-right={30}
-                shadow-camera-top={30} shadow-camera-bottom={-30}
-                shadow-camera-far={60}
-              />
-              {/* A cockpit-mounted floodlight at the camera's own position —
-                  the sun alone left mechs looking near-black at eye level,
-                  where the fixed overhead light from TableView/GMView barely
-                  reaches. Distance-limited so it lights what's actually in
-                  view without washing out the whole scene. */}
-              <pointLight position={camera.position} intensity={12} distance={14} decay={1.5} />
-              <FixedFirstPersonCam position={camera.position} lookAt={camera.lookAt} />
-              <Suspense fallback={null}>
-                <HexMap
-                  map={map}
-                  units={sceneUnits}
-                  activeAttack={activeAttackVfx}
-                  onAttackEffectDone={onAttackEffectDone}
-                  moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
-                  onTileClick={onFpvTileClick}
-                  walkPaths={walkPaths}
+              {/* Selection + Outline (real user request, with a reference
+                  image: "resalte el contorno del mech enemigo, del modelo
+                  3D" — a real edge-detected silhouette outline around the
+                  actual model, not a flat shape traced over its screen
+                  projection) — a proper screen-space edge-detection pass
+                  over a mask render of whatever's claimed via <Select>,
+                  which is why it reads as ONE clean outer silhouette per
+                  mech even though each model is many separate meshes
+                  (arms/legs/torso/guns) — a per-mesh backface-extrusion
+                  outline was tried first and rejected for exactly that
+                  reason (every part got its own seam). HexMap's own
+                  UnitMarker claims each detected enemy via outlineUnitIds
+                  -> <Select enabled>. */}
+              <Selection>
+                <SkyBackground />
+                <ambientLight intensity={1.2} />
+                <directionalLight
+                  position={[4, 8, 3]} intensity={1.8} castShadow
+                  shadow-mapSize={[2048, 2048]}
+                  shadow-camera-left={-30} shadow-camera-right={30}
+                  shadow-camera-top={30} shadow-camera-bottom={-30}
+                  shadow-camera-far={60}
                 />
-              </Suspense>
-              <EnemyMarkersController
-                enemies={enemies}
-                centerX={camera.centerX}
-                centerZ={camera.centerZ}
-                elevationAt={elevationAt}
-                labelRefs={labelRefs}
-              />
+                {/* A cockpit-mounted floodlight at the camera's own position —
+                    the sun alone left mechs looking near-black at eye level,
+                    where the fixed overhead light from TableView/GMView barely
+                    reaches. Distance-limited so it lights what's actually in
+                    view without washing out the whole scene. */}
+                <pointLight position={camera.position} intensity={12} distance={14} decay={1.5} />
+                <FixedFirstPersonCam position={camera.position} lookAt={camera.lookAt} />
+                <Suspense fallback={null}>
+                  <HexMap
+                    map={map}
+                    units={sceneUnits}
+                    activeAttack={activeAttackVfx}
+                    onAttackEffectDone={onAttackEffectDone}
+                    moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
+                    pathPreviewHexes={
+                      pendingFacing?.kind === 'move' && pendingFacing.path
+                        ? new Set(pendingFacing.path.map((p) => `${p.q},${p.r}`))
+                        : undefined
+                    }
+                    onTileClick={onFpvTileClick}
+                    onUnitClick={onFpvUnitClick}
+                    walkPaths={walkPaths}
+                    outlineUnitIds={visibleEnemyUnitIds}
+                  />
+                </Suspense>
+                <EnemyMarkersController
+                  enemies={enemies}
+                  centerX={camera.centerX}
+                  centerZ={camera.centerZ}
+                  elevationAt={elevationAt}
+                  labelRefs={labelRefs}
+                  offscreenRefs={offscreenRefs}
+                />
+                <EffectComposer autoClear={false}>
+                  {/* Real user report: against a light background (the
+                      sky) the outline read as too thin to notice —
+                      edgeStrength alone didn't do much since it's a
+                      glow-intensity multiplier, not a width; kernelSize
+                      is what actually widens the blurred edge. */}
+                  <Outline
+                    visibleEdgeColor={0xe35d5d} hiddenEdgeColor={0xe35d5d} edgeStrength={10}
+                    blur kernelSize={KernelSize.LARGE} width={1000}
+                  />
+                </EffectComposer>
+              </Selection>
             </Canvas>
           </div>
           {enemies.map((enemy) => (
@@ -971,11 +1095,21 @@ export function FirstPersonView({
               className={`fp-enemy-label${canAttack ? ' targetable' : ''}${canAttack && isReachable(enemy) ? ' in-range' : ''}${selectedTargetId === enemy.unit_id ? ' selected' : ''}`}
               onClick={canAttack ? () => setSelectedTargetId(enemy.unit_id) : undefined}
             >
-              <TargetLockIcon />
               <div className="fp-enemy-caption">
                 <span className="fp-enemy-name">{enemy.chassis ?? '?'} {enemy.model ?? ''}</span>
                 <span className="fp-enemy-distance">{enemy.distance} hex</span>
               </div>
+            </div>
+          ))}
+          {enemies.map((enemy) => (
+            <div
+              key={enemy.unit_id}
+              ref={(el) => {
+                offscreenRefs.current[enemy.unit_id] = el
+              }}
+              className="fp-offscreen-indicator"
+            >
+              <OffscreenArrow />
             </div>
           ))}
           {selectedTarget && (

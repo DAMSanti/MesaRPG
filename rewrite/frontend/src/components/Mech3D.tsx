@@ -49,11 +49,10 @@ export const MODEL_SCALE = 1.65
 // drift out of sync whenever MODEL_SCALE changes.
 export const MODEL_HEAD_FRACTION = 0.9
 
-// Roughly torso-center height — FirstPersonView anchors the enemy
-// target-lock reticle here (MODEL_SCALE * MODEL_CHEST_FRACTION) so it
-// lands on the chest regardless of how MODEL_SCALE is tuned, instead of
-// a fixed offset that silently drifts toward the legs as the model
-// grows.
+// Roughly torso-center height — HexMap's attack-beam VFX starts/ends
+// here (MODEL_SCALE * MODEL_CHEST_FRACTION) so a shot lands on the
+// chest regardless of how MODEL_SCALE is tuned, instead of a fixed
+// offset that silently drifts toward the legs as the model grows.
 export const MODEL_CHEST_FRACTION = 0.6
 
 // How strongly the faction color (player/enemy/pilot color) tints the

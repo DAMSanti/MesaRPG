@@ -1,8 +1,9 @@
 import {
-  memo, useEffect, useMemo, useRef, useState,
+  memo, useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
+import { Select } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import type {
   AttackResult, HexTileData, MapData, Unit,
@@ -155,6 +156,7 @@ function tilePropsEqual(prev: Readonly<TileProps>, next: Readonly<TileProps>) {
     && prev.needsInitiativeHighlighted === next.needsInitiativeHighlighted
     && prev.activeMoverHighlighted === next.activeMoverHighlighted
     && prev.moveHighlighted === next.moveHighlighted
+    && prev.pathPreviewHighlighted === next.pathPreviewHighlighted
     && prev.targetableHighlighted === next.targetableHighlighted
     && prev.physics === next.physics
 }
@@ -180,6 +182,16 @@ type TileProps = {
    * same LosDebugOverlay technique. Clicking it is handled by the
    * caller's own onTileClick, same as every other tile click. */
   moveHighlighted: boolean
+  /** This hex is one of the exact steps of the route the mover is about
+   * to take — populated once a specific destination has been picked
+   * (real user request: "quiero un overlay sobre el path exacto que
+   * debería seguir", so the chosen route reads clearly on the board
+   * instead of only being implied by the reachable-range wash). Distinct
+   * bright-white wash, drawn on top of moveHighlighted so it stays
+   * readable even where the two overlap; cleared the instant the move is
+   * confirmed or cancelled (both close out the same pendingFacing/
+   * equivalent state this is derived from, no separate cleanup needed). */
+  pathPreviewHighlighted: boolean
   /** The unit standing here is a valid target for the attack currently
    * being declared — populated once the attacker is picked (GMView's
    * pickingTargetFor), filtered client-side against real weapon range
@@ -201,7 +213,7 @@ type TileProps = {
 
 const Tile = memo(function Tile({
   tile, lookup, losHighlighted, dragHighlighted, needsInitiativeHighlighted, activeMoverHighlighted, moveHighlighted,
-  targetableHighlighted, physics,
+  pathPreviewHighlighted, targetableHighlighted, physics,
   onPointerMove, onPointerUp,
 }: TileProps) {
   const [x, z] = hexToWorld(tile.q, tile.r)
@@ -276,6 +288,7 @@ const Tile = memo(function Tile({
           tighter) keeps every highlight type distinguishable without
           the floating look, in both this and GMView's own top-down use. */}
       {moveHighlighted && <LosDebugOverlay height={height} color="#4a9eff" opacity={0.4} y={height + 0.06} />}
+      {pathPreviewHighlighted && <LosDebugOverlay height={height} color="#ffffff" opacity={0.55} y={height + 0.065} />}
       {targetableHighlighted && <LosDebugOverlay height={height} color="#e35d5d" opacity={0.45} y={height + 0.07} />}
     </group>
   )
@@ -315,6 +328,8 @@ function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<Un
     && prev.terrain === next.terrain
     && prev.physics === next.physics
     && prev.walkPath === next.walkPath
+    && prev.heightAt === next.heightAt
+    && prev.outlined === next.outlined
     && prev.worldOffset[0] === next.worldOffset[0] && prev.worldOffset[1] === next.worldOffset[1]
     && (prev.dragPosition === next.dragPosition
       || (prev.dragPosition != null && next.dragPosition != null
@@ -363,12 +378,23 @@ type UnitMarkerProps = {
    * `target`, identical to this component's behavior before walkPath
    * existed. */
   walkPath?: { q: number; r: number }[]
+  /** Resolves any hex's own resting height (HexMap's own heightAt) — used
+   * to look up each intermediate walkPath waypoint's elevation so the
+   * mech's Y can interpolate through the path leg by leg instead of
+   * snapping straight to the destination's height. */
+  heightAt: (q: number, r: number) => number
+  /** Claims this unit's mesh for the caller's own <Selection>'s <Outline>
+   * effect (real-time edge-detected silhouette outline — FirstPersonView's
+   * detected enemies, HexMap's own outlineUnitIds prop resolved per-unit
+   * here). A no-op everywhere else (Select gracefully ignores having no
+   * <Selection> ancestor), so this is always safe to set. */
+  outlined?: boolean
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void
   onPointerUp?: (e: ThreeEvent<PointerEvent>) => void
 }
 
 const UnitMarker = memo(function UnitMarker({
-  unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, onPointerDown, onPointerUp,
+  unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, heightAt, outlined, onPointerDown, onPointerUp,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
   // 'building' matches Tile's own fixed platform height (BUILDING_MIN_
@@ -398,26 +424,35 @@ const UnitMarker = memo(function UnitMarker({
   // unit.q/r changes. Dragging (dragPosition set) already follows the
   // pointer continuously, so it skips easing entirely.
   const animatedPos = useRef<[number, number]>(target)
+  // Interpolates alongside animatedPos's X/Z, through the same per-leg
+  // heights the queue below carries — see heightAt's own doc comment for
+  // the bug this fixes (Y used to snap to the destination's elevation
+  // immediately, independent of how far X/Z had actually walked).
+  const animatedY = useRef<number>(baseY)
   const [isMoving, setIsMoving] = useState(false)
   const canWalk = !dragPosition
 
   // The real route (ReachableHex.path from movement.py, threaded down
-  // as walkPath) — a queue of world-space waypoints stepToward below
-  // walks through one at a time, instead of sliding straight from the
-  // old hex to the new one through anything in between. Replaced
-  // wholesale whenever a genuinely new walkPath prop arrives (a fresh
-  // move was just initiated); a caller with no path data (a free-form
-  // drag/move) never sets one, so the queue stays empty and stepToward
-  // just falls back to a direct line at `target` — the exact behavior
-  // this had before walkPath existed.
-  const pathQueueRef = useRef<[number, number][]>([])
+  // as walkPath) — a queue of world-space waypoints (each carrying its
+  // own resting height, via heightAt) stepToward below walks through one
+  // at a time, instead of sliding straight from the old hex to the new
+  // one through anything in between. Replaced wholesale whenever a
+  // genuinely new walkPath prop arrives (a fresh move was just
+  // initiated); a caller with no path data (a free-form drag/move) never
+  // sets one, so the queue stays empty and stepToward just falls back to
+  // a direct line at `target`/baseY — the exact behavior this had before
+  // walkPath existed.
+  const pathQueueRef = useRef<{ x: number; z: number; y: number }[]>([])
   const lastWalkPathRef = useRef<{ q: number; r: number }[] | undefined>(undefined)
   useEffect(() => {
     if (walkPath && walkPath !== lastWalkPathRef.current) {
       lastWalkPathRef.current = walkPath
-      pathQueueRef.current = walkPath.map((p) => hexToWorld(p.q, p.r))
+      pathQueueRef.current = walkPath.map((p) => {
+        const [x, z] = hexToWorld(p.q, p.r)
+        return { x, z, y: heightAt(p.q, p.r) }
+      })
     }
-  }, [walkPath])
+  }, [walkPath, heightAt])
 
   // Turns to face the direction it's actually walking at each leg of a
   // real path, not just at the final destination — see TURN_SPEED/
@@ -428,17 +463,18 @@ const UnitMarker = memo(function UnitMarker({
   const stepToward = (delta: number) => {
     if (!canWalk) {
       animatedPos.current = target
+      animatedY.current = baseY
       animatedRot.current = facingRotationY
       pathQueueRef.current = []
       if (isMoving) setIsMoving(false)
       return
     }
     const queue = pathQueueRef.current
-    const immediateTarget = queue.length > 0 ? queue[0] : target
+    const immediateTarget = queue.length > 0 ? queue[0] : { x: target[0], z: target[1], y: baseY }
     const [cx, cz] = animatedPos.current
-    const [tx, tz] = immediateTarget
-    const dx = tx - cx
-    const dz = tz - cz
+    const cy = animatedY.current
+    const dx = immediateTarget.x - cx
+    const dz = immediateTarget.z - cz
     const dist = Math.hypot(dx, dz)
     const headingTarget = dist > ARRIVE_EPSILON ? Math.atan2(dx, dz) : facingRotationY
     animatedRot.current = lerpAngle(
@@ -447,7 +483,8 @@ const UnitMarker = memo(function UnitMarker({
       Math.min(1, TURN_SPEED * delta),
     )
     if (dist <= ARRIVE_EPSILON) {
-      animatedPos.current = immediateTarget
+      animatedPos.current = [immediateTarget.x, immediateTarget.z]
+      animatedY.current = immediateTarget.y
       if (queue.length > 0) {
         pathQueueRef.current = queue.slice(1)
       } else if (isMoving) {
@@ -456,6 +493,7 @@ const UnitMarker = memo(function UnitMarker({
     } else {
       const step = Math.min(1, (WALK_SPEED * delta) / dist)
       animatedPos.current = [cx + dx * step, cz + dz * step]
+      animatedY.current = cy + (immediateTarget.y - cy) * step
       if (!isMoving) setIsMoving(true)
     }
   }
@@ -474,6 +512,7 @@ const UnitMarker = memo(function UnitMarker({
   useFrame((_state, delta) => {
     stepToward(delta)
     const [x, z] = animatedPos.current
+    const y = animatedY.current
     const rot = animatedRot.current
     if (physics) {
       const body = rigidBodyRef.current
@@ -481,24 +520,36 @@ const UnitMarker = memo(function UnitMarker({
         // World space, not this group's local space — see worldOffset's
         // own doc comment above for why the subtraction is required here.
         const [centerX, centerZ] = worldOffset
-        body.setNextKinematicTranslation({ x: x - centerX, y: baseY, z: z - centerZ })
+        body.setNextKinematicTranslation({ x: x - centerX, y, z: z - centerZ })
         body.setNextKinematicRotation(quaternionFromY(rot))
       }
     } else {
-      groupRef.current?.position.set(x, baseY, z)
+      groupRef.current?.position.set(x, y, z)
       groupRef.current?.rotation.set(0, rot, 0)
     }
   })
 
-  const mechOrMarker =
-    unit.mech_id != null ? (
-      <Mech3D color={color} chassis={unit.mech_chassis} model={unit.mech_model} isMoving={isMoving} />
-    ) : (
-      <mesh position={[0, 0.35, 0]} castShadow>
-        <coneGeometry args={[0.35, 0.7, 4]} />
-        <meshStandardMaterial color={color} />
-      </mesh>
-    )
+  // Select is a no-op group wrapper when there's no <Selection> ancestor
+  // (GMView/TableView/plain PlayerView never render one) — safe to
+  // always wrap, not just when this specific view actually uses
+  // outlines. FirstPersonView's own <Selection>+<EffectComposer><Outline
+  // /> (real user request, with a reference image: "resalte el contorno
+  // del mech enemigo, del modelo 3D" — a real edge-detected silhouette
+  // outline, not a shape drawn over its screen projection) is what
+  // actually turns a claimed selection into a visible red rim; this is
+  // just the per-unit "claim me" toggle.
+  const mechOrMarker = (
+    <Select enabled={!!outlined}>
+      {unit.mech_id != null ? (
+        <Mech3D color={color} chassis={unit.mech_chassis} model={unit.mech_model} isMoving={isMoving} />
+      ) : (
+        <mesh position={[0, 0.35, 0]} castShadow>
+          <coneGeometry args={[0.35, 0.7, 4]} />
+          <meshStandardMaterial color={color} />
+        </mesh>
+      )}
+    </Select>
+  )
 
   if (physics) {
     // Owns its own world-space transform via the kinematic API above —
@@ -510,7 +561,7 @@ const UnitMarker = memo(function UnitMarker({
         ref={rigidBodyRef}
         type="kinematicPosition"
         colliders="hull"
-        position={[animatedPos.current[0], baseY, animatedPos.current[1]]}
+        position={[animatedPos.current[0], animatedY.current, animatedPos.current[1]]}
         rotation={[0, facingRotationY, 0]}
       >
         {mechOrMarker}
@@ -527,7 +578,7 @@ const UnitMarker = memo(function UnitMarker({
   return (
     <group
       ref={groupRef}
-      position={[animatedPos.current[0], baseY, animatedPos.current[1]]}
+      position={[animatedPos.current[0], animatedY.current, animatedPos.current[1]]}
       rotation={[0, facingRotationY, 0]}
       onPointerDown={(e) => {
         e.stopPropagation()
@@ -665,7 +716,7 @@ function FootprintTrail({ marks }: { marks: FootprintMark[] }) {
 
 export function HexMap({
   map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
-  moveHighlightHexes, targetableHexes, walkPaths, physics, activeAttack, onAttackEffectDone,
+  moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, outlineUnitIds, physics, activeAttack, onAttackEffectDone,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
 }: {
   map: MapData
@@ -688,6 +739,14 @@ export function HexMap({
   /** Hexes the current mover can reach this movement phase, as "q,r"
    * keys — see app/systems/battletech/movement.py::reachable_hexes. */
   moveHighlightHexes?: Set<string>
+  /** The exact steps of the route to whichever destination was just
+   * picked (a specific hex's own ReachableHex.path, as "q,r" keys) —
+   * bright-white wash on top of moveHighlightHexes, shown alongside the
+   * facing picker so the confirmed route reads clearly instead of only
+   * the general reachable-range wash. Caller clears it the moment the
+   * move is confirmed/cancelled (see each caller's own pendingFacing-
+   * equivalent state). */
+  pathPreviewHexes?: Set<string>
   /** Hexes holding a valid target for the attack currently being
    * declared (real weapon range / adjacency, not just "an enemy is
    * there") — danger-red wash, "q,r" keys, same technique as
@@ -700,6 +759,15 @@ export function HexMap({
    * just walk a direct line to their new q/r, same as before this
    * existed. */
   walkPaths?: Map<number, { q: number; r: number }[]>
+  /** Unit ids to claim for the caller's own <Selection>'s <Outline>
+   * effect — a real-time edge-detected silhouette outline around the
+   * actual 3D model (FirstPersonView's detected enemies; real user
+   * request, clarified with a reference image: the model's own
+   * silhouette, not a flat shape drawn over its screen projection).
+   * Harmless to set from a view with no <Selection>/<Outline> of its
+   * own (see UnitMarker's own outlined doc comment) — GMView/TableView
+   * never pass this. */
+  outlineUnitIds?: Set<number>
   /** Give every tile and mech a real physics collider (initiative dice
    * roll and bounce across the actual board — TableView only). Must
    * only be set true when this HexMap is rendered inside a <Physics>
@@ -739,6 +807,21 @@ export function HexMap({
   const elevationAt = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.elevation])), [map.tiles])
   const terrainAt = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.terrain])), [map.tiles])
   const lookup = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t])), [map.tiles])
+  // Same resting-height formula UnitMarker computes for itself (restY),
+  // generalized to an arbitrary hex so a walking mech's Y can interpolate
+  // through each intermediate waypoint's own elevation instead of
+  // snapping straight to the destination's height the instant unit.q/r
+  // updates — real user report: walking from elevation 0 to elevation 2
+  // showed the mech floating at height 2 from the very first step, while
+  // its X/Z was still smoothly crossing the hexes in between. Memoized
+  // (stable reference across renders unless the map's own tiles change)
+  // so it can sit in unitMarkerPropsEqual as a reference check, same as
+  // walkPath/physics, without defeating that memo every render.
+  const heightAt = useCallback((q: number, r: number) => {
+    const t = terrainAt.get(`${q},${r}`) ?? 'plains'
+    const elev = elevationAt.get(`${q},${r}`) ?? 0
+    return terrainSinkY(t) ?? (t === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + elev * 0.22)
+  }, [terrainAt, elevationAt])
   // A hex's own ground/platform height — matches Tile's rendering
   // exactly, including 'building's fixed platform (BUILDING_MIN_HEIGHT,
   // not the elevation formula; see its own doc comment) — used for the
@@ -929,6 +1012,7 @@ export function HexMap({
           needsInitiativeHighlighted={needsInitiativeTiles.has(`${tile.q},${tile.r}`)}
           activeMoverHighlighted={activeMoverTiles.has(`${tile.q},${tile.r}`)}
           moveHighlighted={moveHighlightHexes?.has(`${tile.q},${tile.r}`) ?? false}
+          pathPreviewHighlighted={pathPreviewHexes?.has(`${tile.q},${tile.r}`) ?? false}
           targetableHighlighted={targetableHexes?.has(`${tile.q},${tile.r}`) ?? false}
           physics={physics}
           onPointerMove={(e) => {
@@ -952,6 +1036,8 @@ export function HexMap({
           physics={physics}
           worldOffset={[centerX, centerZ]}
           walkPath={walkPaths?.get(unit.id)}
+          heightAt={heightAt}
+          outlined={outlineUnitIds?.has(unit.id) ?? false}
           onPointerDown={() => {
             dragRef.current = { unit, startQ: unit.q, startR: unit.r }
             setHover({ q: unit.q, r: unit.r })
