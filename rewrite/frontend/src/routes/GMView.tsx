@@ -88,7 +88,7 @@ import './GMView.css'
  * whether to mount this or GMViewDnd based on the campaign's system. */
 function GMViewBattletech() {
   const campaignId = useCampaignId()
-  const { activeMapId, roundState, visibility, lastAttack, rosterVersion, unitWalked } = useTableSocket(campaignId)
+  const { activeMapId, roundState, visibility, lastAttack, rosterVersion } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   const { map, units, setUnits } = useMapState(mapId, visibility ?? lastAttack)
   const [pilots, setPilots] = useState<Pilot[]>([])
@@ -519,22 +519,6 @@ function GMViewBattletech() {
   // move in flight, keyed by unit id — threaded to HexMap's walkPaths so
   // the mech walks the actual calculated path instead of a straight line.
   const [walkPaths, setWalkPaths] = useState<Map<number, { q: number; r: number }[]>>(new Map())
-  // unit_walked (real user report) covers every move this screen didn't
-  // itself resolve — PlayerView's Acciones tab, FirstPersonView's cockpit
-  // HUD, or another connected GM screen — which this client would
-  // otherwise never learn a real route for, leaving HexMap to fall back
-  // to a straight line through whatever's in between. Guarded against
-  // re-applying to a move THIS screen just resolved locally (submitPhaseMove
-  // below already set fresher path data with no network round trip;
-  // re-setting it from the broadcast's later, reference-different array
-  // would reset the walk mid-stride back to its first waypoint).
-  const selfResolvedMoveRef = useRef<Set<number>>(new Set())
-  useEffect(() => {
-    if (!unitWalked) return
-    if (selfResolvedMoveRef.current.delete(unitWalked.unit_id)) return
-    if (unitWalked.path.length > 0) setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [unitWalked])
 
   const submitMoveUnit = async (unit: Unit, q: number, r: number, markActed: boolean, facingDeg?: number) => {
     // Optimistic: the marker already visually followed the drag to (q, r)
@@ -557,7 +541,6 @@ function GMViewBattletech() {
     // walk instead of a straight line for one frame.
     if (path && path.length > 0) {
       setWalkPaths((prev) => new Map(prev).set(unit.id, path))
-      selfResolvedMoveRef.current.add(unit.id)
     }
     setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, q, r, ...(facingDeg != null ? { facing_deg: facingDeg } : {}) } : u)))
     try {

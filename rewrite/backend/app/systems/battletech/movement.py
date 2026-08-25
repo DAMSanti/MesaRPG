@@ -461,17 +461,6 @@ def execute_move(
         step = candidates[facing_idx]
 
     updated = units.move_unit(unit_id, q, r, facing_deg)
-    # The real hex-by-hex route just taken (walk/run's terrain-following
-    # path, or jump's single landing hex — see reachable_hexes/
-    # _reachable_states's own "path" doc comments) — real user report:
-    # without this, any client that didn't itself pick this destination
-    # (the shared table screen watching a move initiated from
-    # PlayerView/FirstPersonView, say) had no route data at all and
-    # animated a straight line through whatever was in between instead
-    # of the real path. Merged into the same dict already returned here
-    # (not a separate return value) so this stays backward-compatible
-    # with every existing caller that reads updated["q"]/["facing_deg"].
-    updated = {**updated, "path": step["path"]}
 
     # Movement itself generates heat (Heat Scale) — walking/running are a
     # flat amount regardless of hexes covered (even a turn-in-place still

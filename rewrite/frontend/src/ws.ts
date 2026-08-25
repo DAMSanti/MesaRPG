@@ -77,19 +77,6 @@ export interface MovementStarted {
   hexes: ReachableHex[]
 }
 
-// The real hex-by-hex route a move-with-mp just took (see
-// movement.py's execute_move) — real user report: without this,
-// any client that didn't itself pick this destination (the shared
-// table watching a move requested from PlayerView/FirstPersonView, or
-// any other viewer) had no route data at all and animated a straight
-// line through whatever was in between, ignoring the actual
-// pathfinding. Broadcast to everyone regardless of who moved it.
-export interface UnitWalked {
-  type: 'unit_walked'
-  unit_id: number
-  path: { q: number; r: number }[]
-}
-
 export function useTableSocket(campaignId: number | null) {
   const [connected, setConnected] = useState(false)
   const [lastRoll, setLastRoll] = useState<RollResult | null>(null)
@@ -100,7 +87,6 @@ export function useTableSocket(campaignId: number | null) {
   const [roundState, setRoundState] = useState<RoundState | null>(null)
   const [initiativeRollRequest, setInitiativeRollRequest] = useState<InitiativeRollRequested | null>(null)
   const [movementStarted, setMovementStarted] = useState<MovementStarted | null>(null)
-  const [unitWalked, setUnitWalked] = useState<UnitWalked | null>(null)
   // Bumped on every "roster_updated" broadcast (pilot/mech created,
   // reviewed, resubmitted, edited or deleted) — no payload, just a
   // signal. Consumers put this in a useEffect's deps to refetch their
@@ -150,8 +136,6 @@ export function useTableSocket(campaignId: number | null) {
         setInitiativeRollRequest(message as InitiativeRollRequested)
       } else if (message.type === 'movement_started') {
         setMovementStarted(message as MovementStarted)
-      } else if (message.type === 'unit_walked') {
-        setUnitWalked(message as UnitWalked)
       } else if (message.type === 'roster_updated') {
         setRosterVersion((v) => v + 1)
       }
@@ -179,6 +163,6 @@ export function useTableSocket(campaignId: number | null) {
 
   return {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState,
-    initiativeRollRequest, movementStarted, unitWalked, rosterVersion, roll,
+    initiativeRollRequest, movementStarted, rosterVersion, roll,
   }
 }

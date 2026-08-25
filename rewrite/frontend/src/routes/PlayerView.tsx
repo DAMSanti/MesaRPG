@@ -65,7 +65,7 @@ function usePilotId() {
 export function PlayerView() {
   const campaignId = useCampaignId({ allowPicker: false })
   const { pilotId, choose } = usePilotId()
-  const { lastAttack, activeMapId, roundState, visibility, rosterVersion, unitWalked } = useTableSocket(campaignId)
+  const { lastAttack, activeMapId, roundState, visibility, rosterVersion } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
 
   const [campaign, setCampaign] = useState<Campaign | null>(null)
@@ -754,7 +754,6 @@ export function PlayerView() {
           roundState={roundState}
           visibility={visibility}
           lastAttack={lastAttack}
-          unitWalked={unitWalked}
           onClose={() => setShowFirstPerson(false)}
         />
       )}
