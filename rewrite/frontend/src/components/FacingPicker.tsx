@@ -25,13 +25,24 @@ const RADIUS = 34
  * moves (drag/place, no MP budget to check against) omit it — every
  * direction is always free there, same as before this existed. */
 export function FacingPicker({
-  x, y, onPick, onDismiss, allowedFacings,
+  x, y, onPick, onDismiss, allowedFacings, rotationOffsetDeg = 0,
 }: {
   x: number
   y: number
   onPick: (facingDeg: number) => void
   onDismiss: () => void
   allowedFacings?: number[]
+  /** Rotates the whole flower on screen without changing what `onPick`
+   * reports (still the real, un-rotated facing_deg) — real user bug
+   * report: under GMView's fixed top-down camera, facing_deg 0 really
+   * does sit at screen-right (see this file's own top comment), but
+   * FirstPersonView's camera can face/pivot any which way, so that same
+   * fixed screen mapping showed up arbitrarily rotated relative to what
+   * the player was actually looking at ("90º inclinado respecto al
+   * grid"). FirstPersonView passes an offset that puts the player's
+   * current view direction at screen-up instead. Defaults to 0 (GMView/
+   * PlayerView's own usage, unchanged). */
+  rotationOffsetDeg?: number
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -47,7 +58,8 @@ export function FacingPicker({
       <div className="facing-picker" style={{ left: x, top: y }}>
         <div className="facing-picker-hub" />
         {DIRECTIONS.map((deg) => {
-          const rad = (deg * Math.PI) / 180
+          const screenDeg = deg + rotationOffsetDeg
+          const rad = (screenDeg * Math.PI) / 180
           const dx = Math.cos(rad) * RADIUS
           const dy = Math.sin(rad) * RADIUS
           const allowed = allowedFacings == null || allowedFacings.includes(deg)
@@ -57,7 +69,7 @@ export function FacingPicker({
               type="button"
               className="facing-picker-dir"
               disabled={!allowed}
-              style={{ transform: `translate(${dx}px, ${dy}px) rotate(${deg + 90}deg)` }}
+              style={{ transform: `translate(${dx}px, ${dy}px) rotate(${screenDeg + 90}deg)` }}
               onClick={() => onPick(deg)}
               title={allowed ? `${deg}°` : `${deg}° — no queda MP suficiente para girar hasta ahí`}
             >

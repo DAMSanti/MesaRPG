@@ -1,12 +1,16 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
+import { useProgress } from '@react-three/drei'
 import * as THREE from 'three'
 import { HexMap, useAttackVfxQueue } from './HexMap'
 import { MODEL_CHEST_FRACTION, MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
 import { ARMOR_GEOMETRY, ARMOR_VIEWBOX, type MechLocationCode } from '../mechSheetGeometry'
+import { FacingPicker } from './FacingPicker'
 import {
-  attack, getMap, getUnitVisibleEnemies, getWeaponCatalog, markRoundActed, requestInitiative,
-  type AttackResult, type Mech, type MapData, type RoundState, type Unit, type VisibleEnemy, type WeaponStats,
+  attack, getMap, getUnitVisibleEnemies, getWeaponCatalog, markRoundActed, moveUnit,
+  moveUnitWithMp, requestInitiative, requestMovement,
+  type AttackResult, type Mech, type MapData, type MovementType, type ReachableHex, type RoundState, type Unit,
+  type VisibleEnemy, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
@@ -495,6 +499,21 @@ export function FirstPersonView({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
+  // This view is `position: fixed; inset: 0`, so it visually covers the
+  // whole viewport regardless of the page underneath — but without this,
+  // the underlying PlayerView page (real content, real scroll height)
+  // still shows a scrollbar the whole time this is open (real user
+  // request: "no quiero scroll bar en la vista de 1ª persona"). Restores
+  // whatever the body's own overflow was on close, rather than assuming
+  // it was the default.
+  useEffect(() => {
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prevOverflow
+    }
+  }, [])
+
   const rolled = roundState?.rolls.some((r) => r.kind === 'pilot' && r.pilot_id === unit.pilot_id) ?? false
   // The round's own global phase (same currentPhase TableView/GMView
   // show) — NOT "is it literally my own turn within the movement
@@ -527,6 +546,82 @@ export function FirstPersonView({
   const rollMyInitiative = () => {
     if (rolled || unit.pilot_id == null) return
     requestInitiative(unit.campaign_id, unit.pilot_id).catch(() => {})
+  }
+
+  // Movimiento pill becomes the same kind of button as Iniciativa (real
+  // user request) — click it, a submenu of Caminar/Correr/Saltar/Cambiar
+  // dirección/Saltar movimiento drops down. Unlike PlayerView's own
+  // Acciones tab (which has no map of its own and asks the SHARED table
+  // to show the reachable-hex highlight via requestMovement's broadcast),
+  // this cockpit already renders its own <HexMap> — picking a movement
+  // type here fetches the same reachable set with the plain, non-
+  // broadcasting getReachableHexes and renders the glow directly in
+  // THIS player's own view only, nobody else's.
+  const [showMoveSubmenu, setShowMoveSubmenu] = useState(false)
+  const [movementHighlight, setMovementHighlight] = useState<
+    { movementType: MovementType; hexes: Map<string, ReachableHex> } | null
+  >(null)
+  // 'move' carries the clicked hex's own path/allowedFacings (same shape
+  // GMView's own pendingFacing does) so FacingPicker only offers facings
+  // the remaining MP budget can actually afford there; 'rotate' has no
+  // hex at all — same q/r the unit is already standing on.
+  type FpvPendingFacing =
+    | { kind: 'move'; movementType: MovementType; q: number; r: number; x: number; y: number; allowedFacings?: number[] }
+    | { kind: 'rotate' }
+    | null
+  const [pendingFacing, setPendingFacing] = useState<FpvPendingFacing>(null)
+
+  const startFpvMovement = async (movementType: MovementType) => {
+    setShowMoveSubmenu(false)
+    try {
+      // requestMovement (not the plain getReachableHexes fetch) so the
+      // shared TableView screen ALSO shows this highlight (real user
+      // request) — it already listens for the same movement_started
+      // broadcast this triggers (see its own activeMovement effect),
+      // exactly like GMView's own phase-movement flow.
+      const { hexes } = await requestMovement(unit.id, movementType)
+      setMovementHighlight({ movementType, hexes: new Map(hexes.map((h) => [`${h.q},${h.r}`, h])) })
+    } catch {
+      // silently no-op, same precedent as fireVolley's rejected-shot
+      // handling below — no in-cockpit log to write a failure to.
+    }
+  }
+
+  const onFpvTileClick = (q: number, r: number, clientX: number, clientY: number) => {
+    if (!movementHighlight) return
+    const hex = movementHighlight.hexes.get(`${q},${r}`)
+    setMovementHighlight(null)
+    if (hex) {
+      setPendingFacing({
+        kind: 'move', movementType: movementHighlight.movementType, q, r,
+        x: clientX, y: clientY, allowedFacings: hex.facings,
+      })
+    }
+    // A click outside the highlighted set just cancels the pick, same as GMView.
+  }
+
+  const onFpvRotate = () => {
+    setShowMoveSubmenu(false)
+    setPendingFacing({ kind: 'rotate' })
+  }
+
+  const onFpvSkipMovement = () => {
+    setShowMoveSubmenu(false)
+    // Same "record a 0-hex move" backend path as Cambiar dirección/
+    // Saltar movimiento elsewhere in the app (main.py's /move endpoint
+    // already counts a same-position reposition as this round's move) —
+    // no facing prompt needed, the mech just stays put.
+    moveUnit(unit.id, unit.q, unit.r).catch(() => {})
+  }
+
+  const resolveFpvFacing = (facingDeg?: number) => {
+    if (!pendingFacing) return
+    if (pendingFacing.kind === 'move') {
+      moveUnitWithMp(unit.id, pendingFacing.q, pendingFacing.r, pendingFacing.movementType, facingDeg).catch(() => {})
+    } else if (facingDeg != null) {
+      moveUnit(unit.id, unit.q, unit.r, facingDeg).catch(() => {})
+    }
+    setPendingFacing(null)
   }
 
   // Same gate GMView's own canAct uses (ranged/melee phase, not yet
@@ -599,18 +694,110 @@ export function FirstPersonView({
     return { centerX, centerZ, position, lookAt }
   }, [map, unit.q, unit.r, unit.facing_deg, lookYawDeg])
 
+  // FacingPicker's own flower layout assumes GMView's fixed top-down
+  // camera (screen-right = facing_deg 0, clockwise from there — see its
+  // own top comment) — under this cockpit's rotatable camera, "straight
+  // ahead" can be any of the 6 directions depending on facing_deg AND
+  // however far the player has dragged their look (real user report).
+  // This offset puts whatever the player is CURRENTLY looking at
+  // (unit.facing_deg + lookYawDeg) at screen-up (270° in that same
+  // convention) instead of wherever it would otherwise fall.
+  const facingPickerRotationOffset = 270 - (unit.facing_deg + lookYawDeg)
+
+  // Boot sequence (real user request) — the old plain "cargando vista…"
+  // text left an awkward moment where the HUD (frame/name/phases, none
+  // of which depend on the map) was already fully drawn while the 3D
+  // scene was still blank underneath it — and just gating on map+camera
+  // being fetched wasn't enough either: the REST fetch resolves almost
+  // instantly, but the sky photo, mech GLTFs and terrain decor it then
+  // triggers loading (SkyBackground/Mech3D/TerrainDecor) can still take
+  // a couple of real seconds, which the player would see loading in live
+  // underneath the map. useProgress (drei) tracks every loader that goes
+  // through THREE.DefaultLoadingManager — GLTFLoader and TextureLoader
+  // both do, by default, so this covers the sky texture and every mech/
+  // terrain model without each of those components needing its own
+  // "I'm ready" signal. A TV-static overlay covers the whole wait, then
+  // a brief "power on" flash before revealing the complete, ALREADY-
+  // fully-loaded view (HUD and scene together) in one go — the player
+  // should never watch the map load in live underneath the static.
+  const BOOT_MIN_MS = 500
+  const LOAD_GRACE_MS = 350
+  const [booted, setBooted] = useState(false)
+  const [poweringOn, setPoweringOn] = useState(false)
+  const [sceneSettled, setSceneSettled] = useState(false)
+  const { active: assetsLoading } = useProgress()
+  const bootStartRef = useRef(Date.now())
+  const assetsStartedRef = useRef(false)
+  const readyRef = useRef(false)
+
+  useEffect(() => {
+    if (assetsLoading) assetsStartedRef.current = true
+  }, [assetsLoading])
+
+  // Nothing observed loading yet could mean either "hasn't kicked off
+  // its fetch this render" or "everything's already cached from an
+  // earlier view" (useGLTF.preload calls elsewhere, or a second look at
+  // the same map) — LOAD_GRACE_MS tells those two apart without an
+  // indefinite wait: if a loader hasn't started by then, there's
+  // genuinely nothing to load.
+  useEffect(() => {
+    if (sceneSettled || !map || !camera) return
+    if (assetsLoading) return
+    if (!assetsStartedRef.current) {
+      const t = setTimeout(() => setSceneSettled(true), LOAD_GRACE_MS)
+      return () => clearTimeout(t)
+    }
+    setSceneSettled(true)
+  }, [map, camera, assetsLoading, sceneSettled])
+
+  useEffect(() => {
+    if (!sceneSettled || readyRef.current) return
+    readyRef.current = true
+    const delay = Math.max(0, BOOT_MIN_MS - (Date.now() - bootStartRef.current))
+    let poweroffTimer: ReturnType<typeof setTimeout> | undefined
+    const onTimer = setTimeout(() => {
+      setPoweringOn(true)
+      poweroffTimer = setTimeout(() => {
+        setPoweringOn(false)
+        setBooted(true)
+      }, 420)
+    }, delay)
+    return () => {
+      clearTimeout(onTimer)
+      if (poweroffTimer) clearTimeout(poweroffTimer)
+    }
+  }, [sceneSettled])
+
   const LOOK_YAW_LIMIT_DEG = 90
   const LOOK_DEG_PER_PIXEL = 0.15
-  const lookDragRef = useRef<{ pointerId: number; startX: number; startYaw: number } | null>(null)
+  // Below this many pixels of movement, a press-release is a click, not
+  // a look-drag — real user request (bug): capturing the pointer
+  // unconditionally on pointerdown redirected EVERY subsequent event
+  // (including the release) to this wrapper div, which meant it never
+  // reached the canvas's own r3f event system at all — so a tile's
+  // onPointerUp (HexMap's resolveAt, which is what actually resolves a
+  // reachable-hex click into a move) could never fire; clicking a
+  // highlighted hex silently did nothing. Only capturing once real drag
+  // movement is confirmed lets a genuine click's pointerup hit-test
+  // normally against whatever's under the cursor, same as it would with
+  // no wrapper listening at all — while still capturing (for smooth
+  // continued dragging even if the cursor leaves the canvas) once an
+  // actual look-drag is underway.
+  const LOOK_DRAG_THRESHOLD_PX = 6
+  const lookDragRef = useRef<{ pointerId: number; startX: number; startYaw: number; dragging: boolean } | null>(null)
   const onLookPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* best-effort, see GMView's own mech-drag handler */ }
-    lookDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startYaw: lookYawDeg }
+    lookDragRef.current = { pointerId: e.pointerId, startX: e.clientX, startYaw: lookYawDeg, dragging: false }
   }
   const onLookPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
     const drag = lookDragRef.current
     if (!drag || e.pointerId !== drag.pointerId) return
-    const deltaDeg = (e.clientX - drag.startX) * LOOK_DEG_PER_PIXEL
+    const deltaPx = e.clientX - drag.startX
+    if (!drag.dragging) {
+      if (Math.abs(deltaPx) < LOOK_DRAG_THRESHOLD_PX) return
+      drag.dragging = true
+      try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* best-effort, see GMView's own mech-drag handler */ }
+    }
+    const deltaDeg = deltaPx * LOOK_DEG_PER_PIXEL
     setLookYawDeg(Math.max(-LOOK_YAW_LIMIT_DEG, Math.min(LOOK_YAW_LIMIT_DEG, drag.startYaw + deltaDeg)))
   }
   const onLookPointerUp = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -633,56 +820,82 @@ export function FirstPersonView({
 
   return (
     <div className="first-person-view">
-      {/* Purely decorative "watching this on a screen" pass — faint
-          scanlines + a slight vignette, static (no flicker/scan sweep),
-          low enough opacity to read as texture rather than noise. Sits
-          above everything else (z-index in the CSS) since the ask was
-          for the whole feed to read as viewed through a monitor, HUD
-          included, not just the 3D canvas underneath it. */}
-      {/* Fake tilt-shift/diorama look (real user request) — a cheap
-          CSS-only miniature-photography trick, no postprocessing
-          dependency: blurred bands along the top/bottom edges (masked to
-          a soft gradient instead of a hard-edged blur rectangle), plus a
-          saturation/contrast boost on the canvas itself (see
-          .fp-canvas-wrap) to sell the "scale model" look. */}
-      <div className="fp-tiltshift-band top" />
-      <div className="fp-tiltshift-band bottom" />
-      <div className="fp-crt-overlay" />
-      {hitFlashId > 0 && <div key={hitFlashId} className="fp-hit-flash" />}
-      <HudFrame heat={mech?.heat_current ?? 0} mech={mech} />
-
-      <div className="fp-topbar">
-        <div className="fp-chassis">
-          {mech ? `${mech.chassis}${mech.model ? ` ${mech.model}` : ''}` : `Unidad #${unit.id}`}
+      {!booted && (
+        <div className={`fp-boot${poweringOn ? ' poweron' : ''}`}>
+          <div className="fp-static" />
         </div>
-        <button className="fp-close" onClick={onClose}>×</button>
-      </div>
-
-      {phase === 'initiative' && !rolled && (
-        <div className="fp-turn-alert">¡INICIATIVA YA!</div>
       )}
-      {isMyMoveTurn && (
-        <div className="fp-turn-alert">¡TU TURNO DE MOVERTE!</div>
-      )}
+      {map && camera && (
+        // Mounted (invisible) the moment map/camera are ready rather
+        // than only once `booted` — the whole point is that its GLTF/
+        // texture loads (which useProgress above is watching) actually
+        // START while the static plays, instead of only beginning once
+        // the static already finished. Revealed in one cut, never a
+        // fade — the static's own power-on flash IS the reveal.
+        <div className={`fp-ready${booted ? ' visible' : ''}`}>
+          {/* Purely decorative "watching this on a screen" pass — faint
+              scanlines + a slight vignette, static (no flicker/scan sweep),
+              low enough opacity to read as texture rather than noise. Sits
+              above everything else (z-index in the CSS) since the ask was
+              for the whole feed to read as viewed through a monitor, HUD
+              included, not just the 3D canvas underneath it. */}
+          {/* Fake tilt-shift/diorama look (real user request) — a cheap
+              CSS-only miniature-photography trick, no postprocessing
+              dependency: blurred bands along the top/bottom edges (masked to
+              a soft gradient instead of a hard-edged blur rectangle), plus a
+              saturation/contrast boost on the canvas itself (see
+              .fp-canvas-wrap) to sell the "scale model" look. */}
+          <div className="fp-tiltshift-band top" />
+          <div className="fp-tiltshift-band bottom" />
+          <div className="fp-crt-overlay" />
+          {hitFlashId > 0 && <div key={hitFlashId} className="fp-hit-flash" />}
+          <HudFrame heat={mech?.heat_current ?? 0} mech={mech} />
 
-      <div className="fp-phase-row">
-        {PHASES.map((p) =>
-          p.key === 'iniciativa' && !rolled ? (
-            <button key={p.key} className="fp-phase-pill active clickable" onClick={rollMyInitiative}>
-              {p.label}
-            </button>
-          ) : (
-            <span key={p.key} className={`fp-phase-pill ${activePhases.has(p.key) ? 'active' : ''}`}>
-              {p.label}
-            </span>
-          ),
-        )}
-      </div>
+          <div className="fp-topbar">
+            <div className="fp-chassis">
+              {mech ? `${mech.chassis}${mech.model ? ` ${mech.model}` : ''}` : `Unidad #${unit.id}`}
+            </div>
+            <button className="fp-close" onClick={onClose}>×</button>
+          </div>
 
-      {!map || !camera ? (
-        <div className="fp-loading">cargando vista…</div>
-      ) : (
-        <>
+          {phase === 'initiative' && !rolled && (
+            <div className="fp-turn-alert">¡INICIATIVA YA!</div>
+          )}
+          {isMyMoveTurn && (
+            <div className="fp-turn-alert">¡TU TURNO DE MOVERTE!</div>
+          )}
+
+          <div className="fp-phase-row">
+            {PHASES.map((p) =>
+              p.key === 'iniciativa' && !rolled ? (
+                <button key={p.key} className="fp-phase-pill active clickable" onClick={rollMyInitiative}>
+                  {p.label}
+                </button>
+              ) : p.key === 'movimiento' && isMyMoveTurn ? (
+                <button
+                  key={p.key} className="fp-phase-pill active clickable"
+                  onClick={() => setShowMoveSubmenu((v) => !v)}
+                >
+                  {p.label}
+                </button>
+              ) : (
+                <span key={p.key} className={`fp-phase-pill ${activePhases.has(p.key) ? 'active' : ''}`}>
+                  {p.label}
+                </span>
+              ),
+            )}
+          </div>
+
+          {showMoveSubmenu && (
+            <div className="fp-move-submenu">
+              <button onClick={() => startFpvMovement('walk')}>Caminar</button>
+              <button onClick={() => startFpvMovement('run')}>Correr</button>
+              <button disabled={!mech?.jump_mp} onClick={() => startFpvMovement('jump')}>Saltar</button>
+              <button onClick={onFpvRotate}>Cambiar dirección</button>
+              <button onClick={onFpvSkipMovement}>Saltar movimiento</button>
+            </div>
+          )}
+
           <div
             className="fp-canvas-wrap"
             onPointerDown={onLookPointerDown}
@@ -714,6 +927,8 @@ export function FirstPersonView({
                   units={sceneUnits}
                   activeAttack={activeAttackVfx}
                   onAttackEffectDone={onAttackEffectDone}
+                  moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
+                  onTileClick={onFpvTileClick}
                 />
               </Suspense>
               <EnemyMarkersController
@@ -751,7 +966,24 @@ export function FirstPersonView({
               onClose={() => setSelectedTargetId(null)}
             />
           )}
-        </>
+          {pendingFacing?.kind === 'move' && (
+            <FacingPicker
+              x={pendingFacing.x} y={pendingFacing.y}
+              allowedFacings={pendingFacing.allowedFacings}
+              rotationOffsetDeg={facingPickerRotationOffset}
+              onPick={resolveFpvFacing}
+              onDismiss={() => setPendingFacing(null)}
+            />
+          )}
+          {pendingFacing?.kind === 'rotate' && (
+            <FacingPicker
+              x={window.innerWidth / 2} y={window.innerHeight / 2}
+              rotationOffsetDeg={facingPickerRotationOffset}
+              onPick={resolveFpvFacing}
+              onDismiss={() => setPendingFacing(null)}
+            />
+          )}
+        </div>
       )}
     </div>
   )

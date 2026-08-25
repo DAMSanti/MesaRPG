@@ -266,11 +266,17 @@ const Tile = memo(function Tile({
           so dice still land on the table correctly either way. */}
       <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} />
       {losHighlighted && <LosDebugOverlay height={height} color="#39ff8f" />}
-      {dragHighlighted && <LosDebugOverlay height={height} color="#f5c542" y={height + 0.06} />}
-      {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.08} />}
-      {activeMoverHighlighted && <LosDebugOverlay height={height} color="#ffb020" opacity={0.5} y={height + 0.1} />}
-      {moveHighlighted && <LosDebugOverlay height={height} color="#4a9eff" opacity={0.4} y={height + 0.12} />}
-      {targetableHighlighted && <LosDebugOverlay height={height} color="#e35d5d" opacity={0.45} y={height + 0.14} />}
+      {dragHighlighted && <LosDebugOverlay height={height} color="#f5c542" y={height + 0.03} />}
+      {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.04} />}
+      {activeMoverHighlighted && <LosDebugOverlay height={height} color="#ffb020" opacity={0.5} y={height + 0.05} />}
+      {/* Real user request: from FirstPersonView's near-ground eye-level
+          camera, the old +0.12 gap read as visibly floating above the
+          hex — a small perspective effect a top-down camera never
+          revealed. Halving the whole stack (still staggered, just
+          tighter) keeps every highlight type distinguishable without
+          the floating look, in both this and GMView's own top-down use. */}
+      {moveHighlighted && <LosDebugOverlay height={height} color="#4a9eff" opacity={0.4} y={height + 0.06} />}
+      {targetableHighlighted && <LosDebugOverlay height={height} color="#e35d5d" opacity={0.45} y={height + 0.07} />}
     </group>
   )
 }, tilePropsEqual)
