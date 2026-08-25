@@ -44,6 +44,45 @@ export interface AttackResult {
   mech_destroyed: boolean
 }
 
+// A physical/melee attack just resolved (main.py's /api/units/{id}/melee
+// — api.ts's MeleeAttackResult is the same shape minus the `type` tag).
+// Kept as its own message type rather than reusing 'attack_result' since
+// the two carry genuinely different fields (hit_results/self_damage_
+// results/fall vs a single weapon shot's location/critical).
+export interface MeleeResult {
+  type: 'melee_result'
+  attack_type: 'punch' | 'kick' | 'charge' | 'dfa'
+  attacker_unit_id: number
+  target_unit_id: number
+  attacker_mech_id: number
+  target_mech_id: number
+  target_number: number
+  roll: number
+  hit: boolean
+  damage: number | null
+  mech_destroyed: boolean
+  fall: Record<string, unknown> | null
+  self_fall: Record<string, unknown> | null
+}
+
+// turns.py's resolve_heat_phase result — broadcast once per round the
+// instant GMView calls resolveHeatPhase (see rounds.ts's currentPhase
+// reaching 'other' with round.heat_resolved still false). Drives the
+// thermometer's "watch it drop" animation and the shutdown/ammo-
+// explosion notifications across every connected view.
+export interface HeatPhaseResolved {
+  type: 'heat_phase_resolved'
+  campaign_id: number
+  results: {
+    mech_id: number
+    heat_current: number
+    shutdown: boolean | null
+    restarted: boolean | null
+    ammo_explosion: { damage: number } | null
+    pilot_wound: number | null
+  }[]
+}
+
 export interface ActiveMapChanged {
   type: 'active_map_changed'
   map_id: number
@@ -101,6 +140,8 @@ export function useTableSocket(campaignId: number | null) {
   const [initiativeRollRequest, setInitiativeRollRequest] = useState<InitiativeRollRequested | null>(null)
   const [movementStarted, setMovementStarted] = useState<MovementStarted | null>(null)
   const [unitWalked, setUnitWalked] = useState<UnitWalked | null>(null)
+  const [lastMelee, setLastMelee] = useState<MeleeResult | null>(null)
+  const [heatPhaseResult, setHeatPhaseResult] = useState<HeatPhaseResolved | null>(null)
   // Bumped on every "roster_updated" broadcast (pilot/mech created,
   // reviewed, resubmitted, edited or deleted) — no payload, just a
   // signal. Consumers put this in a useEffect's deps to refetch their
@@ -152,6 +193,10 @@ export function useTableSocket(campaignId: number | null) {
         setMovementStarted(message as MovementStarted)
       } else if (message.type === 'unit_walked') {
         setUnitWalked(message as UnitWalked)
+      } else if (message.type === 'melee_result') {
+        setLastMelee(message as MeleeResult)
+      } else if (message.type === 'heat_phase_resolved') {
+        setHeatPhaseResult(message as HeatPhaseResolved)
       } else if (message.type === 'roster_updated') {
         setRosterVersion((v) => v + 1)
       }
@@ -179,6 +224,6 @@ export function useTableSocket(campaignId: number | null) {
 
   return {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState,
-    initiativeRollRequest, movementStarted, unitWalked, rosterVersion, roll,
+    initiativeRollRequest, movementStarted, unitWalked, lastMelee, heatPhaseResult, rosterVersion, roll,
   }
 }

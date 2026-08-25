@@ -230,6 +230,22 @@ def update_pilot(
         return _get(conn, pilot_id)
 
 
+def add_pilot_hits(pilot_id: int, n: int) -> dict | None:
+    """Programmatic wound-track increment — ammo explosions (2 wounds,
+    unconditional) and life-support heat damage (1-2 wounds/Heat Phase)
+    both call this instead of the GM/player clicking wound boxes by hand
+    on the sheet, which is what update_pilot's own `hits` param is for.
+    Clamped at 6 (the sheet's own fatal box — CONSCIOUSNESS_TARGETS has 5
+    entries, WOUND_BOX_COUNT = 6, see MechRecordSheet.tsx), never lower
+    than the pilot's current hits (n is always additive here, no caller
+    needs to reduce it programmatically)."""
+    pilot = get_pilot(pilot_id)
+    if pilot is None:
+        return None
+    new_hits = min(6, pilot["hits"] + n)
+    return update_pilot(pilot_id, hits=new_hits)
+
+
 def set_pilot_die_style(pilot_id: int, style: str | None) -> dict | None:
     """A dedicated setter (not folded into update_pilot's generic
     `fields` dict) because that dict treats any None it receives as

@@ -65,7 +65,7 @@ function usePilotId() {
 export function PlayerView() {
   const campaignId = useCampaignId({ allowPicker: false })
   const { pilotId, choose } = usePilotId()
-  const { lastAttack, activeMapId, roundState, visibility, rosterVersion, unitWalked } = useTableSocket(campaignId)
+  const { lastAttack, activeMapId, roundState, visibility, rosterVersion, unitWalked, heatPhaseResult } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
 
   const [campaign, setCampaign] = useState<Campaign | null>(null)
@@ -205,7 +205,7 @@ export function PlayerView() {
     refetch()
     getWeaponCatalog().then(setWeaponCatalog).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaignId, mapId, lastAttack, visibility, rosterVersion])
+  }, [campaignId, mapId, lastAttack, visibility, rosterVersion, heatPhaseResult])
 
   const importJoinMech = (data: MechImportData) => {
     setJoinChassis(data.chassis)
@@ -751,6 +751,7 @@ export function PlayerView() {
           unit={myUnit}
           mech={myMech ?? null}
           units={units}
+          mechs={mechs}
           roundState={roundState}
           visibility={visibility}
           lastAttack={lastAttack}

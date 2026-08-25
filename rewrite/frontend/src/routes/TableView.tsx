@@ -11,8 +11,8 @@ import { useTableSocket } from '../ws'
 import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import {
-  getUnitVisibleHexes, listCampaigns, moveUnitWithMp, reportInitiative,
-  type MovementType, type ReachableHex, type Unit,
+  getUnitVisibleHexes, listCampaigns, listMechs, moveUnitWithMp, reportInitiative,
+  type Mech, type MovementType, type ReachableHex, type Unit,
 } from '../api'
 import { useMapState } from '../useMapState'
 import { activeAttackPilotIds, activeMoverPilotId, currentPhase, formatRolls, PHASE_LABELS, pilotsNeedingInitiative } from '../rounds'
@@ -151,7 +151,7 @@ function TableViewBattletech() {
   const campaignId = useCampaignId()
   const {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState, initiativeRollRequest,
-    movementStarted,
+    movementStarted, heatPhaseResult, rosterVersion,
   } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   // NOT lastRevealedUnitId ?? visibility — a `??` chain here would make
@@ -165,6 +165,33 @@ function TableViewBattletech() {
   const { map, units } = useMapState(mapId, visibility ?? lastAttack)
   const [replay, setReplay] = useState<string | null>(null)
   const losDebug = useUnitLosDebug(units)
+
+  // Mechs aren't part of useMapState (units alone drive the board's own
+  // positions/facings) — fetched separately here purely to read
+  // heat_current for SteamPuffs (real user request: "los mechs...
+  // desprenderán vapor en todas las vistas de mapa"). Refetched on the
+  // same triggers units already use, plus rosterVersion (a mech's
+  // equipment/heat_sinks can change outside a move/attack).
+  const [mechs, setMechs] = useState<Mech[]>([])
+  useEffect(() => {
+    if (campaignId == null) return
+    listMechs(campaignId).then(setMechs).catch(() => {})
+  }, [campaignId, visibility, lastAttack, rosterVersion])
+  // heat_phase_resolved carries the new heat_current directly — patched
+  // in immediately rather than waiting on a full mechs refetch, so the
+  // steam reacts the instant the Heat Phase resolves.
+  useEffect(() => {
+    if (!heatPhaseResult) return
+    setMechs((prev) => prev.map((m) => {
+      const r = heatPhaseResult.results.find((res) => res.mech_id === m.id)
+      return r ? { ...m, heat_current: r.heat_current } : m
+    }))
+  }, [heatPhaseResult])
+  const heatByUnitId = new Map(
+    units.filter((u) => u.mech_id != null).map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
+  )
+  const proneUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
+  const shutdownUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
 
   useEffect(() => {
     if (lastAttack?.mech_destroyed) {
@@ -351,6 +378,9 @@ function TableViewBattletech() {
                 activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}
                 moveHighlightHexes={activeMovement ? new Set(activeMovement.hexes.keys()) : undefined}
                 walkPaths={walkPaths}
+                heatByUnitId={heatByUnitId}
+                proneUnitIds={proneUnitIds}
+                shutdownUnitIds={shutdownUnitIds}
                 activeAttack={activeAttackVfx}
                 onAttackEffectDone={onAttackEffectDone}
                 onTileClick={onTableTileClick}

@@ -327,6 +327,7 @@ def visible_enemies_from_unit(unit_id: int) -> list[dict] | None:
                 "q": target["q"],
                 "r": target["r"],
                 "distance": dist(observer, target_cell),
+                "heat_current": mech["heat_current"] if mech else 0,
             }
         )
     return visible

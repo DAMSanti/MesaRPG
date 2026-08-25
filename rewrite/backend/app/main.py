@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
 from . import campaigns, db, dice_styles, equipment, events, mapgen, maps, mech_templates, rolls, systems, table_session, units
-from .systems.battletech import combat, mechs, movement, pilots, turns, weapons
+from .systems.battletech import combat, mechs, melee, movement, pilots, psr, turns, weapons
 from .systems.dnd5e import characters as dnd_characters
 from .systems.dnd5e import combat as dnd_combat
 from .systems.dnd5e import turns as dnd_turns
@@ -877,6 +877,8 @@ async def move_unit_with_mp(unit_id: int, body: MoveWithMpIn) -> dict:
         )
     except (movement.UnknownMovementType, movement.UnreachableDestination) as exc:
         raise HTTPException(422, str(exc)) from exc
+    except movement.MechIncapacitated as exc:
+        raise HTTPException(409, str(exc)) from exc
     # Real user report: a client that didn't itself pick this destination
     # (e.g. the shared table watching a move requested from PlayerView/
     # FirstPersonView) had no route data at all, so HexMap animated a
@@ -985,6 +987,53 @@ async def attack(campaign_id: int, body: AttackIn) -> dict:
     return result
 
 
+class MeleeAttackIn(BaseModel):
+    target_unit_id: int
+    attack_type: str  # "punch" | "kick" | "charge" | "dfa" — melee.MELEE_ATTACK_TYPES
+    arm: str | None = None  # "left" | "right" — punch only
+
+
+@app.post("/api/units/{unit_id}/melee")
+async def melee_attack(unit_id: int, body: MeleeAttackIn) -> dict:
+    """Physical attacks (punch/kick/charge/DFA — see melee.py's module
+    docstring for exactly which of the rulebook's seven physical attacks
+    this covers and which are deliberately out of scope). Same broadcast
+    shape as /attack (attack_result + round_updated + visibility), since
+    the frontend's existing attack-result handling already knows how to
+    show a hit/miss/damage summary regardless of which endpoint produced
+    it."""
+    attacker = units.get_unit(unit_id)
+    if not attacker:
+        raise HTTPException(404, f"Unit {unit_id} not found")
+    campaign = _require_campaign(attacker["campaign_id"])
+    try:
+        result = melee.resolve_melee_attack(attacker["campaign_id"], unit_id, body.target_unit_id, body.attack_type, body.arm)
+    except melee.UnknownMeleeAttackType as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except (melee.NotAdjacent, melee.InvalidMeleeAttack, combat.NoLineOfSight) as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except melee.MechIncapacitated as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await manager.broadcast(attacker["campaign_id"], {"type": "melee_result", **result})
+    if campaign["active_map_id"] is not None:
+        await _broadcast_visibility(attacker["campaign_id"], campaign["active_map_id"])
+    await manager.broadcast(attacker["campaign_id"], {"type": "round_updated", **turns.get_round(attacker["campaign_id"])})
+    return result
+
+
+@app.post("/api/units/{unit_id}/stand-up")
+async def stand_up_unit(unit_id: int) -> dict:
+    """A prone mech's only "movement" option — a Piloting Skill Roll to
+    get back up (psr.py's stand_up), separate from normal move-with-mp
+    since it doesn't spend hexes/facing the same way."""
+    unit = units.get_unit(unit_id)
+    if not unit or unit["mech_id"] is None:
+        raise HTTPException(404, f"Unit {unit_id} not found")
+    result = psr.stand_up(unit["mech_id"])
+    await manager.broadcast(unit["campaign_id"], {"type": "round_updated", **turns.get_round(unit["campaign_id"])})
+    return result
+
+
 @app.post("/api/campaigns/{campaign_id}/undo")
 async def undo(campaign_id: int) -> dict:
     campaign = _require_campaign(campaign_id)
@@ -1026,6 +1075,20 @@ async def start_round(campaign_id: int) -> dict:
     _require_campaign(campaign_id)
     result = turns.start_round(campaign_id)
     await manager.broadcast(campaign_id, {"type": "round_started", **result})
+    return result
+
+
+@app.post("/api/campaigns/{campaign_id}/round/resolve-heat")
+async def resolve_heat(campaign_id: int) -> dict:
+    """The Heat Scale's shutdown/restart/ammo-explosion/life-support
+    checks (turns.py's resolve_heat_phase) — idempotent per round, so the
+    frontend calls this itself the instant it sees the round phase has
+    nothing left to act on (no GM button needed), and a second call from
+    another open tab is a harmless no-op."""
+    _require_campaign(campaign_id)
+    result = turns.resolve_heat_phase(campaign_id)
+    await manager.broadcast(campaign_id, {"type": "heat_phase_resolved", **result})
+    await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
     return result
 
 

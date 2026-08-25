@@ -678,7 +678,7 @@ def test_round_endpoints_start_act_and_broadcast():
         assert initial == {
             "campaign_id": camp["id"], "round_number": 0, "mode": "team", "rolls": [], "acted_pilot_ids": [],
             "movement_order": [], "moved_pilot_ids": [], "moves": [],
-            "ranged_target_pilot_ids": [], "melee_target_pilot_ids": [],
+            "ranged_target_pilot_ids": [], "melee_target_pilot_ids": [], "heat_resolved": False,
         }
 
         with c.websocket_connect(f"/ws/{camp['id']}") as ws:
@@ -991,7 +991,10 @@ def test_visible_enemies_endpoint_reports_a_detected_enemy():
         res = c.get(f"/api/units/{observer['id']}/visible-enemies")
         assert res.status_code == 200
         assert res.json() == [
-            {"unit_id": target["id"], "mech_id": enemy_mech["id"], "chassis": "Atlas", "model": None, "q": 1, "r": 0, "distance": 1}
+            {
+                "unit_id": target["id"], "mech_id": enemy_mech["id"], "chassis": "Atlas", "model": None,
+                "q": 1, "r": 0, "distance": 1, "heat_current": 0,
+            }
         ]
 
 

@@ -1,0 +1,53 @@
+.melee-type-row {
+  display: flex;
+}
+
+.melee-type-option {
+  flex: 1;
+  text-align: left;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.melee-type-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.melee-type-option.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.melee-arm-picker {
+  display: flex;
+  gap: 8px;
+}
+
+.melee-arm-option {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.melee-arm-option:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.melee-arm-option.selected {
+  border-color: var(--accent);
+  color: var(--accent);
+}

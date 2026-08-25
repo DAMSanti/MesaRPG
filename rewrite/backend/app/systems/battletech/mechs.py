@@ -224,6 +224,59 @@ def update_location(
         return _get(conn, mech_id)
 
 
+def apply_damage(conn, mech_id: int, location: str, rear: bool, amount: int) -> dict:
+    """Armor-then-structure damage application, shared by combat.py's
+    resolve_attack, melee.py's resolve_melee_attack, and criticals.py's
+    ammo-explosion handling (all three need the exact same "spill past
+    armor into structure" math) — moved here from combat.py so none of
+    them has to import another to reach it (criticals.py needs this same
+    function for ammo explosions, and combat.py/melee.py need to trigger
+    criticals.py's critical-hit roll right after calling this; keeping
+    it in combat.py would make that a circular import either direction).
+    Takes an open `conn` (not its own connection) since every caller
+    already has one open for the rest of that same attack's bookkeeping.
+    """
+    row = conn.execute(
+        """
+        SELECT armor_current, armor_rear_current, structure_current
+        FROM mech_locations WHERE mech_id = ? AND location = ?
+        """,
+        (mech_id, location),
+    ).fetchone()
+    before = dict(row)
+
+    use_rear = rear and before["armor_rear_current"] is not None
+    armor_field = "armor_rear_current" if use_rear else "armor_current"
+    armor_before = before[armor_field]
+
+    absorbed = min(amount, armor_before)
+    armor_after = armor_before - absorbed
+    remaining = amount - absorbed
+    structure_after = max(0, before["structure_current"] - remaining)
+
+    conn.execute(
+        f"UPDATE mech_locations SET {armor_field} = ?, structure_current = ? "
+        "WHERE mech_id = ? AND location = ?",
+        (armor_after, structure_after, mech_id, location),
+    )
+
+    return {
+        "mech_id": mech_id,
+        "location": location,
+        "armor_field": armor_field,
+        "armor_before": armor_before,
+        "armor_after": armor_after,
+        "structure_before": before["structure_current"],
+        "structure_after": structure_after,
+        "destroyed": structure_after == 0,
+        # True once this hit spilled past armor into internal structure —
+        # criticals.py's callers roll for a critical hit exactly when this
+        # is true (or on a natural 2 hit-location roll, tracked separately
+        # by the caller — see combat.py's resolve_attack).
+        "penetrated": remaining > 0,
+    }
+
+
 def set_critical_hit(mech_id: int, location: str, slot_index: int, hit: bool) -> dict | None:
     """Mark/unmark a single critical slot as destroyed — the real engine
     state behind the sheet's Critical Hit Table, not just the static
@@ -233,6 +286,67 @@ def set_critical_hit(mech_id: int, location: str, slot_index: int, hit: bool) ->
             "UPDATE mech_criticals SET hit = ? WHERE mech_id = ? AND location = ? AND slot_index = ?",
             (1 if hit else 0, mech_id, location, slot_index),
         )
+        return _get(conn, mech_id)
+
+
+def set_shutdown(mech_id: int, value: bool) -> dict | None:
+    """Heat Scale shutdown/restart (systems/battletech/turns.py's
+    resolve_heat_phase) — an is_shutdown mech can't move/attack (see
+    movement.py's execute_move / combat.py's resolve_attack / melee.py's
+    resolve_melee_attack, which all check this)."""
+    with db.connect() as conn:
+        conn.execute("UPDATE mechs SET is_shutdown = ? WHERE id = ?", (1 if value else 0, mech_id))
+        return _get(conn, mech_id)
+
+
+def set_prone(mech_id: int, value: bool) -> dict | None:
+    """A fallen mech (psr.py's apply_fall) or one that's stood back up
+    (psr.py's stand_up) — a prone mech can't move/attack either, same
+    gate as is_shutdown, until it successfully stands."""
+    with db.connect() as conn:
+        conn.execute("UPDATE mechs SET is_prone = ? WHERE id = ?", (1 if value else 0, mech_id))
+        return _get(conn, mech_id)
+
+
+def add_gyro_hit(mech_id: int) -> dict | None:
+    with db.connect() as conn:
+        conn.execute("UPDATE mechs SET gyro_hits = gyro_hits + 1 WHERE id = ?", (mech_id,))
+        return _get(conn, mech_id)
+
+
+def add_engine_hit(mech_id: int) -> dict | None:
+    with db.connect() as conn:
+        conn.execute("UPDATE mechs SET engine_hits = engine_hits + 1 WHERE id = ?", (mech_id,))
+        return _get(conn, mech_id)
+
+
+def add_sensor_hit(mech_id: int) -> dict | None:
+    with db.connect() as conn:
+        conn.execute("UPDATE mechs SET sensor_hits = sensor_hits + 1 WHERE id = ?", (mech_id,))
+        return _get(conn, mech_id)
+
+
+def set_life_support_hit(mech_id: int) -> dict | None:
+    """Unlike the counters above, life support only has one real critical
+    slot's worth of effect (rulebook: "any critical hit knocks out this
+    system permanently... the other critical slot can still take damage,
+    but the hit has no additional effect") — a flag, not a counter."""
+    with db.connect() as conn:
+        conn.execute("UPDATE mechs SET life_support_hit = 1 WHERE id = ?", (mech_id,))
+        return _get(conn, mech_id)
+
+
+def remove_heat_sink(mech_id: int) -> dict | None:
+    """A destroyed heat sink critical (criticals.py's apply_critical_
+    effects) permanently reduces dissipation by 1. Simplification: this
+    directly decrements the stored heat_sinks count rather than tracking
+    "N destroyed" separately — if the GM edits this mech's equipment
+    loadout afterward, _recompute_heat_sinks_from_equipment could reset
+    the count back to full, silently undoing the critical. Accepted as a
+    rare edge case (editing loadout mid-combat isn't a normal flow) not
+    worth a second counter for."""
+    with db.connect() as conn:
+        conn.execute("UPDATE mechs SET heat_sinks = MAX(0, heat_sinks - 1) WHERE id = ?", (mech_id,))
         return _get(conn, mech_id)
 
 
@@ -517,6 +631,7 @@ def _get(conn, mech_id: int) -> dict | None:
         """
         SELECT id, campaign_id, pilot_id, chassis, model, tonnage,
                walk_mp, run_mp, jump_mp, heat_sinks, heat_current,
+               is_shutdown, is_prone, gyro_hits, engine_hits, sensor_hits, life_support_hit,
                status, owner_token, review_note, created_at
         FROM mechs WHERE id = ?
         """,
@@ -555,6 +670,9 @@ def _get(conn, mech_id: int) -> dict | None:
         )
 
     mech = dict(mech_row)
+    mech["is_shutdown"] = bool(mech["is_shutdown"])
+    mech["is_prone"] = bool(mech["is_prone"])
+    mech["life_support_hit"] = bool(mech["life_support_hit"])
     mech["locations"] = [dict(r) for r in location_rows]
     mech["weapons"] = [dict(r) for r in weapon_rows]
     mech["equipment"] = [dict(r) for r in equipment_rows]

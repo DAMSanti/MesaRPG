@@ -44,7 +44,7 @@ import json
 import random
 
 from ... import campaigns, db, events, units
-from . import mechs, pilots, weapons
+from . import criticals, mechs, pilots, weapons
 
 # NPCs are non-aggressive by definition (ROADMAP.md S2 follow-up) — they
 # never participate in combat initiative, in either mode.
@@ -125,9 +125,9 @@ def start_round(campaign_id: int) -> dict:
         prev_round_number = prev_round_row["round_number"] if prev_round_row else 0
         conn.execute(
             """
-            INSERT INTO bt_rounds (campaign_id, round_number)
-            VALUES (?, 1)
-            ON CONFLICT(campaign_id) DO UPDATE SET round_number = round_number + 1
+            INSERT INTO bt_rounds (campaign_id, round_number, heat_resolved)
+            VALUES (?, 1, 0)
+            ON CONFLICT(campaign_id) DO UPDATE SET round_number = round_number + 1, heat_resolved = 0
             """,
             (campaign_id,),
         )
@@ -341,9 +341,117 @@ def _pilots_with_melee_targets(map_id: int | None) -> list[int]:
     return _combat_pilots_with_targets(map_id, lambda mech, enemies: any(e["distance"] <= 1 for e in enemies))
 
 
+# ---- Heat Phase (CAT3500D rulebook pp. 37-42 — verified directly against
+# the PDF this session) ----------------------------------------------------
+
+# Heat -> shutdown Avoid Target Number (2D6, meet or beat to avoid),
+# checked high to low. None at 30 means unavoidable — not "no check".
+_SHUTDOWN_AVOID_TN = [(30, None), (26, 10), (22, 8), (18, 6), (14, 4)]
+
+# Heat -> ammo-explosion Avoid Target Number, same checked-high-to-low shape.
+_AMMO_EXPLOSION_AVOID_TN = [(28, 8), (23, 6), (19, 4)]
+
+
+def _highest_bracket(heat: int, brackets: list[tuple[int, int | None]]):
+    for min_heat, avoid_tn in brackets:
+        if heat >= min_heat:
+            return True, avoid_tn
+    return False, None
+
+
+def _pick_ammo_bin(mech: dict) -> dict | None:
+    """Most destructive ammo per shot explodes first (rulebook); ties
+    broken by most shots remaining, per module docstring's own citation —
+    a further tie is broken by mech_weapons id order (deterministic, not
+    truly random, an accepted simplification for an edge case this
+    unlikely)."""
+    candidates = [w for w in mech["weapons"] if w["ammo_remaining"]]
+    if not candidates:
+        return None
+
+    def damage_value(w):
+        return weapons.get_weapon(w["weapon_name"])["damage"]
+
+    return max(candidates, key=lambda w: (damage_value(w), w["ammo_remaining"]))
+
+
+def resolve_heat_phase(campaign_id: int) -> dict:
+    """The Heat Scale's shutdown/restart, ammo-explosion, and life-
+    support pilot-damage checks — idempotent per round via bt_rounds.
+    heat_resolved (a second call for the same round is a safe no-op, so
+    the frontend can call this itself the instant it observes the round
+    has nothing left to act on, rather than needing a GM-clicked button).
+
+    Dissipation itself already happened at this round's own start_round
+    (this app's "closest mapping to the real Heat Phase" — see module
+    docstring); this resolves the CONSEQUENCES of whatever heat has
+    already built up this round, same order the rulebook itself
+    specifies (dissipate, then check thresholds against the result).
+
+    Movement/to-hit penalties from heat (Heat Scale's other columns) are
+    already live via movement.py's _heat_mp_penalty/combat.py's
+    heat_penalty, reading heat_current directly — nothing to do here for
+    those."""
+    with db.connect() as conn:
+        round_row = conn.execute("SELECT heat_resolved FROM bt_rounds WHERE campaign_id = ?", (campaign_id,)).fetchone()
+        if round_row and round_row["heat_resolved"]:
+            return {"campaign_id": campaign_id, "results": [], "already_resolved": True}
+        conn.execute("UPDATE bt_rounds SET heat_resolved = 1 WHERE campaign_id = ?", (campaign_id,))
+
+    results = []
+    for mech in mechs.list_mechs(campaign_id):
+        heat = mech["heat_current"]
+        mech_result = {
+            "mech_id": mech["id"], "heat_current": heat,
+            "shutdown": None, "restarted": None, "ammo_explosion": None, "pilot_wound": None,
+        }
+
+        shutdown_triggered, shutdown_avoid_tn = _highest_bracket(heat, _SHUTDOWN_AVOID_TN)
+        if mech["is_shutdown"]:
+            if heat < 14:
+                mechs.set_shutdown(mech["id"], False)
+                mech_result["restarted"] = True
+            elif heat < 30:
+                roll = _roll_2d6()
+                restarted = shutdown_avoid_tn is not None and roll >= shutdown_avoid_tn
+                if restarted:
+                    mechs.set_shutdown(mech["id"], False)
+                mech_result["restarted"] = restarted
+            # heat >= 30: "heat must be below 30 before a restart can
+            # occur" — stays shut down, no roll.
+        elif shutdown_triggered:
+            if shutdown_avoid_tn is None:
+                mechs.set_shutdown(mech["id"], True)
+                mech_result["shutdown"] = True
+            else:
+                roll = _roll_2d6()
+                avoided = roll >= shutdown_avoid_tn
+                mech_result["shutdown"] = not avoided
+                if not avoided:
+                    mechs.set_shutdown(mech["id"], True)
+
+        _, ammo_avoid_tn = _highest_bracket(heat, _AMMO_EXPLOSION_AVOID_TN)
+        if ammo_avoid_tn is not None:
+            roll = _roll_2d6()
+            if roll < ammo_avoid_tn:
+                ammo_bin = _pick_ammo_bin(mech)
+                if ammo_bin:
+                    mech_result["ammo_explosion"] = criticals.explode_ammo_by_weapon(mech["id"], ammo_bin["id"])
+
+        if mech["life_support_hit"] and mech["pilot_id"] is not None:
+            wound_count = 2 if heat >= 26 else 1 if heat >= 15 else 0
+            if wound_count:
+                pilots.add_pilot_hits(mech["pilot_id"], wound_count)
+                mech_result["pilot_wound"] = wound_count
+
+        results.append(mech_result)
+
+    return {"campaign_id": campaign_id, "results": results}
+
+
 def _get(conn, campaign_id: int, mode: str) -> dict:
     round_row = conn.execute(
-        "SELECT round_number FROM bt_rounds WHERE campaign_id = ?",
+        "SELECT round_number, heat_resolved FROM bt_rounds WHERE campaign_id = ?",
         (campaign_id,),
     ).fetchone()
 
@@ -418,4 +526,11 @@ def _get(conn, campaign_id: int, mode: str) -> dict:
         # currentPhase for how these two decide 'ranged'/'melee'/'other'.
         "ranged_target_pilot_ids": ranged_target_pilot_ids,
         "melee_target_pilot_ids": melee_target_pilot_ids,
+        # Whether resolve_heat_phase has already run for this round — the
+        # frontend (GMView) calls that endpoint itself the instant it sees
+        # ranged/melee both empty (rounds.ts's currentPhase reaching
+        # 'other') and this is False, so a real shutdown/ammo-explosion/
+        # heat-damage pass actually happens instead of the phase being
+        # purely cosmetic. False for a round that hasn't started at all.
+        "heat_resolved": bool(round_row["heat_resolved"]) if round_row else False,
     }

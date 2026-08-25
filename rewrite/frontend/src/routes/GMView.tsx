@@ -16,6 +16,7 @@ import { UnitContextMenu } from '../components/UnitContextMenu'
 import { FacingPicker } from '../components/FacingPicker'
 import { DropdownMenu } from '../components/DropdownMenu'
 import { WeaponVolleyPanel } from '../components/WeaponVolleyPanel'
+import { MeleeAttackPanel } from '../components/MeleeAttackPanel'
 import { Modal } from '../components/Modal'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Tooltip } from '../components/Tooltip'
@@ -56,13 +57,16 @@ import {
   markRoundActed,
   moveUnit,
   moveUnitWithMp,
+  resolveHeatPhase,
   reviewMech,
   requestInitiative,
   requestMovement,
   reviewPilot,
   setGmDieStyle,
   setInitiativeMode,
+  standUp,
   startRound,
+  submitMeleeAttack,
   undoLastAction,
   updateMech,
   updatePilot,
@@ -73,6 +77,7 @@ import {
   type Mech,
   type MechImportData,
   type MechModelResult,
+  type MeleeAttackType,
   type MovementType,
   type Pilot,
   type ReachableHex,
@@ -88,7 +93,7 @@ import './GMView.css'
  * whether to mount this or GMViewDnd based on the campaign's system. */
 function GMViewBattletech() {
   const campaignId = useCampaignId()
-  const { activeMapId, roundState, visibility, lastAttack, rosterVersion, unitWalked } = useTableSocket(campaignId)
+  const { activeMapId, roundState, visibility, lastAttack, rosterVersion, unitWalked, heatPhaseResult } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   const { map, units, setUnits } = useMapState(mapId, visibility ?? lastAttack)
   const [pilots, setPilots] = useState<Pilot[]>([])
@@ -119,6 +124,21 @@ function GMViewBattletech() {
     getWeaponCatalog().then(setWeaponCatalog).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId])
+
+  // Real user request: the Heat Phase resolves itself, no GM button —
+  // the instant ranged/melee are both done and heat hasn't been resolved
+  // yet this round (rounds.ts's currentPhase landing on 'heat'), this GM
+  // screen (the one authoritative source for round progression already —
+  // it's the only one with a "Siguiente ronda" button) calls the endpoint
+  // itself. resolveHeatPhase is idempotent server-side (bt_rounds.
+  // heat_resolved), so a second GM tab open on the same campaign calling
+  // this too is a harmless no-op, not a double-resolution.
+  useEffect(() => {
+    if (!campaignId || !roundState) return
+    if (currentPhase(roundState) !== 'heat') return
+    resolveHeatPhase(campaignId).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId, roundState])
 
   // useMapState's own map/units already refetch on every visibility_update
   // (broadcast on every unit move — see its own doc comment), but `mechs`
@@ -154,6 +174,24 @@ function GMViewBattletech() {
     if (rosterVersion > 0) refetch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rosterVersion])
+
+  // heat_phase_resolved carries the new heat_current directly — patched
+  // into local mechs state immediately (rather than waiting on the next
+  // refetch) so SteamPuffs and the mech sheet's HeatScale react the
+  // instant the Heat Phase resolves, same reasoning as TableView's own
+  // equivalent effect.
+  useEffect(() => {
+    if (!heatPhaseResult) return
+    setMechs((prev) => prev.map((m) => {
+      const r = heatPhaseResult.results.find((res) => res.mech_id === m.id)
+      return r ? { ...m, heat_current: r.heat_current } : m
+    }))
+  }, [heatPhaseResult])
+  const heatByUnitId = new Map(
+    units.filter((u) => u.mech_id != null).map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
+  )
+  const proneUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
+  const shutdownUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
 
   // Attack VFX (laser/PPC/tracer/missile/flamer) — only real board shots
   // carry attacker_unit_id/target_unit_id (see combat.py's
@@ -863,6 +901,25 @@ function GMViewBattletech() {
     refetch()
   }
 
+  // Melee phase's equivalent — a single physical attack instead of a
+  // volley, same fixed attackPanel pair, same submitMarkActed-then-
+  // refetch tail as the ranged path above.
+  const submitMeleeAttackFromPanel = async (attackType: MeleeAttackType, arm?: 'left' | 'right') => {
+    if (!attackPanel) return
+    setFiringVolley(true)
+    try {
+      await submitMeleeAttack(attackPanel.attacker.id, attackPanel.target.id, attackType, arm)
+    } catch {
+      // rejected (not adjacent/no LOS/incapacitated/movement doesn't
+      // qualify for Carga-DFA) — surfaced to the GM via the failed
+      // request itself, nothing further to do here.
+    }
+    if (attackPanel.attacker.pilot_id != null) await submitMarkActed(attackPanel.attacker.pilot_id)
+    setFiringVolley(false)
+    setAttackPanel(null)
+    refetch()
+  }
+
   if (campaignId == null) return <div className="gm-view">preparando campaña…</div>
 
   return (
@@ -1004,6 +1061,9 @@ function GMViewBattletech() {
                   }
                   targetableHexes={targetableHexes}
                   walkPaths={walkPaths}
+                  heatByUnitId={heatByUnitId}
+                  proneUnitIds={proneUnitIds}
+                  shutdownUnitIds={shutdownUnitIds}
                   activeAttack={activeAttackVfx}
                   onAttackEffectDone={onAttackEffectDone}
                   onUnitClick={onUnitClick}
@@ -1311,20 +1371,34 @@ function GMViewBattletech() {
               setMenu(null)
             }}
             onSkipMovement={() => { submitMoveUnit(menu.unit, menu.unit.q, menu.unit.r, false); setMenu(null) }}
+            onStandUp={() => { standUp(menu.unit.id).then(refetch).catch(() => {}); setMenu(null) }}
           />
         )
       })()}
 
       {attackPanel && mechForUnit(attackPanel.attacker) && (
-        <WeaponVolleyPanel
-          attackerMech={mechForUnit(attackPanel.attacker)!}
-          target={attackPanel.target}
-          targetMech={mechForUnit(attackPanel.target)}
-          weaponCatalog={weaponCatalog}
-          firing={firingVolley}
-          onFire={submitWeaponVolley}
-          onClose={() => setAttackPanel(null)}
-        />
+        roundState && currentPhase(roundState) === 'melee' ? (
+          <MeleeAttackPanel
+            attackerMech={mechForUnit(attackPanel.attacker)!}
+            attacker={attackPanel.attacker}
+            target={attackPanel.target}
+            targetMech={mechForUnit(attackPanel.target)}
+            roundState={roundState}
+            firing={firingVolley}
+            onAttack={submitMeleeAttackFromPanel}
+            onClose={() => setAttackPanel(null)}
+          />
+        ) : (
+          <WeaponVolleyPanel
+            attackerMech={mechForUnit(attackPanel.attacker)!}
+            target={attackPanel.target}
+            targetMech={mechForUnit(attackPanel.target)}
+            weaponCatalog={weaponCatalog}
+            firing={firingVolley}
+            onFire={submitWeaponVolley}
+            onClose={() => setAttackPanel(null)}
+          />
+        )
       )}
 
       {pendingFacing && (

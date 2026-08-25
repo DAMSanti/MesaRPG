@@ -26,14 +26,22 @@ app/systems/battletech/movement.py's execute_move already has. Omitting
 those two IDs keeps the fully-manual legacy path (no validation at all)
 for narrative attacks with no real unit on the board.
 
-Still deliberately out of scope: called shots, critical-hit rolls, damage
-transfer to adjacent locations, the Cluster Hits Table (SRM/LRM partial-hit
-resolution — simplified to flat max damage), submersion, a formal "LOS
-level" concept distinct from raw elevation, physical/melee attack rules
-(punch/kick tonnage-based damage, their own hit-location table — the
-melee phase exists and gates correctly, see turns.py, but resolution still
-goes through this same manual/weapon-id path), vehicles/aerospace/
-infantry/ProtoMechs.
+Third pass (real user request: "sistema PSR/caída/prono... daño a
+componentes por crítico... fase de melee... fase de heat"): critical hits
+(see app/systems/battletech/criticals.py — rolled automatically here
+whenever a hit penetrates to internal structure or lands a natural 2,
+right after `mechs.apply_damage`), Piloting Skill Rolls and falling (see
+psr.py), and physical/melee attacks — punch/kick/charge/DFA, their own
+Target Number formula and hit-location tables — now have their own
+resolution (see melee.py's module docstring; the melee phase's gating in
+turns.py hasn't changed). Club is the one physical attack still out of
+scope (see melee.py's own docstring for why).
+
+Still deliberately out of scope: called shots, damage transfer to
+adjacent locations (a destroyed arm/leg's further damage doesn't spill
+into the torso), the Cluster Hits Table (SRM/LRM partial-hit resolution —
+simplified to flat max damage), submersion, a formal "LOS level" concept
+distinct from raw elevation, vehicles/aerospace/infantry/ProtoMechs.
 """
 
 import secrets
@@ -49,7 +57,7 @@ from ...squaregrid import distance as square_distance
 from ...squaregrid import has_los as square_has_los
 from ...squaregrid import line as square_line
 from ...units import attack_side, get_unit
-from . import mechs, pilots, weapons
+from . import criticals, mechs, pilots, psr, weapons
 
 
 class OutOfAmmo(ValueError):
@@ -62,6 +70,11 @@ class NoLineOfSight(ValueError):
 
 class OutOfWeaponRange(ValueError):
     pass
+
+
+class MechIncapacitated(ValueError):
+    """A shut-down or prone mech can't attack (psr.py/turns.py's heat
+    phase — a real mech.is_shutdown/is_prone check, not just a UI hint)."""
 
 # ---- GATOR to-hit modifiers ---------------------------------------------
 
@@ -200,47 +213,10 @@ def roll_2d6() -> tuple[int, int, int]:
 # ---- damage application + undo log --------------------------------------
 
 
-def _apply_damage(conn, mech_id: int, location: str, rear: bool, amount: int) -> dict:
-    row = conn.execute(
-        """
-        SELECT armor_current, armor_rear_current, structure_current
-        FROM mech_locations WHERE mech_id = ? AND location = ?
-        """,
-        (mech_id, location),
-    ).fetchone()
-    before = dict(row)
-
-    use_rear = rear and before["armor_rear_current"] is not None
-    armor_field = "armor_rear_current" if use_rear else "armor_current"
-    armor_before = before[armor_field]
-
-    absorbed = min(amount, armor_before)
-    armor_after = armor_before - absorbed
-    remaining = amount - absorbed
-    structure_after = max(0, before["structure_current"] - remaining)
-
-    conn.execute(
-        f"UPDATE mech_locations SET {armor_field} = ?, structure_current = ? "
-        "WHERE mech_id = ? AND location = ?",
-        (armor_after, structure_after, mech_id, location),
-    )
-
-    return {
-        "mech_id": mech_id,
-        "location": location,
-        "armor_field": armor_field,
-        "armor_before": armor_before,
-        "armor_after": armor_after,
-        "structure_before": before["structure_current"],
-        "structure_after": structure_after,
-        "destroyed": structure_after == 0,
-    }
-
-
 _MOVEMENT_TYPE_TO_ATTACKER_MOVEMENT = {"walk": "walked", "run": "ran", "jump": "jumped"}
 
 
-def _recorded_movement(campaign_id: int, pilot_id: int | None) -> tuple[str, int, bool]:
+def recorded_movement(campaign_id: int, pilot_id: int | None) -> tuple[str, int, bool]:
     """(attacker_movement, hexes_moved, jumped) from this round's real
     recorded move (bt_round_moves, one row per pilot per round — see
     app/systems/battletech/movement.py's _upsert_round_move) — 'stationary'/
@@ -322,6 +298,11 @@ def resolve_attack(
         if target_mech_id is None:
             target_mech_id = real_target["mech_id"]
 
+        if real_attacker["mech_id"] is not None:
+            attacker_mech_state = mechs.get_mech(real_attacker["mech_id"])
+            if attacker_mech_state and (attacker_mech_state["is_shutdown"] or attacker_mech_state["is_prone"]):
+                raise MechIncapacitated(f"Unit {attacker_unit_id}'s mech is shut down or prone and can't attack")
+
         m = get_map(real_attacker["map_id"])
         grid_type = m["grid_type"] if m else "hex"
         tiles = tiles_lookup(real_attacker["map_id"])
@@ -347,9 +328,9 @@ def resolve_attack(
             gunnery = attacker_pilot["gunnery"] if attacker_pilot else 4
 
         if attacker_movement is None:
-            attacker_movement, _, _ = _recorded_movement(campaign_id, real_attacker["pilot_id"])
+            attacker_movement, _, _ = recorded_movement(campaign_id, real_attacker["pilot_id"])
         if target_hexes_moved is None or target_jumped is None:
-            _, recorded_hexes, recorded_jumped = _recorded_movement(campaign_id, real_target["pilot_id"])
+            _, recorded_hexes, recorded_jumped = recorded_movement(campaign_id, real_target["pilot_id"])
             if target_hexes_moved is None:
                 target_hexes_moved = recorded_hexes
             if target_jumped is None:
@@ -437,7 +418,7 @@ def resolve_attack(
         result["location_roll"] = loc_roll
 
         with db.connect() as conn:
-            damage_result = _apply_damage(
+            damage_result = mechs.apply_damage(
                 conn, target_mech_id, location, rear=(side == "rear"), amount=damage
             )
             result["damage"] = damage_result
@@ -448,6 +429,25 @@ def resolve_attack(
             if result["mech_destroyed"]:
                 summary += " — ¡MECH DESTRUIDO!"
             events.log_event(conn, campaign_id, "attack", summary, attack_payload)
+
+        # Critical hits: rolled whenever this hit penetrated to internal
+        # structure, OR on a natural 2 hit-location roll even if armor
+        # absorbed everything (Through-Armor Critical — `is_crit` above is
+        # exactly that natural-2 flag already, straight from
+        # HIT_LOCATION_TABLES). Skipped once the mech is already destroyed
+        # (result["mech_destroyed"]) — nothing left to critical.
+        if not result["mech_destroyed"] and (damage_result["penetrated"] or is_crit):
+            crit_hits = criticals.roll_critical_hits(target_mech_id, location)
+            if crit_hits:
+                effects = criticals.apply_critical_effects(target_mech_id, crit_hits)
+                result["critical_hits"] = effects
+                if effects["mech_destroyed"]:
+                    result["mech_destroyed"] = True
+                elif effects["fell"]:
+                    # Destroyed gyro — automatic fall, no PSR (the rulebook's
+                    # own exception: a second gyro hit in the same phase
+                    # skips the PSR "since it automatically fell").
+                    result["fall"] = psr.apply_fall(target_mech_id)
     else:
         # A miss still consumes ammo/adds heat when a real weapon fired
         # (see weapon_undo_info above) — logged (and undoable) too, not

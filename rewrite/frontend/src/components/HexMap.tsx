@@ -15,7 +15,7 @@ import { terrainColor, terrainRotation, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import { hexToWorld, mapCenter } from '../hexMath'
 import { MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
-import { AttackEffect } from './AttackEffects'
+import { AttackEffect, getGlowTexture } from './AttackEffects'
 
 // FIXED, not a floor that yields to a taller natural elevation — two
 // earlier versions of this (elevation 2's own 0.74, then elevation
@@ -316,6 +316,55 @@ function LosDebugOverlay({
   )
 }
 
+/** A handful of soft puffs drifting straight up off a mech's chest and
+ * fading out, looping continuously — real user request: "los mechs en
+ * esta fase desprenderán vapor en todas las vistas de mapa" for any
+ * mech at/above the Heat Scale's first real threshold (5 — see
+ * movement.py's _HEAT_MP_PENALTY_BRACKETS, the first bracket that
+ * isn't 0). More heat = more puffs, capped so it never gets busy enough
+ * to obscure the model. Reuses AttackEffects' baked glow texture but
+ * with plain alpha blending (not additive) so overlapping puffs read as
+ * smoke/vapor instead of brightening toward white-hot like a muzzle
+ * flash. */
+function SteamPuffs({ heat }: { heat: number }) {
+  const count = Math.min(5, 2 + Math.floor(heat / 10))
+  const particles = useMemo(
+    () => Array.from({ length: count }, () => ({
+      seed: Math.random() * 10,
+      xOff: (Math.random() - 0.5) * 0.3,
+      zOff: (Math.random() - 0.5) * 0.3,
+      size: 0.35 + Math.random() * 0.25,
+    })),
+    [count],
+  )
+  return (
+    <>
+      {particles.map((p, i) => <SteamPuff key={i} {...p} />)}
+    </>
+  )
+}
+
+function SteamPuff({ seed, xOff, zOff, size }: { seed: number; xOff: number; zOff: number; size: number }) {
+  const ref = useRef<THREE.Mesh>(null)
+  const cycleSeconds = 2.2
+  useFrame((state) => {
+    const t = ((state.clock.elapsedTime + seed) % cycleSeconds) / cycleSeconds
+    if (!ref.current) return
+    ref.current.position.set(xOff, MODEL_SCALE * MODEL_CHEST_FRACTION + t * 0.9, zOff)
+    ref.current.quaternion.copy(state.camera.quaternion)
+    const mat = ref.current.material as THREE.MeshBasicMaterial
+    mat.opacity = 0.45 * Math.sin(t * Math.PI)
+    const s = size * (0.6 + t * 0.6)
+    ref.current.scale.set(s, s, s)
+  })
+  return (
+    <mesh ref={ref}>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial map={getGlowTexture()} color="#d8dde0" transparent opacity={0} depthWrite={false} />
+    </mesh>
+  )
+}
+
 // Same rationale as tilePropsEqual above: onPointerDown/onPointerUp are
 // fresh closures every render, deliberately excluded here too.
 // worldOffset/dragPosition are freshly-literal tuples at the call site
@@ -330,6 +379,9 @@ function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<Un
     && prev.walkPath === next.walkPath
     && prev.heightAt === next.heightAt
     && prev.outlined === next.outlined
+    && prev.heat === next.heat
+    && prev.prone === next.prone
+    && prev.shutdown === next.shutdown
     && prev.worldOffset[0] === next.worldOffset[0] && prev.worldOffset[1] === next.worldOffset[1]
     && (prev.dragPosition === next.dragPosition
       || (prev.dragPosition != null && next.dragPosition != null
@@ -389,12 +441,27 @@ type UnitMarkerProps = {
    * here). A no-op everywhere else (Select gracefully ignores having no
    * <Selection> ancestor), so this is always safe to set. */
   outlined?: boolean
+  /** This unit's mech.heat_current, if known — real user request: "los
+   * mechs en esta fase desprenderán vapor en todas las vistas de mapa".
+   * Undefined (caller has no heat data handy) or below the Heat Scale's
+   * first real threshold (5) both just render nothing. */
+  heat?: number
+  /** mechs.is_prone — psr.py's apply_fall marks this on a failed PSR.
+   * Tilts the model over instead of standing it upright (level of detail
+   * deliberately kept simple, per the approved plan: "nivel de detalle
+   * a decidir en implementación, no bloqueante"). */
+  prone?: boolean
+  /** mechs.is_shutdown — turns.py's resolve_heat_phase / a destroyed
+   * gyro. Darkens the model's faction tint instead of a separate icon —
+   * same "keep it simple" scope as `prone` above. */
+  shutdown?: boolean
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void
   onPointerUp?: (e: ThreeEvent<PointerEvent>) => void
 }
 
 const UnitMarker = memo(function UnitMarker({
-  unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, heightAt, outlined, onPointerDown, onPointerUp,
+  unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, heightAt, outlined, heat, prone, shutdown,
+  onPointerDown, onPointerUp,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
   // 'building' matches Tile's own fixed platform height (BUILDING_MIN_
@@ -407,11 +474,15 @@ const UnitMarker = memo(function UnitMarker({
   const baseY = restY + (dragPosition ? 0.5 : 0)
   // Ghosts stay red regardless of faction — before reveal, "hidden threat"
   // is the point, not who it turns out to be.
-  const color = unit.is_ghost
+  const baseColor = unit.is_ghost
     ? '#e35d5d'
     : unit.pilot_faction != null
       ? FACTION_COLORS[unit.pilot_faction]
       : NEUTRAL_UNIT_COLOR
+  // Shutdown darkens the faction tint instead of a separate icon —
+  // "powered down" reads as "dim", same visual shorthand a real cockpit
+  // status light uses.
+  const color = shutdown ? new THREE.Color(baseColor).multiplyScalar(0.35).getStyle() : baseColor
 
   // Mech3D's unrotated model faces +Z (legs/shoulders are wide along X,
   // narrow front-to-back along Z) — rotate it to match facing_deg using
@@ -539,16 +610,25 @@ const UnitMarker = memo(function UnitMarker({
   // actually turns a claimed selection into a visible red rim; this is
   // just the per-unit "claim me" toggle.
   const mechOrMarker = (
-    <Select enabled={!!outlined}>
-      {unit.mech_id != null ? (
-        <Mech3D color={color} chassis={unit.mech_chassis} model={unit.mech_model} isMoving={isMoving} />
-      ) : (
-        <mesh position={[0, 0.35, 0]} castShadow>
-          <coneGeometry args={[0.35, 0.7, 4]} />
-          <meshStandardMaterial color={color} />
-        </mesh>
-      )}
-    </Select>
+    <>
+      <Select enabled={!!outlined}>
+        {unit.mech_id != null ? (
+          // Prone tilts the whole model over onto its side instead of
+          // standing it upright — pivots around the feet (Mech3D's own
+          // local origin), so it swings down onto the tile rather than
+          // sinking through it.
+          <group rotation={prone ? [0, 0, Math.PI * 0.42] : [0, 0, 0]}>
+            <Mech3D color={color} chassis={unit.mech_chassis} model={unit.mech_model} isMoving={isMoving && !prone} />
+          </group>
+        ) : (
+          <mesh position={[0, 0.35, 0]} castShadow>
+            <coneGeometry args={[0.35, 0.7, 4]} />
+            <meshStandardMaterial color={color} />
+          </mesh>
+        )}
+      </Select>
+      {unit.mech_id != null && heat != null && heat >= 5 && <SteamPuffs heat={heat} />}
+    </>
   )
 
   if (physics) {
@@ -716,7 +796,8 @@ function FootprintTrail({ marks }: { marks: FootprintMark[] }) {
 
 export function HexMap({
   map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
-  moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, outlineUnitIds, physics, activeAttack, onAttackEffectDone,
+  moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, outlineUnitIds, heatByUnitId, proneUnitIds, shutdownUnitIds,
+  physics, activeAttack, onAttackEffectDone,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
 }: {
   map: MapData
@@ -768,6 +849,18 @@ export function HexMap({
    * own (see UnitMarker's own outlined doc comment) — GMView/TableView
    * never pass this. */
   outlineUnitIds?: Set<number>
+  /** unit.mech_id's own mech.heat_current, keyed by UNIT id (not mech
+   * id) to match how every other per-unit lookup here is keyed — drives
+   * SteamPuffs (heat >= 5) on the corresponding UnitMarker. Omitted
+   * entirely (not just per-unit-missing) by any caller that hasn't
+   * wired heat data through yet; a unit with no entry just renders no
+   * steam, same as heat 0. */
+  heatByUnitId?: Map<number, number>
+  /** Unit ids whose mech is currently prone/shutdown (mechs.is_prone/
+   * is_shutdown) — same per-view "caller resolves its own mechs lookup,
+   * HexMap just renders" pattern as heatByUnitId above. */
+  proneUnitIds?: Set<number>
+  shutdownUnitIds?: Set<number>
   /** Give every tile and mech a real physics collider (initiative dice
    * roll and bounce across the actual board — TableView only). Must
    * only be set true when this HexMap is rendered inside a <Physics>
@@ -1038,6 +1131,9 @@ export function HexMap({
           walkPath={walkPaths?.get(unit.id)}
           heightAt={heightAt}
           outlined={outlineUnitIds?.has(unit.id) ?? false}
+          heat={heatByUnitId?.get(unit.id)}
+          prone={proneUnitIds?.has(unit.id) ?? false}
+          shutdown={shutdownUnitIds?.has(unit.id) ?? false}
           onPointerDown={() => {
             dragRef.current = { unit, startQ: unit.q, startR: unit.r }
             setHover({ q: unit.q, r: unit.r })

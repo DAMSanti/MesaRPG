@@ -189,6 +189,7 @@ export interface VisibleEnemy {
   q: number
   r: number
   distance: number
+  heat_current: number
 }
 
 // Enemy units inside this unit's own facing cone + LoS — the
@@ -277,6 +278,17 @@ export interface Mech {
   jump_mp: number
   heat_sinks: number
   heat_current: number
+  /** Heat Scale shutdown (systems/battletech/turns.py's resolve_heat_phase)
+   * — can't move or attack until it restarts (heat drops below 14, or a
+   * later Heat Phase's 2d6 restart roll succeeds). */
+  is_shutdown: boolean
+  /** Fell (psr.py's apply_fall) — can't move/attack except attempting to
+   * stand back up (api.ts's standUp). */
+  is_prone: boolean
+  gyro_hits: number
+  engine_hits: number
+  sensor_hits: number
+  life_support_hit: boolean
   locations: MechLocation[]
   weapons: MechWeapon[]
   equipment: MechEquipment[]
@@ -694,9 +706,57 @@ export interface RoundState {
    * — no weapon/ammo/range involved, physical attacks only need
    * proximity. */
   melee_target_pilot_ids: number[]
+  /** Whether turns.py's resolve_heat_phase has already run for this
+   * round — False the instant ranged/melee both empty out is exactly
+   * when GMView calls resolveHeatPhase itself (rounds.ts's currentPhase
+   * reaching 'other'), no GM button needed. */
+  heat_resolved: boolean
 }
 
 export const getRound = (campaignId: number) => request<RoundState>(`/api/campaigns/${campaignId}/round`)
+
+export const resolveHeatPhase = (campaignId: number) =>
+  request<{ campaign_id: number; results: HeatPhaseMechResult[]; already_resolved?: boolean }>(
+    `/api/campaigns/${campaignId}/round/resolve-heat`, { method: 'POST' },
+  )
+
+export interface HeatPhaseMechResult {
+  mech_id: number
+  heat_current: number
+  shutdown: boolean | null
+  restarted: boolean | null
+  ammo_explosion: { mech_id: number; damage: number } | null
+  pilot_wound: number | null
+}
+
+export type MeleeAttackType = 'punch' | 'kick' | 'charge' | 'dfa'
+
+export interface MeleeAttackResult {
+  attack_type: MeleeAttackType
+  attacker_unit_id: number
+  target_unit_id: number
+  attacker_mech_id: number
+  target_mech_id: number
+  target_number: number
+  roll: number
+  hit: boolean
+  damage: number | null
+  hit_results: { location: string; amount: number }[]
+  self_damage_results: { location: string; amount: number }[]
+  mech_destroyed: boolean
+  fall: Record<string, unknown> | null
+  self_fall: Record<string, unknown> | null
+  target_psr?: { success: boolean }
+}
+
+export const submitMeleeAttack = (unitId: number, targetUnitId: number, attackType: MeleeAttackType, arm?: 'left' | 'right') =>
+  request<MeleeAttackResult>(`/api/units/${unitId}/melee`, {
+    method: 'POST',
+    body: JSON.stringify({ target_unit_id: targetUnitId, attack_type: attackType, arm }),
+  })
+
+export const standUp = (unitId: number) =>
+  request<Record<string, unknown>>(`/api/units/${unitId}/stand-up`, { method: 'POST' })
 
 export const startRound = (campaignId: number) =>
   request<RoundState>(`/api/campaigns/${campaignId}/round/start`, { method: 'POST' })

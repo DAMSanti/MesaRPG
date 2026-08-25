@@ -144,8 +144,18 @@ export function activeAttackPilotIds(round: RoundState, units: Unit[]): Set<numb
  * its own not-yet-acted target list is skipped entirely, exactly as
  * requested ("solo se activará si algún mech tiene alcance y en LoS
  * algún mech al que pueda atacar") — movement can fall straight through
- * to 'melee', or all the way to 'other', without 'ranged' ever showing. */
-export type RoundPhase = 'none' | 'initiative' | 'movement' | 'ranged' | 'melee' | 'other'
+ * to 'melee', or all the way to 'heat'/'other', without 'ranged' ever
+ * showing.
+ *
+ * 'heat' is real too now (real user request: "implementar tambien la
+ * fase de heat") — once ranged/melee are both empty, the phase sits at
+ * 'heat' until round.heat_resolved flips true (GMView calls
+ * api.ts's resolveHeatPhase the instant it sees exactly this state, no
+ * GM button needed — see turns.py's resolve_heat_phase). Any round with
+ * nothing to resolve (heat_resolved already true, e.g. no mech ever
+ * built up real heat) passes through 'heat' for a single tick before
+ * landing on 'other'. */
+export type RoundPhase = 'none' | 'initiative' | 'movement' | 'ranged' | 'melee' | 'heat' | 'other'
 
 function _pending(ids: number[], acted: number[]): boolean {
   const actedSet = new Set(acted)
@@ -159,6 +169,7 @@ export function currentPhase(round: RoundState): RoundPhase {
   if (!allMoved) return 'movement'
   if (_pending(round.ranged_target_pilot_ids, round.acted_pilot_ids)) return 'ranged'
   if (_pending(round.melee_target_pilot_ids, round.acted_pilot_ids)) return 'melee'
+  if (!round.heat_resolved) return 'heat'
   return 'other'
 }
 
@@ -168,5 +179,6 @@ export const PHASE_LABELS: Record<RoundPhase, string> = {
   movement: 'Movimiento',
   ranged: 'Ataque a distancia',
   melee: 'Combate a melee',
+  heat: 'Heat',
   other: 'Fin de ronda',
 }

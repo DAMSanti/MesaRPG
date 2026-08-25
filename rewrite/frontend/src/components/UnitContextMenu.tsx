@@ -23,7 +23,7 @@ export function UnitContextMenu({
   unit, mech, canAct, x, y, onAttack, onClose,
   showAttack,
   showRollInitiative, canRollInitiative, onRollInitiative,
-  showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement,
+  showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement, onStandUp,
 }: {
   unit: Unit
   mech: Mech | null
@@ -64,6 +64,11 @@ export function UnitContextMenu({
    * as onRotate, just with no facing change either (real user request:
    * "saltar movimiento"). */
   onSkipMovement?: () => void
+  /** The mech is prone (psr.py's stand_up — a PSR that spends this
+   * pilot's movement action) — shown alongside Caminar/Correr/Saltar
+   * since standing back up IS this round's movement action for a
+   * fallen mech, not a separate one. */
+  onStandUp?: () => void
 }) {
   const label = mech ? `${mech.chassis} ${mech.model ?? ''}`.trim() : `unidad #${unit.id}`
 
@@ -81,10 +86,16 @@ export function UnitContextMenu({
       {showPhaseMovement && (
         <>
           {!canPhaseMove && <div className="unit-menu-hint">no es su turno de moverse</div>}
-          <button disabled={!canPhaseMove} onClick={() => onPhaseMove?.('walk')}>Caminar</button>
-          <button disabled={!canPhaseMove} onClick={() => onPhaseMove?.('run')}>Correr</button>
-          <button disabled={!canPhaseMove || !mech?.jump_mp} onClick={() => onPhaseMove?.('jump')}>Saltar</button>
-          <button disabled={!canPhaseMove} onClick={onRotate}>Cambiar dirección</button>
+          {mech?.is_prone ? (
+            <button disabled={!canPhaseMove} onClick={onStandUp}>Levantarse</button>
+          ) : (
+            <>
+              <button disabled={!canPhaseMove} onClick={() => onPhaseMove?.('walk')}>Caminar</button>
+              <button disabled={!canPhaseMove} onClick={() => onPhaseMove?.('run')}>Correr</button>
+              <button disabled={!canPhaseMove || !mech?.jump_mp} onClick={() => onPhaseMove?.('jump')}>Saltar</button>
+              <button disabled={!canPhaseMove} onClick={onRotate}>Cambiar dirección</button>
+            </>
+          )}
           <button disabled={!canPhaseMove} onClick={onSkipMovement}>Saltar movimiento</button>
         </>
       )}

@@ -79,7 +79,7 @@ const IMPACT_TAIL_MS = 300
  * terrain.ts already uses for ground textures, just a soft round glow
  * instead of a tileable pattern. */
 let glowTextureCache: THREE.Texture | null = null
-function getGlowTexture(): THREE.Texture {
+export function getGlowTexture(): THREE.Texture {
   if (glowTextureCache) return glowTextureCache
   const size = 64
   const canvas = document.createElement('canvas')

@@ -617,3 +617,39 @@ button.fp-phase-pill.clickable:hover {
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+.fp-melee-option {
+  flex: 1;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--fp-hud-blue);
+  clip-path: polygon(5px 0, 100% 0, 100% calc(100% - 5px), calc(100% - 5px) 100%, 0 100%, 0 5px);
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+}
+
+.fp-melee-option:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.fp-melee-option.selected {
+  background: var(--fp-hud-blue);
+  color: var(--bg-deep);
+  box-shadow: 0 0 8px rgba(31, 200, 255, 0.7);
+}
+
+.fp-melee-arm-picker {
+  display: flex;
+  gap: 6px;
+  padding: 0 0 8px;
+}
+
+.fp-melee-arm-picker .fp-melee-option {
+  text-align: center;
+}

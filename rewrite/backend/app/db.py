@@ -385,6 +385,26 @@ def init_db() -> None:
         # pilot-color look, same as every pilot before this feature existed.
         _ensure_column(conn, "pilots", "die_style", "TEXT")
         _ensure_column(conn, "campaigns", "gm_die_style", "TEXT")
+        # Melee/heat-phase/critical-hit state (ROADMAP.md follow-up —
+        # "fase de melee... fase de heat... shutdown... sistema PSR/
+        # caída/prono... daño a componentes por crítico"). Gyro/engine/
+        # sensor/life-support hits are counted separately from the
+        # generic mech_criticals.hit flag because their effects are
+        # cumulative per number of hits (1st vs 2nd engine/gyro/sensor
+        # hit differ), not a simple destroyed/not-destroyed switch —
+        # simpler to read a counter than re-scan mech_criticals for
+        # "how many of this component's slots are hit" every time.
+        _ensure_column(conn, "mechs", "is_shutdown", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "mechs", "is_prone", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "mechs", "gyro_hits", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "mechs", "engine_hits", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "mechs", "sensor_hits", "INTEGER NOT NULL DEFAULT 0")
+        _ensure_column(conn, "mechs", "life_support_hit", "INTEGER NOT NULL DEFAULT 0")
+        # Idempotency guard for turns.py's resolve_heat_phase — the
+        # frontend calls that endpoint the instant it observes the round
+        # has nothing left to act on, and it must be a safe no-op if
+        # called twice (two GM tabs open, a retried request, etc).
+        _ensure_column(conn, "bt_rounds", "heat_resolved", "INTEGER NOT NULL DEFAULT 0")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

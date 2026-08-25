@@ -10,9 +10,9 @@ import { ARMOR_GEOMETRY, ARMOR_VIEWBOX, type MechLocationCode } from '../mechShe
 import { FacingPicker } from './FacingPicker'
 import {
   attack, getMap, getUnitVisibleEnemies, getWeaponCatalog, markRoundActed, moveUnit,
-  moveUnitWithMp, requestInitiative, requestMovement,
-  type AttackResult, type Mech, type MapData, type MovementType, type ReachableHex, type RoundState, type Unit,
-  type VisibleEnemy, type WeaponStats,
+  moveUnitWithMp, requestInitiative, requestMovement, submitMeleeAttack,
+  type AttackResult, type Mech, type MapData, type MeleeAttackType, type MovementType, type ReachableHex,
+  type RoundState, type Unit, type VisibleEnemy, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
@@ -189,6 +189,44 @@ function dotXs(from: number, to: number, step: number): number[] {
   return xs
 }
 
+/** Tweens toward `target` over `durationMs` instead of snapping — real
+ * user request: "se vera una pequeña animación de como baja el
+ * termómetro" once the Heat Phase actually drops a mech's heat_current.
+ * Plain requestAnimationFrame rather than react-three-fiber's useFrame
+ * since Thermometer lives in the plain SVG HUD overlay, not inside the
+ * <Canvas>. Restarts cleanly from wherever the previous tween had
+ * gotten to if `target` changes again mid-flight. */
+function useSmoothedValue(target: number, durationMs = 900): number {
+  const [display, setDisplay] = useState(target)
+  const fromRef = useRef(target)
+  const targetRef = useRef(target)
+  const startRef = useRef<number | null>(null)
+  const rafRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (target === targetRef.current) return
+    fromRef.current = display
+    targetRef.current = target
+    startRef.current = null
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+
+    const step = (t: number) => {
+      if (startRef.current == null) startRef.current = t
+      const frac = Math.min(1, (t - startRef.current) / durationMs)
+      const eased = 1 - (1 - frac) * (1 - frac)
+      setDisplay(fromRef.current + (targetRef.current - fromRef.current) * eased)
+      if (frac < 1) rafRef.current = requestAnimationFrame(step)
+    }
+    rafRef.current = requestAnimationFrame(step)
+    return () => {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, durationMs])
+
+  return display
+}
+
 /** Vertical thermometer-style HEAT gauge (real user request: "una línea
  * roja como un termómetro" instead of the old tick-ladder + triangle
  * marker) — a red fill rises inside a cyan tube as heat climbs, same
@@ -203,6 +241,7 @@ function dotXs(from: number, to: number, step: number): number[] {
 function Thermometer({
   x, heat, max, dissipation,
 }: { x: number; heat: number; max: number; dissipation: number }) {
+  const smoothedHeat = useSmoothedValue(heat)
   const yTop = 220
   const yBottom = 480
   const tubeWidth = 12
@@ -210,7 +249,7 @@ function Thermometer({
     const frac = i / 3
     return { y: yTop + frac * (yBottom - yTop), val: Math.round(max * (1 - frac)) }
   })
-  const clampedHeat = Math.max(0, Math.min(max, heat))
+  const clampedHeat = Math.max(0, Math.min(max, smoothedHeat))
   const fillY = yTop + (1 - clampedHeat / max) * (yBottom - yTop)
   const clampedDissipation = Math.max(0, Math.min(max, dissipation))
   const dissipationY = yTop + (1 - clampedDissipation / max) * (yBottom - yTop)
@@ -255,7 +294,7 @@ function Thermometer({
         x={x} y={yBottom + 22} fill={HUD_DANGER} fontSize={16} fontWeight={700}
         textAnchor="middle" fontFamily="'Cascadia Mono', monospace"
       >
-        {Math.round(heat)}
+        {Math.round(smoothedHeat)}
       </text>
     </g>
   )
@@ -393,7 +432,7 @@ function OffscreenArrow() {
  * drawn in the HUD's cyan/monospace language instead of a floating
  * panel, since this is a cockpit readout, not a dialog box. */
 function WeaponHud({
-  mech, weaponCatalog, targetLabel, firing, onFire, onClose,
+  mech, weaponCatalog, targetLabel, firing, onFire, onClose, melee,
 }: {
   mech: Mech | null
   weaponCatalog: Record<string, WeaponStats>
@@ -401,11 +440,25 @@ function WeaponHud({
   firing: boolean
   onFire: (weaponIds: number[]) => void
   onClose: () => void
+  /** Melee phase — real user request: "cuando phase === 'melee' mostrar
+   * botones Puñetazo/Patada/Carga/DFA en vez de la lista de armas".
+   * Present instead of the weapon-toggle list whenever the round is
+   * actually in its melee phase; Carga/DFA are pre-disabled client-side
+   * to match melee.py's own movement gate (same courtesy as GMView's
+   * MeleeAttackPanel), so the cockpit never offers an attack the server
+   * will reject. */
+  melee?: {
+    canCharge: boolean
+    canDfa: boolean
+    onAttack: (attackType: MeleeAttackType, arm?: 'left' | 'right') => void
+  }
 }) {
   const weapons = mech?.weapons ?? []
   const [selected, setSelected] = useState<Set<number>>(
     () => new Set(weapons.filter((w) => w.ammo_remaining !== 0).map((w) => w.id)),
   )
+  const [meleeType, setMeleeType] = useState<MeleeAttackType>('punch')
+  const [meleeArm, setMeleeArm] = useState<'left' | 'right'>('right')
   const toggle = (weaponId: number) => {
     setSelected((prev) => {
       const next = new Set(prev)
@@ -415,47 +468,102 @@ function WeaponHud({
     })
   }
 
+  const meleeOptions: { type: MeleeAttackType; label: string; enabled: boolean }[] = melee
+    ? [
+        { type: 'punch', label: 'PUÑETAZO', enabled: true },
+        { type: 'kick', label: 'PATADA', enabled: true },
+        { type: 'charge', label: 'CARGA', enabled: melee.canCharge },
+        { type: 'dfa', label: 'DFA', enabled: melee.canDfa },
+      ]
+    : []
+
   return (
     <div className="fp-weapon-hud">
       <div className="fp-weapon-hud-header">
         <span>OBJETIVO: {targetLabel}</span>
         <button className="fp-weapon-hud-close" onClick={onClose} disabled={firing}>×</button>
       </div>
-      {weapons.length === 0 ? (
-        <div className="fp-weapon-hud-empty">sin armas montadas</div>
-      ) : (
-        <ul className="fp-weapon-hud-list">
-          {weapons.map((w) => {
-            const stats = weaponCatalog[w.weapon_name]
-            const outOfAmmo = w.ammo_remaining === 0
-            const on = selected.has(w.id) && !outOfAmmo
-            return (
-              <li key={w.id} className={`fp-weapon-hud-row${outOfAmmo ? ' out-of-ammo' : ''}`}>
+      {melee ? (
+        <>
+          <ul className="fp-weapon-hud-list">
+            {meleeOptions.map((opt) => (
+              <li key={opt.type} className="fp-weapon-hud-row">
                 <button
                   type="button"
-                  className={`fp-weapon-toggle${on ? ' on' : ''}`}
-                  role="switch"
-                  aria-checked={on}
-                  disabled={outOfAmmo || firing}
-                  onClick={() => toggle(w.id)}
-                />
-                <span className="fp-weapon-hud-name">{w.weapon_name}</span>
-                <span className="fp-weapon-hud-stats">
-                  {stats ? `DMG:${stats.damage}   HEAT:${stats.heat}` : '—'}
-                  {w.ammo_remaining != null && ` · ${w.ammo_remaining}`}
-                </span>
+                  className={`fp-melee-option${meleeType === opt.type ? ' selected' : ''}`}
+                  disabled={!opt.enabled || firing}
+                  onClick={() => setMeleeType(opt.type)}
+                >
+                  {opt.label}
+                </button>
               </li>
-            )
-          })}
-        </ul>
+            ))}
+          </ul>
+          {meleeType === 'punch' && (
+            <div className="fp-melee-arm-picker">
+              <button
+                type="button"
+                className={`fp-melee-option${meleeArm === 'left' ? ' selected' : ''}`}
+                disabled={firing}
+                onClick={() => setMeleeArm('left')}
+              >
+                BRAZO IZQ.
+              </button>
+              <button
+                type="button"
+                className={`fp-melee-option${meleeArm === 'right' ? ' selected' : ''}`}
+                disabled={firing}
+                onClick={() => setMeleeArm('right')}
+              >
+                BRAZO DCHO.
+              </button>
+            </div>
+          )}
+          <button
+            className="fp-weapon-hud-fire"
+            disabled={firing || !meleeOptions.find((o) => o.type === meleeType)?.enabled}
+            onClick={() => melee.onAttack(meleeType, meleeType === 'punch' ? meleeArm : undefined)}
+          >
+            {firing ? 'ATACANDO…' : 'ATACAR'}
+          </button>
+        </>
+      ) : weapons.length === 0 ? (
+        <div className="fp-weapon-hud-empty">sin armas montadas</div>
+      ) : (
+        <>
+          <ul className="fp-weapon-hud-list">
+            {weapons.map((w) => {
+              const stats = weaponCatalog[w.weapon_name]
+              const outOfAmmo = w.ammo_remaining === 0
+              const on = selected.has(w.id) && !outOfAmmo
+              return (
+                <li key={w.id} className={`fp-weapon-hud-row${outOfAmmo ? ' out-of-ammo' : ''}`}>
+                  <button
+                    type="button"
+                    className={`fp-weapon-toggle${on ? ' on' : ''}`}
+                    role="switch"
+                    aria-checked={on}
+                    disabled={outOfAmmo || firing}
+                    onClick={() => toggle(w.id)}
+                  />
+                  <span className="fp-weapon-hud-name">{w.weapon_name}</span>
+                  <span className="fp-weapon-hud-stats">
+                    {stats ? `DMG:${stats.damage}   HEAT:${stats.heat}` : '—'}
+                    {w.ammo_remaining != null && ` · ${w.ammo_remaining}`}
+                  </span>
+                </li>
+              )
+            })}
+          </ul>
+          <button
+            className="fp-weapon-hud-fire"
+            disabled={selected.size === 0 || firing}
+            onClick={() => onFire([...selected])}
+          >
+            {firing ? 'DISPARANDO…' : 'FIRE'}
+          </button>
+        </>
       )}
-      <button
-        className="fp-weapon-hud-fire"
-        disabled={selected.size === 0 || firing}
-        onClick={() => onFire([...selected])}
-      >
-        {firing ? 'DISPARANDO…' : 'FIRE'}
-      </button>
     </div>
   )
 }
@@ -475,11 +583,19 @@ const PHASES: { key: Phase; label: string }[] = [
 ]
 
 export function FirstPersonView({
-  unit, mech, units, roundState, visibility, lastAttack, unitWalked, onClose,
+  unit, mech, units, mechs, roundState, visibility, lastAttack, unitWalked, onClose,
 }: {
   unit: Unit
   mech: Mech | null
   units: Unit[]
+  /** Every mech in the campaign, same list GMView/TableView/PlayerView
+   * already fetch for their own sheets — only consulted here for
+   * heat_current, to drive SteamPuffs on this cockpit's own <HexMap>
+   * instance for every ally/enemy mech rendered in it (real user
+   * request: "los mechs... desprenderán vapor en todas las vistas de
+   * mapa"). Omitted entirely just renders no steam, same as any caller
+   * that hasn't wired this through yet. */
+  mechs?: Mech[]
   roundState: RoundState | null
   /** From useTableSocket — re-run the enemies fetch on every broadcast so
    * a foe that moves (or a new one that comes into view) while this
@@ -784,6 +900,21 @@ export function FirstPersonView({
     setSelectedTargetId(null)
   }
 
+  // Melee phase's single-attack equivalent of fireVolley above.
+  const fireMelee = async (attackType: MeleeAttackType, arm?: 'left' | 'right') => {
+    if (selectedTargetId == null) return
+    setFiringVolley(true)
+    try {
+      await submitMeleeAttack(unit.id, selectedTargetId, attackType, arm)
+    } catch {
+      // rejected (not adjacent/incapacitated/movement doesn't qualify) —
+      // same silent-skip stance as fireVolley above.
+    }
+    if (unit.pilot_id != null) await markRoundActed(unit.campaign_id, unit.pilot_id).catch(() => {})
+    setFiringVolley(false)
+    setSelectedTargetId(null)
+  }
+
   const camera = useMemo(() => {
     if (!map) return null
     const [centerX, centerZ] = mapCenter(map.tiles)
@@ -928,6 +1059,11 @@ export function FirstPersonView({
   const sceneUnits = units.filter(
     (u) => u.id !== unit.id && (u.pilot_faction === unit.pilot_faction || visibleEnemyUnitIds.has(u.id)),
   )
+  const heatByUnitId = new Map(
+    sceneUnits.filter((u) => u.mech_id != null).map((u) => [u.id, mechs?.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
+  )
+  const proneUnitIds = new Set(sceneUnits.filter((u) => mechs?.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
+  const shutdownUnitIds = new Set(sceneUnits.filter((u) => mechs?.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
 
   return (
     <div className="first-person-view">
@@ -1062,6 +1198,9 @@ export function FirstPersonView({
                     onUnitClick={onFpvUnitClick}
                     walkPaths={walkPaths}
                     outlineUnitIds={visibleEnemyUnitIds}
+                    heatByUnitId={heatByUnitId}
+                    proneUnitIds={proneUnitIds}
+                    shutdownUnitIds={shutdownUnitIds}
                   />
                 </Suspense>
                 <EnemyMarkersController
@@ -1120,6 +1259,17 @@ export function FirstPersonView({
               firing={firingVolley}
               onFire={fireVolley}
               onClose={() => setSelectedTargetId(null)}
+              melee={phase === 'melee' ? {
+                canCharge: (() => {
+                  const move = roundState?.moves.find((m) => m.unit_id === unit.id)
+                  return move != null && (move.movement_type === 'walk' || move.movement_type === 'run') && move.hexes_moved > 0
+                })(),
+                canDfa: (() => {
+                  const move = roundState?.moves.find((m) => m.unit_id === unit.id)
+                  return move != null && move.movement_type === 'jump'
+                })(),
+                onAttack: fireMelee,
+              } : undefined}
             />
           )}
           {pendingFacing?.kind === 'move' && (

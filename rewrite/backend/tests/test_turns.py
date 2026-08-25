@@ -473,3 +473,160 @@ def test_melee_target_pilot_ids_populated_when_adjacent(campaign):
     attacker_pilot, target_pilot = _two_mechs_movement_complete(campaign, distance_apart=1)
     state = turns.get_round(campaign["id"])
     assert set(state["melee_target_pilot_ids"]) == {attacker_pilot["id"], target_pilot["id"]}
+
+
+# ---- Heat Phase -----------------------------------------------------------
+
+
+def test_resolve_heat_phase_is_idempotent(campaign):
+    turns.start_round(campaign["id"])
+    first = turns.resolve_heat_phase(campaign["id"])
+    assert first.get("already_resolved") is not True
+    second = turns.resolve_heat_phase(campaign["id"])
+    assert second["already_resolved"] is True
+    assert second["results"] == []
+
+
+def test_resolve_heat_phase_reflects_in_round_state(campaign):
+    turns.start_round(campaign["id"])
+    assert turns.get_round(campaign["id"])["heat_resolved"] is False
+    turns.resolve_heat_phase(campaign["id"])
+    assert turns.get_round(campaign["id"])["heat_resolved"] is True
+
+
+def test_starting_a_new_round_resets_heat_resolved(campaign):
+    turns.start_round(campaign["id"])
+    turns.resolve_heat_phase(campaign["id"])
+    turns.start_round(campaign["id"])
+    assert turns.get_round(campaign["id"])["heat_resolved"] is False
+
+
+def test_resolve_heat_phase_shuts_down_at_30_with_no_roll_needed(campaign):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Overheated", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS,
+    )
+    turns.start_round(campaign["id"])
+    mechs.add_heat(m["id"], 30)  # added AFTER start_round, which would otherwise dissipate it first
+    result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["shutdown"] is True
+    assert mechs.get_mech(m["id"])["is_shutdown"] is True
+
+
+def test_resolve_heat_phase_below_14_never_shuts_down(campaign):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Cool", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS,
+    )
+    turns.start_round(campaign["id"])
+    mechs.add_heat(m["id"], 13)
+    result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["shutdown"] is None
+    assert mechs.get_mech(m["id"])["is_shutdown"] is False
+
+
+def test_resolve_heat_phase_restarts_automatically_below_14(campaign):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Cooling", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS,
+    )
+    mechs.set_shutdown(m["id"], True)
+    turns.start_round(campaign["id"])  # heat_current stays 0, well below 14
+    result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["restarted"] is True
+    assert mechs.get_mech(m["id"])["is_shutdown"] is False
+
+
+def test_resolve_heat_phase_shutdown_avoid_roll_uses_the_highest_threshold_crossed(campaign):
+    # Heat 26 crosses both the 14 and 26 shutdown brackets in one go — the
+    # rulebook rolls once against the HIGHEST (avoid on 10+), not the 14
+    # bracket's easier avoid-on-4+. A rigged roll of 9 avoids the 14
+    # bracket's TN but must still fail the real (10+) check.
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="VeryHot", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS,
+    )
+    turns.start_round(campaign["id"])
+    mechs.add_heat(m["id"], 26)
+    with patch.object(turns, "_roll_2d6", return_value=9):
+        result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["shutdown"] is True
+    assert mechs.get_mech(m["id"])["is_shutdown"] is True
+
+
+def test_resolve_heat_phase_shutdown_avoided_on_a_successful_roll(campaign):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Lucky", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS,
+    )
+    turns.start_round(campaign["id"])
+    mechs.add_heat(m["id"], 14)  # avoid on 4+
+    with patch.object(turns, "_roll_2d6", return_value=4):
+        result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["shutdown"] is False
+    assert mechs.get_mech(m["id"])["is_shutdown"] is False
+
+
+def test_resolve_heat_phase_ammo_explosion_wounds_pilot_and_zeroes_ammo(campaign, pilot):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Loaded", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"],
+    )
+    mechs.add_weapon(m["id"], "SRM 6", "RT")
+    turns.start_round(campaign["id"])
+    mechs.add_heat(m["id"], 19)  # ammo-explosion bracket only (avoid on 4+), below the 22 shutdown bracket
+    with patch.object(turns, "_roll_2d6", return_value=2):  # fails every avoid roll
+        result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["ammo_explosion"] is not None
+    assert pilots.get_pilot(pilot["id"])["hits"] == 2
+    assert mechs.get_mech(m["id"])["weapons"][0]["ammo_remaining"] == 0
+
+
+def test_resolve_heat_phase_ammo_explosion_avoided_deals_no_damage(campaign, pilot):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Loaded", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"],
+    )
+    mechs.add_weapon(m["id"], "SRM 6", "RT")
+    turns.start_round(campaign["id"])
+    mechs.add_heat(m["id"], 19)
+    with patch.object(turns, "_roll_2d6", return_value=12):  # comfortably beats the avoid-4+ TN
+        result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["ammo_explosion"] is None
+    assert pilots.get_pilot(pilot["id"])["hits"] == 0
+
+
+def test_resolve_heat_phase_life_support_damage_scales_with_heat(campaign, pilot):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Cooked", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"],
+    )
+    from app.systems.battletech import criticals
+    criticals.apply_critical_effects(m["id"], [{"location": "HD", "slot_index": 0, "item_name": "Life Support"}])
+    turns.start_round(campaign["id"])
+    mechs.add_heat(m["id"], 16)  # in the 15-25 bracket (1 wound), not 26+
+    with patch.object(turns, "_roll_2d6", return_value=12):  # avoid every shutdown/ammo roll cleanly
+        result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["pilot_wound"] == 1
+    assert pilots.get_pilot(pilot["id"])["hits"] == 1
+
+
+def test_resolve_heat_phase_no_pilot_wound_without_life_support_hit(campaign, pilot):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Hot But Intact", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"],
+    )
+    turns.start_round(campaign["id"])
+    mechs.add_heat(m["id"], 30)
+    result = turns.resolve_heat_phase(campaign["id"])
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["pilot_wound"] is None
+    assert pilots.get_pilot(pilot["id"])["hits"] == 0
