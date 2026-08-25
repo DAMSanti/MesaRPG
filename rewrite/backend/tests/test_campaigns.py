@@ -1,6 +1,6 @@
 import pytest
 
-from app import campaigns, systems
+from app import campaigns, dice_styles, systems
 from app.systems.battletech import mechs, pilots
 from tests.conftest import ATLAS_LOCATIONS
 
@@ -60,3 +60,26 @@ def test_set_initiative_mode_to_individual(campaign):
 def test_set_initiative_mode_rejects_unknown_mode(campaign):
     with pytest.raises(campaigns.UnknownInitiativeMode):
         campaigns.set_initiative_mode(campaign["id"], "chaotic")
+
+
+def test_new_campaign_defaults_to_no_gm_die_style(campaign):
+    assert campaign["gm_die_style"] is None
+
+
+def test_set_gm_die_style_sets_and_clears(campaign):
+    updated = campaigns.set_gm_die_style(campaign["id"], "chrome-metallic")
+    assert updated["gm_die_style"] == "chrome-metallic"
+    cleared = campaigns.set_gm_die_style(campaign["id"], None)
+    assert cleared["gm_die_style"] is None
+
+
+def test_set_gm_die_style_rejects_unknown_style(campaign):
+    with pytest.raises(dice_styles.UnknownDieStyle):
+        campaigns.set_gm_die_style(campaign["id"], "not-a-real-style")
+
+
+def test_set_gm_die_style_rejects_style_taken_by_a_pilot(campaign):
+    p = pilots.create_pilot(campaign["id"], "First Claim")
+    pilots.set_pilot_die_style(p["id"], "opal-pearl")
+    with pytest.raises(dice_styles.DieStyleTaken):
+        campaigns.set_gm_die_style(campaign["id"], "opal-pearl")

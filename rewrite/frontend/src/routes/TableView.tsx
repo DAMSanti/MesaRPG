@@ -81,10 +81,13 @@ const DICE_VISIBLE_MS = 5000
 const LANE_SPACING = 2.2
 
 function InitiativeDice({
-  rollId, color, lane, onSettled, onDone,
+  rollId, color, dieStyle, lane, onSettled, onDone,
 }: {
   rollId: number | string
   color: string
+  /** The rolling pilot's own die-style pick (../dieStyles.ts), if any —
+   * real user request. */
+  dieStyle: string | null
   /** Which concurrent throw this is (0, 1, 2…) — see TableView's
    * activeThrows — purely for spatial separation, not gameplay. */
   lane: number
@@ -123,7 +126,7 @@ function InitiativeDice({
   return (
     <>
       <Die
-        rollId={seed} color={color}
+        rollId={seed} color={color} style={dieStyle}
         spawn={[THROW_ORIGIN_X, 1.1, laneZ + jitterZ - 0.4]}
         throwVelocity={[speed, 1.4, (seed % 3) * 0.4 - 0.4]}
         onSettled={settle('a')}
@@ -131,7 +134,7 @@ function InitiativeDice({
         onVanished={onDone}
       />
       <Die
-        rollId={seed} color={color}
+        rollId={seed} color={color} style={dieStyle}
         spawn={[THROW_ORIGIN_X, 1.3, laneZ + jitterZ + 0.4]}
         throwVelocity={[speed - 0.4, 1.7, (seed % 3) * 0.4 - 0.6]}
         onSettled={settle('b')}
@@ -188,7 +191,7 @@ function TableViewBattletech() {
   // entry's own `key` gives it a stable <InitiativeDice> identity, and
   // its index in the array becomes its lane (see LANE_SPACING) so
   // concurrent throws land apart instead of on top of each other.
-  const [activeThrows, setActiveThrows] = useState<{ key: number; pilotId: number; color: string }[]>([])
+  const [activeThrows, setActiveThrows] = useState<{ key: number; pilotId: number; color: string; dieStyle: string | null }[]>([])
   useEffect(() => {
     if (!initiativeRollRequest) return
     setActiveThrows((prev) => {
@@ -198,7 +201,10 @@ function TableViewBattletech() {
       // never reporting). Only a genuinely different pilot's request
       // adds a new entry.
       if (prev.some((t) => t.pilotId === initiativeRollRequest.pilot_id)) return prev
-      return [...prev, { key: Date.now(), pilotId: initiativeRollRequest.pilot_id, color: initiativeRollRequest.color }]
+      return [...prev, {
+        key: Date.now(), pilotId: initiativeRollRequest.pilot_id,
+        color: initiativeRollRequest.color, dieStyle: initiativeRollRequest.die_style,
+      }]
     })
   }, [initiativeRollRequest])
 
@@ -345,6 +351,7 @@ function TableViewBattletech() {
               key={t.key}
               rollId={t.key}
               color={t.color}
+              dieStyle={t.dieStyle}
               lane={i}
               onSettled={reportSettledInitiative(t.pilotId)}
               onDone={() => setActiveThrows((prev) => prev.filter((x) => x.key !== t.key))}

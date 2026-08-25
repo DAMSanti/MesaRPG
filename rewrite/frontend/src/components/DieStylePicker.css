@@ -1,0 +1,94 @@
+.die-style-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.die-style-swatch {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.die-style-swatch:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.die-style-swatch.mine {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.die-style-swatch.taken {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.die-style-swatch-color {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  background: var(--die-style-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Metallic/pearl swatches get an extra diagonal sheen layered on top of
+   the flat base color — same idea as Die.tsx's own metalness/iridescence
+   distinction, just as a cheap CSS gradient instead of a 3D material. */
+.die-style-swatch.material-metallic .die-style-swatch-color {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0%, transparent 35%, transparent 65%, rgba(0, 0, 0, 0.35) 100%),
+    var(--die-style-color);
+}
+
+.die-style-swatch.material-pearl .die-style-swatch-color {
+  background:
+    linear-gradient(135deg, rgba(255, 158, 203, 0.35), rgba(158, 203, 255, 0.35) 45%, rgba(255, 232, 158, 0.35) 100%),
+    var(--die-style-color);
+}
+
+.die-style-marking {
+  color: #fff;
+  mix-blend-mode: difference;
+  font-size: 22px;
+  font-weight: 700;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+}
+
+.die-style-check {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  color: var(--accent);
+  font-weight: 700;
+  text-shadow: 0 0 3px var(--bg-deep);
+}
+
+.die-style-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.die-style-name {
+  font-size: 11px;
+  color: var(--text);
+}
+
+.die-style-status {
+  font-size: 10px;
+  color: var(--text-secondary);
+}

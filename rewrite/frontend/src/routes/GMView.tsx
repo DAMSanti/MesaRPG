@@ -20,9 +20,11 @@ import { Modal } from '../components/Modal'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Tooltip } from '../components/Tooltip'
 import { CameraBridge } from '../components/CameraBridge'
+import { DieStylePicker } from '../components/DieStylePicker'
 import { MECH_CHASSIS_ASSETS } from '../mechAssets'
 import { FACTION_COLORS, FACTION_LABELS, NEUTRAL_UNIT_COLOR, type Faction } from '../factions'
 import { suggestPilotColor } from '../pilotColors'
+import { DIE_STYLES, buildHeldByMap } from '../dieStyles'
 import {
   activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative,
 } from '../rounds'
@@ -58,6 +60,7 @@ import {
   requestInitiative,
   requestMovement,
   reviewPilot,
+  setGmDieStyle,
   setInitiativeMode,
   startRound,
   undoLastAction,
@@ -369,6 +372,20 @@ function GMViewBattletech() {
       setCampaign(c)
     } catch {
       setError('No se pudo cambiar el modo de iniciativa.')
+    }
+  }
+
+  // Toggle-off if re-picking your own current style, otherwise switch
+  // directly (the old one is simply overwritten server-side, freeing it).
+  const submitGmDieStyle = async (styleId: string) => {
+    if (!campaignId) return
+    const next = campaign?.gm_die_style === styleId ? null : styleId
+    try {
+      const c = await setGmDieStyle(campaignId, next)
+      setCampaign(c)
+    } catch (err) {
+      setError(err instanceof ApiError && err.status === 409 ? 'Ese estilo de dados ya está en uso.' : 'No se pudo cambiar el estilo de dados.')
+      refetch()
     }
   }
 
@@ -1029,6 +1046,14 @@ function GMViewBattletech() {
 
       {showSettingsModal && (
         <Modal title="Ajustes" onClose={() => setShowSettingsModal(false)}>
+          <h3 className="step-label">Dados</h3>
+          <DieStylePicker
+            styles={DIE_STYLES}
+            heldBy={buildHeldByMap(pilots, campaign)}
+            currentStyleId={campaign?.gm_die_style ?? null}
+            onPick={submitGmDieStyle}
+          />
+
           <h3 className="step-label">House Rules</h3>
           <div className="row settings-row">
             <span>Tipo de iniciativa</span>
@@ -1264,8 +1289,6 @@ function GMViewBattletech() {
               setMenu(null)
             }}
             onSkipMovement={() => { submitMoveUnit(menu.unit, menu.unit.q, menu.unit.r, false); setMenu(null) }}
-            acted={menuUnitPilot != null && (roundState?.acted_pilot_ids.includes(menuUnitPilot.id) ?? false)}
-            onMarkActed={() => { if (menuUnitPilot) submitMarkActed(menuUnitPilot.id); setMenu(null) }}
           />
         )
       })()}

@@ -1,4 +1,4 @@
-from . import db, systems
+from . import db, dice_styles, systems
 
 INITIATIVE_MODES = {"team", "individual"}
 
@@ -20,7 +20,7 @@ def list_campaigns() -> list[dict]:
     with db.connect() as conn:
         rows = conn.execute(
             """
-            SELECT c.id, c.name, c.created_at, c.active_map_id, c.system, c.initiative_mode,
+            SELECT c.id, c.name, c.created_at, c.active_map_id, c.system, c.initiative_mode, c.gm_die_style,
                    (SELECT COUNT(*) FROM pilots WHERE campaign_id = c.id) AS pilot_count,
                    (SELECT COUNT(*) FROM mechs WHERE campaign_id = c.id) AS mech_count
             FROM campaigns c
@@ -55,6 +55,20 @@ def set_initiative_mode(campaign_id: int, mode: str) -> dict | None:
         return _get(conn, campaign_id)
 
 
+def set_gm_die_style(campaign_id: int, style: str | None) -> dict | None:
+    """The GM's own pick (real user request) — GM has no `pilots` row of
+    their own, so this lives directly on the campaign. Mirrors
+    pilots.set_pilot_die_style: style=None always clears, a non-None
+    style is validated + checked against the SAME exclusivity pool
+    (pilots.die_style ⨯ campaigns.gm_die_style) via dice_styles."""
+    with db.connect() as conn:
+        if style is not None:
+            dice_styles.check_style_id(style)
+            dice_styles.check_available(conn, campaign_id, style)
+        conn.execute("UPDATE campaigns SET gm_die_style = ? WHERE id = ?", (style, campaign_id))
+        return _get(conn, campaign_id)
+
+
 def _with_grid_type(campaign: dict) -> dict:
     campaign["grid_type"] = systems.grid_type_for(campaign["system"])
     return campaign
@@ -62,7 +76,7 @@ def _with_grid_type(campaign: dict) -> dict:
 
 def _get(conn, campaign_id: int) -> dict | None:
     row = conn.execute(
-        "SELECT id, name, created_at, active_map_id, system, initiative_mode FROM campaigns WHERE id = ?",
+        "SELECT id, name, created_at, active_map_id, system, initiative_mode, gm_die_style FROM campaigns WHERE id = ?",
         (campaign_id,),
     ).fetchone()
     return _with_grid_type(dict(row)) if row else None

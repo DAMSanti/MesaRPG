@@ -24,7 +24,6 @@ export function UnitContextMenu({
   showAttack,
   showRollInitiative, canRollInitiative, onRollInitiative,
   showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement,
-  acted, onMarkActed,
 }: {
   unit: Unit
   mech: Mech | null
@@ -65,11 +64,6 @@ export function UnitContextMenu({
    * as onRotate, just with no facing change either (real user request:
    * "saltar movimiento"). */
   onSkipMovement?: () => void
-  /** Whether this pilot has already ended their activation this round —
-   * shown regardless of phase, unlike the movement/attack actions above
-   * (marking acted is a GM utility, not tied to one specific phase). */
-  acted?: boolean
-  onMarkActed?: () => void
 }) {
   const label = mech ? `${mech.chassis} ${mech.model ?? ''}`.trim() : `unidad #${unit.id}`
 
@@ -94,7 +88,6 @@ export function UnitContextMenu({
           <button disabled={!canPhaseMove} onClick={onSkipMovement}>Saltar movimiento</button>
         </>
       )}
-      <button disabled={acted} onClick={onMarkActed}>{acted ? '✓ Ya actuó' : 'Marcar activación'}</button>
     </DropdownMenu>
   )
 }

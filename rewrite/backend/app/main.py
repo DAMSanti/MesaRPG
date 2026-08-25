@@ -15,7 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import campaigns, db, equipment, events, mapgen, maps, mech_templates, rolls, systems, table_session, units
+from . import campaigns, db, dice_styles, equipment, events, mapgen, maps, mech_templates, rolls, systems, table_session, units
 from .systems.battletech import combat, mechs, movement, pilots, turns, weapons
 from .systems.dnd5e import characters as dnd_characters
 from .systems.dnd5e import combat as dnd_combat
@@ -108,6 +108,27 @@ def set_initiative_mode(campaign_id: int, body: InitiativeModeIn) -> dict:
         return campaigns.set_initiative_mode(campaign_id, body.mode)
     except campaigns.UnknownInitiativeMode as exc:
         raise HTTPException(422, str(exc)) from exc
+
+
+class GmDieStyleIn(BaseModel):
+    style: str | None = None
+
+
+@app.post("/api/campaigns/{campaign_id}/gm-die-style")
+async def set_gm_die_style(campaign_id: int, body: GmDieStyleIn) -> dict:
+    _require_campaign(campaign_id)
+    try:
+        updated = campaigns.set_gm_die_style(campaign_id, body.style)
+    except dice_styles.UnknownDieStyle as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except dice_styles.DieStyleTaken as exc:
+        raise HTTPException(409, str(exc)) from exc
+    # Deliberate deviation from set_initiative_mode above (which never
+    # broadcasts) — other clients' style pickers need to learn in real
+    # time that the GM just took a slot, same reason every pilot
+    # mutation already broadcasts roster_updated.
+    await manager.broadcast(campaign_id, {"type": "roster_updated"})
+    return updated
 
 
 def _require_campaign(campaign_id: int) -> dict:
@@ -259,6 +280,29 @@ async def patch_pilot(
         raise HTTPException(422, str(exc)) from exc
     for campaign_id, map_id in affected_maps:
         await _broadcast_visibility(campaign_id, map_id)
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
+    return _sanitize_pilot(updated, x_device_token)
+
+
+class DieStyleIn(BaseModel):
+    style: str | None = None
+
+
+@app.post("/api/pilots/{pilot_id}/die-style")
+async def set_pilot_die_style(
+    pilot_id: int, body: DieStyleIn, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
+) -> dict:
+    """A dedicated endpoint rather than folding into PilotPatchIn above —
+    see pilots.set_pilot_die_style's own docstring on why style=None
+    needs to mean "clear it", which PilotPatchIn's generic
+    None-means-unchanged semantics can't express."""
+    _require_owner(_require_pilot(pilot_id), x_device_token)
+    try:
+        updated = pilots.set_pilot_die_style(pilot_id, body.style)
+    except dice_styles.UnknownDieStyle as exc:
+        raise HTTPException(422, str(exc)) from exc
+    except dice_styles.DieStyleTaken as exc:
+        raise HTTPException(409, str(exc)) from exc
     await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
     return _sanitize_pilot(updated, x_device_token)
 

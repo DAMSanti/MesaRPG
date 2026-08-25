@@ -61,6 +61,7 @@ export interface InitiativeRollRequested {
   pilot_id: number
   pilot_name: string
   color: string
+  die_style: string | null
 }
 
 // "This unit wants to move, here's where it can go" — broadcast by

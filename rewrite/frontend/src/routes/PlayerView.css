@@ -47,6 +47,24 @@
   font-size: 12px;
 }
 
+/* Same treatment as GMView.css's .nav-gear-btn — duplicated rather than
+   shared, same precedent as .log/.event-log already duplicated between
+   the two stylesheets this session. */
+.nav-gear-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 15px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.nav-gear-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
 .player-view h1 {
   font-size: 20px;
   color: var(--accent);

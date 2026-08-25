@@ -12,6 +12,7 @@ export interface Campaign {
   system: string
   grid_type: 'hex' | 'square'
   initiative_mode: InitiativeMode
+  gm_die_style: string | null
   pilot_count: number
   mech_count: number
 }
@@ -230,6 +231,10 @@ export interface Pilot {
   status: SheetStatus
   review_note: string | null
   color: string
+  /** A DIE_STYLES id (../dieStyles.ts) or null if this pilot hasn't
+   * picked one — exclusive across the whole campaign (see
+   * setPilotDieStyle). */
+  die_style: string | null
   is_own: boolean
   /** Whether this pilot has a 4-digit PIN set (never the PIN/hash
    * itself, which never leaves the server) — a pilot without one is
@@ -702,6 +707,14 @@ export const setInitiativeMode = (campaignId: number, mode: InitiativeMode) =>
     body: JSON.stringify({ mode }),
   })
 
+// GM's own die-style pick (real user request) — GM has no `pilots` row,
+// so this lives on the campaign itself. style=null clears it.
+export const setGmDieStyle = (campaignId: number, style: string | null) =>
+  request<Campaign>(`/api/campaigns/${campaignId}/gm-die-style`, {
+    method: 'POST',
+    body: JSON.stringify({ style }),
+  })
+
 export const markRoundActed = (campaignId: number, pilotId: number) =>
   request<RoundState>(`/api/campaigns/${campaignId}/round/act`, {
     method: 'POST',
@@ -802,6 +815,17 @@ export const updatePilot = (
   }>,
   token?: string,
 ) => request<Pilot>(`/api/pilots/${pilotId}`, { method: 'PATCH', body: JSON.stringify(body), headers: tokenHeaders(token) })
+
+// Separate from updatePilot above on purpose — that PATCH's `Partial<...>`
+// body treats every omitted field as "leave unchanged", which can't
+// express "clear my die style back to unset" (style: null). This
+// dedicated endpoint always applies exactly what's sent.
+export const setPilotDieStyle = (pilotId: number, style: string | null, token?: string) =>
+  request<Pilot>(`/api/pilots/${pilotId}/die-style`, {
+    method: 'POST',
+    body: JSON.stringify({ style }),
+    headers: tokenHeaders(token),
+  })
 
 export const deletePilot = (pilotId: number) =>
   request<{ deleted: boolean }>(`/api/pilots/${pilotId}`, { method: 'DELETE' })

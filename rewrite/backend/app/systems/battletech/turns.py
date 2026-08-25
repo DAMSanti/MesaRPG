@@ -195,7 +195,20 @@ def request_pilot_initiative(campaign_id: int, pilot_id: int) -> dict:
     would corrupt state if it did (report_pilot_initiative is the one
     with the real idempotency guard)."""
     _, pilot = _validate_can_roll(campaign_id, pilot_id)
-    return {"pilot_id": pilot["id"], "pilot_name": pilot["name"], "color": pilot["color"]}
+    # A GM-controlled pilot (enemy/npc — no device of their own) falls
+    # back to the GM's own die-style pick when it hasn't set one of its
+    # own (real user request: "el GM selecciona dados... para sus
+    # tiradas de mechs enemigos"). A player pilot's own pick always wins
+    # regardless of faction, and an explicit per-pilot pick on an enemy
+    # (unusual, but the field allows it) still takes priority too.
+    die_style = pilot["die_style"]
+    if die_style is None and pilot["faction"] in ("enemy", "npc"):
+        campaign = campaigns.get_campaign(campaign_id)
+        die_style = campaign["gm_die_style"] if campaign else None
+    return {
+        "pilot_id": pilot["id"], "pilot_name": pilot["name"], "color": pilot["color"],
+        "die_style": die_style,
+    }
 
 
 def report_pilot_initiative(campaign_id: int, pilot_id: int, roll: int) -> dict:

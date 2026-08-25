@@ -1,7 +1,7 @@
 import hashlib
 import secrets
 
-from ... import db, events
+from ... import db, dice_styles, events
 
 # player = a player's own character; enemy = GM-controlled hostile;
 # npc = non-aggressive (merchants, quest contacts, etc.) — Battletech only
@@ -145,7 +145,7 @@ def list_pilots(campaign_id: int) -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, campaign_id, name, callsign, gunnery, piloting, faction,
-                   hits, status, owner_token, review_note, color, created_at,
+                   hits, status, owner_token, review_note, color, die_style, created_at,
                    (pin_hash IS NOT NULL) AS has_pin
             FROM pilots WHERE campaign_id = ? ORDER BY id
             """,
@@ -230,6 +230,25 @@ def update_pilot(
         return _get(conn, pilot_id)
 
 
+def set_pilot_die_style(pilot_id: int, style: str | None) -> dict | None:
+    """A dedicated setter (not folded into update_pilot's generic
+    `fields` dict) because that dict treats any None it receives as
+    "leave unchanged" — exactly wrong for this field's required
+    toggle-off-to-NULL semantics (clicking your own held style clears
+    it back to unset). style=None here always means "clear it", not
+    "don't touch it". `style` is validated + checked for exclusivity
+    only when non-None; clearing is always allowed."""
+    with db.connect() as conn:
+        pilot = conn.execute("SELECT campaign_id FROM pilots WHERE id = ?", (pilot_id,)).fetchone()
+        if not pilot:
+            return None
+        if style is not None:
+            dice_styles.check_style_id(style)
+            dice_styles.check_available(conn, pilot["campaign_id"], style, exclude_pilot_id=pilot_id)
+        conn.execute("UPDATE pilots SET die_style = ? WHERE id = ?", (style, pilot_id))
+        return _get(conn, pilot_id)
+
+
 def delete_pilot(pilot_id: int, _log: bool = True) -> bool:
     """GM-initiated removal. `mechs.pilot_id` and `units.pilot_id` are
     `ON DELETE SET NULL` (db.py) — any mech/unit that had this pilot
@@ -256,7 +275,7 @@ def _get(conn, pilot_id: int) -> dict | None:
     row = conn.execute(
         """
         SELECT id, campaign_id, name, callsign, gunnery, piloting, faction,
-               hits, status, owner_token, review_note, color, created_at,
+               hits, status, owner_token, review_note, color, die_style, created_at,
                (pin_hash IS NOT NULL) AS has_pin
         FROM pilots WHERE id = ?
         """,

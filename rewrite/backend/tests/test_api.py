@@ -386,6 +386,58 @@ def test_patch_pilot_requires_owner_token_while_pending_but_not_once_approved():
         assert now_open.status_code == 200
 
 
+def test_pilot_die_style_endpoint_sets_and_broadcasts():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        p = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Styled"}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/pilots/{p['id']}/die-style", json={"style": "opal-pearl"})
+            assert res.status_code == 200
+            assert res.json()["die_style"] == "opal-pearl"
+            broadcast = ws.receive_json()
+            assert broadcast["type"] == "roster_updated"
+
+
+def test_pilot_die_style_endpoint_422_on_unknown_style():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        p = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Confused"}).json()
+        res = c.post(f"/api/pilots/{p['id']}/die-style", json={"style": "not-a-real-style"})
+        assert res.status_code == 422
+
+
+def test_pilot_die_style_endpoint_409_when_already_taken():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        a = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "First"}).json()
+        b = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Second"}).json()
+        c.post(f"/api/pilots/{a['id']}/die-style", json={"style": "opal-pearl"})
+        res = c.post(f"/api/pilots/{b['id']}/die-style", json={"style": "opal-pearl"})
+        assert res.status_code == 409
+
+
+def test_gm_die_style_endpoint_sets_and_broadcasts():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/campaigns/{camp['id']}/gm-die-style", json={"style": "chrome-metallic"})
+            assert res.status_code == 200
+            assert res.json()["gm_die_style"] == "chrome-metallic"
+            broadcast = ws.receive_json()
+            assert broadcast["type"] == "roster_updated"
+
+
+def test_gm_die_style_endpoint_409_when_taken_by_a_pilot():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        p = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "First Claim"}).json()
+        c.post(f"/api/pilots/{p['id']}/die-style", json={"style": "opal-pearl"})
+        res = c.post(f"/api/campaigns/{camp['id']}/gm-die-style", json={"style": "opal-pearl"})
+        assert res.status_code == 409
+
+
 def _atlas_body(**overrides) -> dict:
     body = {"chassis": "Atlas", "tonnage": 100, "walk_mp": 3, "run_mp": 5, "locations": _ATLAS_LOCATIONS}
     body.update(overrides)
@@ -676,7 +728,7 @@ def test_request_initiative_endpoint_broadcasts_without_touching_rolls():
             requested = c.post(
                 f"/api/campaigns/{camp['id']}/round/roll-initiative", json={"pilot_id": p["id"]}
             ).json()
-            assert requested == {"pilot_id": p["id"], "pilot_name": "Solo", "color": "#ff00aa"}
+            assert requested == {"pilot_id": p["id"], "pilot_name": "Solo", "color": "#ff00aa", "die_style": None}
             broadcast = ws.receive_json()
             assert broadcast["type"] == "initiative_roll_requested"
             assert broadcast["pilot_id"] == p["id"]

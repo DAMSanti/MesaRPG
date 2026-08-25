@@ -1,6 +1,6 @@
 import pytest
 
-from app import campaigns
+from app import campaigns, dice_styles
 from app.systems.battletech import pilots
 
 
@@ -222,3 +222,53 @@ def test_create_pilot_allows_same_owner_token_in_different_campaigns(campaign):
     a = pilots.create_pilot(campaign["id"], "Same Device", owner_token="device-x")
     b = pilots.create_pilot(other["id"], "Same Device", owner_token="device-x")
     assert a["id"] != b["id"]
+
+
+def test_pilot_die_style_defaults_to_none(campaign):
+    p = pilots.create_pilot(campaign["id"], "Unstyled")
+    assert p["die_style"] is None
+
+
+def test_set_pilot_die_style_sets_and_clears(campaign):
+    p = pilots.create_pilot(campaign["id"], "Styled")
+    updated = pilots.set_pilot_die_style(p["id"], "chrome-metallic")
+    assert updated["die_style"] == "chrome-metallic"
+    cleared = pilots.set_pilot_die_style(p["id"], None)
+    assert cleared["die_style"] is None
+
+
+def test_set_pilot_die_style_rejects_unknown_style(campaign):
+    p = pilots.create_pilot(campaign["id"], "Confused")
+    with pytest.raises(dice_styles.UnknownDieStyle):
+        pilots.set_pilot_die_style(p["id"], "not-a-real-style")
+
+
+def test_set_pilot_die_style_rejects_style_taken_by_another_pilot(campaign):
+    a = pilots.create_pilot(campaign["id"], "First")
+    b = pilots.create_pilot(campaign["id"], "Second")
+    pilots.set_pilot_die_style(a["id"], "opal-pearl")
+    with pytest.raises(dice_styles.DieStyleTaken):
+        pilots.set_pilot_die_style(b["id"], "opal-pearl")
+
+
+def test_set_pilot_die_style_allows_repicking_your_own_style(campaign):
+    p = pilots.create_pilot(campaign["id"], "Consistent")
+    pilots.set_pilot_die_style(p["id"], "opal-pearl")
+    updated = pilots.set_pilot_die_style(p["id"], "opal-pearl")
+    assert updated["die_style"] == "opal-pearl"
+
+
+def test_set_pilot_die_style_allows_same_style_in_different_campaigns(campaign):
+    other = campaigns.create_campaign("Other Campaign")
+    a = pilots.create_pilot(campaign["id"], "Here")
+    b = pilots.create_pilot(other["id"], "There")
+    pilots.set_pilot_die_style(a["id"], "opal-pearl")
+    updated = pilots.set_pilot_die_style(b["id"], "opal-pearl")
+    assert updated["die_style"] == "opal-pearl"
+
+
+def test_set_pilot_die_style_rejects_style_taken_by_the_gm(campaign):
+    p = pilots.create_pilot(campaign["id"], "Outranked")
+    campaigns.set_gm_die_style(campaign["id"], "opal-pearl")
+    with pytest.raises(dice_styles.DieStyleTaken):
+        pilots.set_pilot_die_style(p["id"], "opal-pearl")

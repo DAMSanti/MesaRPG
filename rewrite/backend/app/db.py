@@ -380,6 +380,11 @@ def init_db() -> None:
         # PIN) stays freely selectable, same as today.
         _ensure_column(conn, "pilots", "pin_hash", "TEXT")
         _ensure_column(conn, "pilots", "pin_salt", "TEXT")
+        # NULL = no style picked yet — exempt from the die-style exclusivity
+        # pool (see app/dice_styles.py), renders with the classic plain-box/
+        # pilot-color look, same as every pilot before this feature existed.
+        _ensure_column(conn, "pilots", "die_style", "TEXT")
+        _ensure_column(conn, "campaigns", "gm_die_style", "TEXT")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

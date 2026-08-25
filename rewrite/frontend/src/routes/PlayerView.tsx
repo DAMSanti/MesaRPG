@@ -9,11 +9,13 @@ import { Modal } from '../components/Modal'
 import { MechRecordSheet } from '../components/MechRecordSheet'
 import { FirstPersonView } from '../components/FirstPersonView'
 import { FacingPicker } from '../components/FacingPicker'
+import { DieStylePicker } from '../components/DieStylePicker'
 import { buildMechLocationsPayload, emptyLocationsForm, locationsFormFromMechLocationIn } from '../characterSheet'
 import { getDeviceToken } from '../deviceToken'
 import {
   addMechEquipment,
   addMechWeapon,
+  ApiError,
   createMech,
   createPilot,
   deleteMech,
@@ -31,6 +33,7 @@ import {
   requestMovement,
   resubmitPilot,
   requestInitiative,
+  setPilotDieStyle,
   updateMechCritical,
   updateMechLocation,
   updatePilot,
@@ -46,6 +49,7 @@ import {
 } from '../api'
 import { activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS } from '../rounds'
 import { suggestPilotColor } from '../pilotColors'
+import { DIE_STYLES, buildHeldByMap } from '../dieStyles'
 import { MECH_CHASSIS_ASSETS } from '../mechAssets'
 import './PlayerView.css'
 
@@ -142,6 +146,7 @@ export function PlayerView() {
   const [tab, setTab] = useState<'ficha' | 'acciones'>('ficha')
   const [showFirstPerson, setShowFirstPerson] = useState(false)
   const [showRotatePicker, setShowRotatePicker] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
 
   const refetch = async () => {
     if (campaignId == null) return
@@ -427,6 +432,20 @@ export function PlayerView() {
     refetch()
   }
 
+  // Toggle-off if re-picking your own current style, otherwise switch
+  // directly (the old one is simply overwritten server-side, freeing it).
+  const submitPilotDieStyle = async (styleId: string) => {
+    if (!pilot) return
+    const next = pilot.die_style === styleId ? null : styleId
+    try {
+      await setPilotDieStyle(pilot.id, next, getDeviceToken())
+      refetch()
+    } catch (err) {
+      setError(err instanceof ApiError && err.status === 409 ? 'Ese estilo de dados ya está en uso.' : 'No se pudo cambiar el estilo de dados.')
+      refetch()
+    }
+  }
+
   const editLocation = async (
     location: string,
     field: 'armor_current' | 'armor_rear_current' | 'structure_current',
@@ -583,6 +602,12 @@ export function PlayerView() {
           </button>
         )}
         <span className="player-tabs-campaign">{campaign?.name ?? ''}</span>
+        {/* Dice styles are BattleTech-only (pilots.die_style has no D&D
+            equivalent, no D&D roll ever reads it) — hidden for a D&D
+            table rather than showing a control that can never pay off. */}
+        {campaign?.system !== 'dnd5e' && (
+          <button className="nav-gear-btn" onClick={() => setShowSettingsModal(true)} title="Ajustes">⚙️</button>
+        )}
       </nav>
       {error && <div className="error-banner">{error} <button onClick={() => setError(null)}>×</button></div>}
       <h1>
@@ -740,6 +765,19 @@ export function PlayerView() {
           onPick={submitRotate}
           onDismiss={() => setShowRotatePicker(false)}
         />
+      )}
+
+      {showSettingsModal && (
+        <Modal title="Ajustes" onClose={() => setShowSettingsModal(false)}>
+          <h3 className="step-label">Dados</h3>
+          <DieStylePicker
+            styles={DIE_STYLES}
+            heldBy={buildHeldByMap(pilots, campaign)}
+            currentStyleId={pilot?.die_style ?? null}
+            onPick={submitPilotDieStyle}
+            disabled={!pilot}
+          />
+        </Modal>
       )}
 
       {editingRejectedPilot && (

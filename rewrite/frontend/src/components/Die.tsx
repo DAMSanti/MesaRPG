@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
+import { resolveDieStyle, type DieMarkingKind } from '../dieStyles'
 
 // Pip layout per face value, on a 3x3 grid (-1, 0, 1 in each axis).
 const PIP_LAYOUTS: Record<number, [number, number][]> = {
@@ -38,7 +39,7 @@ const PIP_LAYOUTS: Record<number, [number, number][]> = {
   ],
 }
 
-function createFaceTexture(pips: number, faceColor: string): THREE.CanvasTexture {
+function createFaceTexture(pips: number, faceColor: string, marking: DieMarkingKind = 'pips'): THREE.CanvasTexture {
   const size = 256
   const canvas = document.createElement('canvas')
   canvas.width = size
@@ -52,13 +53,23 @@ function createFaceTexture(pips: number, faceColor: string): THREE.CanvasTexture
   ctx.strokeRect(3, 3, size - 6, size - 6)
 
   ctx.fillStyle = '#1c2422'
-  const radius = size * 0.09
-  const step = size * 0.27
-  const center = size / 2
-  for (const [gx, gy] of PIP_LAYOUTS[pips]) {
-    ctx.beginPath()
-    ctx.arc(center + gx * step, center + gy * step, radius, 0, Math.PI * 2)
-    ctx.fill()
+  if (marking === 'numbers') {
+    // A numbered die style (real user request: "con numeros") — same
+    // face-background/border as the pip style, just the big numeral
+    // drawn centered instead of the dot pattern below.
+    ctx.font = `bold ${size * 0.56}px 'Cascadia Mono', Consolas, ui-monospace, monospace`
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(String(pips), size / 2, size / 2 + size * 0.02)
+  } else {
+    const radius = size * 0.09
+    const step = size * 0.27
+    const center = size / 2
+    for (const [gx, gy] of PIP_LAYOUTS[pips]) {
+      ctx.beginPath()
+      ctx.arc(center + gx * step, center + gy * step, radius, 0, Math.PI * 2)
+      ctx.fill()
+    }
   }
 
   const texture = new THREE.CanvasTexture(canvas)
@@ -111,8 +122,16 @@ interface DieProps {
    * has always used. The manual initiative-roll flow (GMView/PlayerView)
    * passes each pilot's own color instead. Pips stay dark regardless;
    * every color in src/pilotColors.ts's palette is light enough to keep
-   * them readable. */
+   * them readable. Ignored once `style` is set — a picked style's own
+   * fixed color wins. */
   color?: string
+  /** A DIE_STYLES id (see ../dieStyles.ts) — real user request: every
+   * player/GM can pick a distinct look (material + pip-vs-number
+   * marking), exclusive across the table. Coexists with `color` rather
+   * than replacing it: unset (null/undefined) keeps today's exact
+   * legacy look (plain box, pips, `color`), so a pilot who never
+   * touches this feature sees zero change. */
+  style?: string | null
   /** Initial linear velocity, e.g. a real toss thrown in from off the
    * board instead of a straight drop from above — see TableView's
    * InitiativeDice. Defaults to a small random pop-and-tumble in place
@@ -147,7 +166,7 @@ const VANISH_DURATION_MS = 550
 // waiting for perfect physical stillness.
 const SETTLE_TIMEOUT_MS = 3500
 
-export function Die({ spawn, color = '#eef1ef', throwVelocity, onSettled, vanishing, onVanished }: DieProps) {
+export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled, vanishing, onVanished }: DieProps) {
   const bodyRef = useRef<RapierRigidBody>(null)
   const meshRef = useRef<THREE.Mesh>(null)
   const settledRef = useRef(false)
@@ -155,19 +174,27 @@ export function Die({ spawn, color = '#eef1ef', throwVelocity, onSettled, vanish
   const vanishStartRef = useRef<number | null>(null)
   const vanishedRef = useRef(false)
 
-  const materials = useMemo(
-    () =>
-      FACE_PIPS.map(
-        (pips) =>
-          new THREE.MeshStandardMaterial({
-            map: createFaceTexture(pips, color),
-            roughness: 0.45,
-            metalness: 0.05,
-            transparent: true,
-          }),
-      ),
-    [color],
-  )
+  // MeshPhysicalMaterial rather than MeshStandardMaterial — a strict
+  // superset (same roughness/metalness/map), so the no-style path (both
+  // iridescence/sheen left at 0) renders pixel-identical to before,
+  // while a 'metallic'/'pearl' style can lean on the extra properties
+  // with no second material-construction code path to maintain.
+  const materials = useMemo(() => {
+    const look = resolveDieStyle(style, color)
+    return FACE_PIPS.map(
+      (pips) =>
+        new THREE.MeshPhysicalMaterial({
+          map: createFaceTexture(pips, look.color, look.marking),
+          roughness: look.roughness,
+          metalness: look.metalness,
+          iridescence: look.iridescence ?? 0,
+          iridescenceIOR: look.iridescence ? 1.3 : 1,
+          sheen: look.sheen ?? 0,
+          sheenColor: look.sheenColorHex ? new THREE.Color(look.sheenColorHex) : undefined,
+          transparent: true,
+        }),
+    )
+  }, [style, color])
 
   const settleNow = () => {
     if (settledRef.current) return

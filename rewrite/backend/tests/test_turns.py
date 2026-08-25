@@ -139,8 +139,40 @@ def test_request_pilot_initiative_does_not_touch_rolls(campaign):
     p = pilots.create_pilot(campaign["id"], "Solo", faction="player", color="#ff00aa")
     turns.start_round(campaign["id"])
     result = turns.request_pilot_initiative(campaign["id"], p["id"])
-    assert result == {"pilot_id": p["id"], "pilot_name": "Solo", "color": "#ff00aa"}
+    assert result == {"pilot_id": p["id"], "pilot_name": "Solo", "color": "#ff00aa", "die_style": None}
     assert turns.get_round(campaign["id"])["rolls"] == []
+
+
+def test_request_pilot_initiative_falls_back_to_gm_die_style_for_enemy_pilots(campaign):
+    # Real user request: an enemy pilot has no device of its own to pick
+    # a style from — the GM's own pick (set via campaigns.set_gm_die_style)
+    # applies to enemy/npc rolls that haven't set one themselves.
+    campaigns_module.set_initiative_mode(campaign["id"], "individual")
+    campaigns_module.set_gm_die_style(campaign["id"], "opal-pearl")
+    enemy = pilots.create_pilot(campaign["id"], "Hostile", faction="enemy")
+    turns.start_round(campaign["id"])
+    result = turns.request_pilot_initiative(campaign["id"], enemy["id"])
+    assert result["die_style"] == "opal-pearl"
+
+
+def test_request_pilot_initiative_prefers_a_player_pilots_own_style_over_gm(campaign):
+    campaigns_module.set_initiative_mode(campaign["id"], "individual")
+    campaigns_module.set_gm_die_style(campaign["id"], "opal-pearl")
+    p = pilots.create_pilot(campaign["id"], "Solo", faction="player")
+    pilots.set_pilot_die_style(p["id"], "chrome-metallic")
+    turns.start_round(campaign["id"])
+    result = turns.request_pilot_initiative(campaign["id"], p["id"])
+    assert result["die_style"] == "chrome-metallic"
+
+
+def test_request_pilot_initiative_prefers_an_enemy_pilots_own_style_over_gm(campaign):
+    campaigns_module.set_initiative_mode(campaign["id"], "individual")
+    campaigns_module.set_gm_die_style(campaign["id"], "opal-pearl")
+    enemy = pilots.create_pilot(campaign["id"], "Hostile", faction="enemy")
+    pilots.set_pilot_die_style(enemy["id"], "chrome-metallic")
+    turns.start_round(campaign["id"])
+    result = turns.request_pilot_initiative(campaign["id"], enemy["id"])
+    assert result["die_style"] == "chrome-metallic"
 
 
 def test_report_pilot_initiative_adds_one_pilot_roll(campaign):

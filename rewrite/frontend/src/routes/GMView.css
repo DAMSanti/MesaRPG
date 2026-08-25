@@ -285,6 +285,7 @@ button:disabled {
 
 button.undo {
   border-color: var(--accent-2);
+  margin-bottom: 10px;
 }
 
 .loc-grid {
