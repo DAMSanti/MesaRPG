@@ -236,6 +236,18 @@ function TableViewBattletech() {
   // resolves a valid destination, so once the server-driven `units` prop
   // eventually reflects the new q/r (via broadcast + refetch), HexMap
   // walks the actual calculated path instead of a straight line.
+  //
+  // DELIBERATELY does NOT also listen for the `unit_walked` broadcast the
+  // way GMView/FirstPersonView now do (see their own matching comments) —
+  // this is the one view rendered with `physics` (below), and a real
+  // live crash traced to here (an uncaught @react-three/rapier panic,
+  // "recursive use of an object detected... unsafe aliasing", repeating
+  // every frame and freezing the whole tab) landed right after that
+  // extra WS-driven re-render was added on top of this screen's own
+  // physics/dice activity. Reverted rather than risk it again blind — a
+  // move THIS screen didn't itself capture the destination click for
+  // (GM's own map, PlayerView's Acciones, a cockpit HUD) still falls
+  // back to a straight line here specifically, unlike the other views.
   const [walkPaths, setWalkPaths] = useState<Map<number, { q: number; r: number }[]>>(new Map())
 
   // The move itself can also complete somewhere that never clicks a tile

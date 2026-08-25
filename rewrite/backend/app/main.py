@@ -877,6 +877,15 @@ async def move_unit_with_mp(unit_id: int, body: MoveWithMpIn) -> dict:
         )
     except (movement.UnknownMovementType, movement.UnreachableDestination) as exc:
         raise HTTPException(422, str(exc)) from exc
+    # Real user report: a client that didn't itself pick this destination
+    # (e.g. the shared table watching a move requested from PlayerView/
+    # FirstPersonView) had no route data at all, so HexMap animated a
+    # straight line through anything in between instead of the real
+    # path — every connected client now learns the actual route to
+    # populate its own local walkPaths with, regardless of who moved it.
+    await manager.broadcast(
+        unit["campaign_id"], {"type": "unit_walked", "unit_id": unit_id, "path": updated["path"]}
+    )
     await _broadcast_visibility(unit["campaign_id"], unit["map_id"])
     await manager.broadcast(unit["campaign_id"], {"type": "round_updated", **turns.get_round(unit["campaign_id"])})
     return updated

@@ -14,6 +14,7 @@ import {
 } from '../api'
 import { activeMoverPilotId, currentPhase } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
+import type { UnitWalked } from '../ws'
 import './FirstPersonView.css'
 
 // Derived from Mech3D's own scale/proportions rather than a hardcoded
@@ -404,7 +405,7 @@ const PHASES: { key: Phase; label: string }[] = [
 ]
 
 export function FirstPersonView({
-  unit, mech, units, roundState, visibility, lastAttack, onClose,
+  unit, mech, units, roundState, visibility, lastAttack, unitWalked, onClose,
 }: {
   unit: Unit
   mech: Mech | null
@@ -423,6 +424,15 @@ export function FirstPersonView({
    * not a mirror of TableView's own canvas), so it needs this threaded
    * through explicitly to play the laser/tracer/missile animation too. */
   lastAttack?: AttackResult | null
+  /** Also from useTableSocket — real user report: any visible ally/enemy
+   * mech walking across this cockpit's own <HexMap> instance had no
+   * route data at all (only the player's OWN move, via the Movimiento
+   * submenu below, ever populated one), so it slid in a straight line
+   * through anything in between instead of the real path. No self-
+   * initiated guard needed here (unlike GMView/TableView) — this view
+   * never renders the player's own unit at all, so there's no locally-
+   * fresher path data to protect against being overwritten. */
+  unitWalked?: UnitWalked | null
   onClose: () => void
 }) {
   const [map, setMap] = useState<MapData | null>(null)
@@ -570,6 +580,17 @@ export function FirstPersonView({
     | { kind: 'rotate' }
     | null
   const [pendingFacing, setPendingFacing] = useState<FpvPendingFacing>(null)
+
+  // Real user report: any visible ally/enemy walking across this
+  // cockpit's own <HexMap> had no route data, so it slid in a straight
+  // line through anything in between instead of the real path — see
+  // unitWalked's own prop doc comment above for why no self-initiated
+  // guard is needed here, unlike GMView/TableView.
+  const [walkPaths, setWalkPaths] = useState<Map<number, { q: number; r: number }[]>>(new Map())
+  useEffect(() => {
+    if (!unitWalked || unitWalked.path.length === 0) return
+    setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+  }, [unitWalked])
 
   const startFpvMovement = async (movementType: MovementType) => {
     setShowMoveSubmenu(false)
@@ -929,6 +950,7 @@ export function FirstPersonView({
                   onAttackEffectDone={onAttackEffectDone}
                   moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
                   onTileClick={onFpvTileClick}
+                  walkPaths={walkPaths}
                 />
               </Suspense>
               <EnemyMarkersController
