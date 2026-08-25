@@ -678,7 +678,8 @@ def test_round_endpoints_start_act_and_broadcast():
         assert initial == {
             "campaign_id": camp["id"], "round_number": 0, "mode": "team", "rolls": [], "acted_pilot_ids": [],
             "movement_order": [], "moved_pilot_ids": [], "moves": [],
-            "ranged_target_pilot_ids": [], "melee_target_pilot_ids": [], "heat_resolved": False,
+            "ranged_target_pilot_ids": [], "melee_target_pilot_ids": [],
+            "ranged_passed_pilot_ids": [], "melee_passed_pilot_ids": [], "heat_resolved": False,
         }
 
         with c.websocket_connect(f"/ws/{camp['id']}") as ws:
@@ -691,6 +692,17 @@ def test_round_endpoints_start_act_and_broadcast():
             acted = c.post(f"/api/campaigns/{camp['id']}/round/act", json={"pilot_id": pilot["id"]}).json()
             assert acted["acted_pilot_ids"] == [pilot["id"]]
             assert ws.receive_json()["type"] == "round_updated"
+
+            passed = c.post(
+                f"/api/campaigns/{camp['id']}/round/pass", json={"pilot_id": pilot["id"], "phase": "melee"},
+            ).json()
+            assert passed["melee_passed_pilot_ids"] == [pilot["id"]]
+            assert ws.receive_json()["type"] == "round_updated"
+
+            bad = c.post(
+                f"/api/campaigns/{camp['id']}/round/pass", json={"pilot_id": pilot["id"], "phase": "movement"},
+            )
+            assert bad.status_code == 422
 
 
 def test_set_initiative_mode_to_individual_via_api():
@@ -735,6 +747,31 @@ def test_request_initiative_endpoint_broadcasts_without_touching_rolls():
 
             state = c.get(f"/api/campaigns/{camp['id']}/round").json()
             assert state["rolls"] == []
+
+
+def test_roll_initiative_endpoint_rolls_automatically_for_an_auto_dice_mode_pilot():
+    # Real user request: "cada jugador puede escoger en opciones si
+    # quiere dados físicos siempre o tiradas automáticas" — an 'auto'
+    # pilot skips the physical-dice broadcast entirely and gets a real
+    # server 2d6 recorded immediately.
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        c.post(f"/api/campaigns/{camp['id']}/initiative-mode", json={"mode": "individual"})
+        p = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Speedy"}).json()
+        c.patch(f"/api/pilots/{p['id']}", json={"dice_mode": "auto"})
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            c.post(f"/api/campaigns/{camp['id']}/round/start")
+            ws.receive_json()  # round_started
+
+            rolled = c.post(
+                f"/api/campaigns/{camp['id']}/round/roll-initiative", json={"pilot_id": p["id"]}
+            ).json()
+            assert len(rolled["rolls"]) == 1
+            assert rolled["rolls"][0]["pilot_id"] == p["id"]
+            assert 2 <= rolled["rolls"][0]["roll"] <= 12
+            broadcast = ws.receive_json()
+            assert broadcast["type"] == "round_updated"
 
 
 def test_report_initiative_endpoint_and_broadcast():

@@ -277,8 +277,8 @@ function TracerAttack({
  * flashes on arrival — the "barrage" the user specifically asked for,
  * distinct from a single beam/tracer. */
 function MissileAttack({
-  from, to, color, travelMs, count, realModel = true,
-}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; count: number; realModel?: boolean }) {
+  from, to, color, travelMs, count,
+}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; count: number }) {
   const seeds = useMemo(
     () => Array.from({ length: count }, (_, i) => ({
       lateral: (i - (count - 1) / 2) * 0.12 + (Math.random() - 0.5) * 0.05,
@@ -295,7 +295,7 @@ function MissileAttack({
   return (
     <group>
       {seeds.map((s, i) => (
-        <Missile key={i} from={from} to={to} color={color} travelMs={travelMs} realModel={realModel} {...s} />
+        <Missile key={i} from={from} to={to} color={color} travelMs={travelMs} {...s} />
       ))}
     </group>
   )
@@ -381,7 +381,7 @@ function RealMissile() {
 useGLTF.preload(MISSILE_MODEL_URL)
 
 function Missile({
-  from, to, color, travelMs, lateral, arcHeight, delay, realModel,
+  from, to, color, travelMs, lateral, arcHeight, delay,
 }: {
   from: THREE.Vector3
   to: THREE.Vector3
@@ -390,11 +390,6 @@ function Missile({
   lateral: number
   arcHeight: number
   delay: number
-  // false for 'mg' (machine-gun bursts, which also reuse this same
-  // Missile/MissileAttack pair) — a real guided-missile body reads as
-  // absurd for MG rounds, so those keep the original flat glow sprite
-  // instead of RealMissile.
-  realModel: boolean
 }) {
   const headRef = useRef<THREE.Group>(null)
   const trailGroupRef = useRef<THREE.Group>(null)
@@ -431,23 +426,16 @@ function Missile({
     if (headRef.current) {
       headRef.current.visible = t < 1
       headRef.current.position.copy(pos)
-      if (realModel) {
-        // A real 3D body, unlike the flat glow sprite the MG variant
-        // still uses below, needs to actually point somewhere rather
-        // than always billboard the camera — the tangent of its own
-        // arced flight path (a tiny step behind vs. at `t`, not the
-        // straight attacker->target line), pointing the model's own
-        // nose-to-tail axis (local +Z, see RealMissile's own doc
-        // comment) along it. Clamped forward-difference near t=0 since
-        // t-ε would go negative there.
-        const tangentT0 = Math.max(0, t - 0.01)
-        const tangentT1 = Math.min(1, t + 0.01)
-        const dir = new THREE.Vector3().subVectors(posAt(tangentT1), posAt(tangentT0))
-        if (dir.lengthSq() > 1e-8) {
-          headRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize())
-        }
-      } else {
-        headRef.current.quaternion.copy(state.camera.quaternion)
+      // Point the model's own nose-to-tail axis (local +Z, see
+      // RealMissile's own doc comment) along the tangent of its own
+      // arced flight path (a tiny step behind vs. at `t`, not the
+      // straight attacker->target line). Clamped forward-difference near
+      // t=0 since t-ε would go negative there.
+      const tangentT0 = Math.max(0, t - 0.01)
+      const tangentT1 = Math.min(1, t + 0.01)
+      const dir = new THREE.Vector3().subVectors(posAt(tangentT1), posAt(tangentT0))
+      if (dir.lengthSq() > 1e-8) {
+        headRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize())
       }
     }
     if (trailGroupRef.current) {
@@ -468,14 +456,7 @@ function Missile({
   return (
     <>
       <group ref={headRef}>
-        {realModel ? (
-          <RealMissile />
-        ) : (
-          <mesh frustumCulled={false}>
-            <planeGeometry args={[0.16, 0.16]} />
-            <meshBasicMaterial map={getGlowTexture()} color={color} transparent blending={THREE.AdditiveBlending} depthWrite={false} />
-          </mesh>
-        )}
+        <RealMissile />
       </group>
       <group ref={trailGroupRef}>
         <mesh frustumCulled={false}>
@@ -483,6 +464,84 @@ function Missile({
           <meshBasicMaterial color={color} transparent opacity={0.5} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
       </group>
+      {impact && <ImpactFlash position={impact} color={color} />}
+    </>
+  )
+}
+
+/** Machine gun — real user request: "sprite para los ataques de machine
+ * gun" (it used to just reuse MissileAttack with realModel=false, which
+ * reads as a few slow LOBBED glowing balls on a parabolic arc — the
+ * wrong feel for a rapid burst of flat, straight tracer rounds).
+ * Several short, bright streaks fire in quick succession, dead straight
+ * (no arc) with a small per-round spread at the target end for a real
+ * "burst cone" instead of every round landing on the exact same point,
+ * moving much faster than the missile's own lobbed arc. */
+function MachineGunAttack({
+  from, to, color, travelMs,
+}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number }) {
+  const rounds = useMemo(
+    () => Array.from({ length: 6 }, (_, i) => ({
+      // Staggered fire, evenly spread across roughly the first half of
+      // the volley's own travel time — same "stagger proportional to
+      // travelMs" reasoning as MissileAttack's own seeds, so a long shot
+      // still reads as one continuous burst instead of the rounds
+      // bunching together.
+      delay: (i / 6) * (travelMs / 1000) * 0.5,
+      spread: new THREE.Vector3((Math.random() - 0.5) * 0.35, (Math.random() - 0.5) * 0.22, (Math.random() - 0.5) * 0.35),
+    })),
+    [travelMs],
+  )
+  return (
+    <>
+      {rounds.map((r, i) => <TracerRound key={i} from={from} to={to} color={color} travelMs={travelMs * 0.5} {...r} />)}
+    </>
+  )
+}
+
+/** One MG round — a short, thin, bright streak (the same "aligned
+ * cylinder between two points" trick StraightBeam/Missile's own trail
+ * already use, just applied to a fast-moving short segment instead of a
+ * static beam) racing in a dead-straight line from the muzzle to
+ * `to + spread`, leaving a quick spark where it lands. */
+function TracerRound({
+  from, to, color, travelMs, delay, spread,
+}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; delay: number; spread: THREE.Vector3 }) {
+  const ref = useRef<THREE.Mesh>(null)
+  const start = useRef<number | null>(null)
+  const flashSpawned = useRef(false)
+  const [impact, setImpact] = useState<THREE.Vector3 | null>(null)
+  const target = useMemo(() => to.clone().add(spread), [to, spread])
+
+  useFrame((state) => {
+    if (start.current === null) start.current = state.clock.elapsedTime
+    const elapsed = state.clock.elapsedTime - start.current - delay
+    if (elapsed < 0) {
+      if (ref.current) ref.current.visible = false
+      return
+    }
+    const t = Math.min(1, elapsed / (travelMs / 1000))
+    const headPos = new THREE.Vector3().lerpVectors(from, target, t)
+    const tailPos = new THREE.Vector3().lerpVectors(from, target, Math.max(0, t - 0.1))
+    if (ref.current) {
+      ref.current.visible = t < 1
+      const { mid, length, quat } = alignedTransform(tailPos, headPos)
+      ref.current.position.copy(mid)
+      ref.current.quaternion.copy(quat)
+      ref.current.scale.set(1, Math.max(0.001, length), 1)
+    }
+    if (t >= 1 && !flashSpawned.current) {
+      flashSpawned.current = true
+      setImpact(headPos.clone())
+    }
+  })
+
+  return (
+    <>
+      <mesh ref={ref} frustumCulled={false}>
+        <cylinderGeometry args={[0.015, 0.015, 1, 5, 1, true]} />
+        <meshBasicMaterial color={color} transparent opacity={0.95} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+      </mesh>
       {impact && <ImpactFlash position={impact} color={color} />}
     </>
   )
@@ -595,8 +654,8 @@ export function AttackEffect({ data, onDone }: { data: AttackEffectData; onDone:
 
   if (category === 'beam') return <BeamAttack from={from} to={to} color={color} duration={duration} thick={false} />
   if (category === 'ppc') return <BeamAttack from={from} to={to} color={color} duration={duration} thick />
-  if (category === 'missile') return <MissileAttack from={from} to={to} color={color} travelMs={travelMs} count={5} realModel />
-  if (category === 'mg') return <MissileAttack from={from} to={to} color={color} travelMs={travelMs} count={3} realModel={false} />
+  if (category === 'missile') return <MissileAttack from={from} to={to} color={color} travelMs={travelMs} count={5} />
+  if (category === 'mg') return <MachineGunAttack from={from} to={to} color={color} travelMs={travelMs} />
   if (category === 'flame') return <FlameAttack from={from} to={to} color={color} duration={duration} />
   return (
     <>

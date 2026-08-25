@@ -7,15 +7,19 @@ import { HexMap, useAttackVfxQueue } from '../components/HexMap'
 import { KillReplay } from '../components/KillReplay'
 import { TableBackground } from '../components/TableBackground'
 import { BoardWalls } from '../components/BoardWalls'
+import { EnemyRevealCinematic } from '../components/EnemyRevealCinematic'
 import { useTableSocket } from '../ws'
 import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import {
-  getVisibility, listCampaigns, listMechs, moveUnitWithMp, reportInitiative,
-  type Mech, type MovementType, type ReachableHex,
+  getVisibility, listCampaigns, listMechs, moveUnitWithMp, reportInitiative, resolveHeatPhase,
+  type Campaign, type Mech, type MovementType, type ReachableHex,
 } from '../api'
 import { useMapState } from '../useMapState'
-import { activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative } from '../rounds'
+import {
+  activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative, useDisplayedPhase,
+} from '../rounds'
+import { FACTION_COLORS } from '../factions'
 import { SquareMap } from '../components/SquareMap'
 import './TableView.css'
 
@@ -137,6 +141,32 @@ function TableViewBattletech() {
   const { map, units } = useMapState(mapId, visibility ?? lastAttack)
   const [replay, setReplay] = useState<string | null>(null)
 
+  // Real user request: "cuando un enemigo entra en el LoS del equipo,
+  // en el tableview se abre un modal... a modo de cinemática de
+  // presentación. Se puede desactivar desde las opciones de campaña en
+  // el GM view." Own tiny campaign fetch (this screen otherwise has no
+  // reason to know campaign settings) — refetched on rosterVersion,
+  // same broadcast the GM's own toggle already fires (see main.py's
+  // set_enemy_reveal_cinematic).
+  const [campaign, setCampaign] = useState<Campaign | null>(null)
+  useEffect(() => {
+    if (campaignId == null) return
+    listCampaigns().then((all) => setCampaign(all.find((c) => c.id === campaignId) ?? null)).catch(() => {})
+  }, [campaignId, rosterVersion])
+
+  const [revealCinematicUnitId, setRevealCinematicUnitId] = useState<number | null>(null)
+  useEffect(() => {
+    if (lastRevealedUnitId == null) return
+    if (campaign && !campaign.enemy_reveal_cinematic) return
+    const revealed = units.find((u) => u.id === lastRevealedUnitId)
+    // Only a genuine hostile contact gets the cinematic — a revealed
+    // ally/npc ghost (rare, but the mechanic doesn't discriminate) isn't
+    // the "surprise enemy contact" moment this was built for.
+    if (revealed?.pilot_faction !== 'enemy') return
+    setRevealCinematicUnitId(lastRevealedUnitId)
+  }, [lastRevealedUnitId, campaign, units])
+  const revealCinematicUnit = units.find((u) => u.id === revealCinematicUnitId) ?? null
+
   // Mechs aren't part of useMapState (units alone drive the board's own
   // positions/facings) — fetched separately here purely to read
   // heat_current for SteamPuffs (real user request: "los mechs...
@@ -158,11 +188,36 @@ function TableViewBattletech() {
       return r ? { ...m, heat_current: r.heat_current } : m
     }))
   }, [heatPhaseResult])
-  const heatByUnitId = new Map(
-    units.filter((u) => u.mech_id != null).map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
-  )
+  // Held phase (rounds.ts's useDisplayedPhase) — real user report: an
+  // empty melee/heat phase used to resolve within the same WS
+  // round-trip as whatever ended the phase before it, reading as
+  // "skipped" even though it was genuinely considered. Drives the phase
+  // indicator below AND steam gating (only DURING the Heat phase, on
+  // every mech carrying real heat — "los mechs EN ESTA FASE
+  // desprenderán vapor", real user report this used to show in every
+  // phase instead).
+  const displayedPhase = useDisplayedPhase(roundState)
+  const heatByUnitId = displayedPhase === 'heat'
+    ? new Map(
+        units.filter((u) => u.mech_id != null).map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
+      )
+    : new Map<number, number>()
   const proneUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
   const shutdownUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
+
+  // Real user report: the Heat Phase never resolved (a mech's steam kept
+  // showing forever) whenever GMView — the only screen that used to
+  // trigger this — wasn't the tab actually open. Mirrored here too so
+  // whichever of GMView/TableView happens to be mounted drives it
+  // forward; resolveHeatPhase is idempotent server-side (bt_rounds.
+  // heat_resolved), so both screens calling it is a harmless no-op, not
+  // a double-resolution.
+  useEffect(() => {
+    if (!campaignId || !roundState) return
+    if (currentPhase(roundState) !== 'heat') return
+    resolveHeatPhase(campaignId).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId, roundState])
 
   // Real fog of war (real user request: "niebla de guerra real en el
   // table view... casillas que el equipo jugador no ve") — every hex at
@@ -328,7 +383,7 @@ function TableViewBattletech() {
           view"). */}
       {roundState && roundState.round_number > 0 && (
         <div className="phase-indicator">
-          <span className="phase-indicator-phase">{PHASE_LABELS[currentPhase(roundState)]}</span>
+          <span className="phase-indicator-phase">{PHASE_LABELS[displayedPhase]}</span>
           <span className="phase-indicator-round">Ronda {roundState.round_number}</span>
         </div>
       )}
@@ -392,6 +447,15 @@ function TableViewBattletech() {
       </Canvas>
 
       {replay && <KillReplay label={replay} onDone={() => setReplay(null)} />}
+
+      {revealCinematicUnit && (
+        <EnemyRevealCinematic
+          chassis={revealCinematicUnit.mech_chassis}
+          model={revealCinematicUnit.mech_model}
+          color={FACTION_COLORS.enemy}
+          onClose={() => setRevealCinematicUnitId(null)}
+        />
+      )}
     </div>
   )
 }

@@ -215,9 +215,11 @@ def _undo_map_projected(conn, campaign_id: int, payload: dict) -> None:
 
 
 def _undo_round_started(conn, campaign_id: int, payload: dict) -> None:
+    # No heat to restore here anymore — dissipation moved to
+    # resolve_heat_phase (real user report: it needs to happen visibly
+    # DURING the Heat phase, not silently at the next round's start), so
+    # starting a round no longer touches any mech's heat_current itself.
     conn.execute("UPDATE bt_rounds SET round_number = ? WHERE campaign_id = ?", (payload["prev_round_number"], campaign_id))
-    for mech_id, heat in payload["heat_before"].items():
-        conn.execute("UPDATE mechs SET heat_current = ? WHERE id = ?", (heat, int(mech_id)))
 
 
 def _undo_initiative_rolled(conn, campaign_id: int, payload: dict) -> None:

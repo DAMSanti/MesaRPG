@@ -13,12 +13,26 @@ FACTIONS = {"player", "enemy", "npc"}
 # submitted by a player starts pending and needs the GM's decision.
 STATUSES = {"pending", "approved", "rejected"}
 
+# Real user request: "Cada jugador puede escoger en opciones si quiere
+# dados físicos siempre o tiradas automáticas" — only meaningful for
+# individual-mode initiative (the one roll that's ever physical in this
+# app; team mode already auto-rolls both sides server-side). 'physical'
+# is the default so nothing changes for a pilot who never touches this
+# setting — main.py's /round/roll-initiative branches on it (see
+# turns.report_pilot_initiative's own docstring for the physical-dice
+# flow this bypasses in 'auto' mode).
+DICE_MODES = {"physical", "auto"}
+
 
 class UnknownFaction(ValueError):
     pass
 
 
 class UnknownStatus(ValueError):
+    pass
+
+
+class UnknownDiceMode(ValueError):
     pass
 
 
@@ -42,6 +56,11 @@ def _check_faction(faction: str) -> None:
 def _check_status(status: str) -> None:
     if status not in STATUSES:
         raise UnknownStatus(f"Unknown status {status!r}, expected one of {sorted(STATUSES)}")
+
+
+def _check_dice_mode(dice_mode: str) -> None:
+    if dice_mode not in DICE_MODES:
+        raise UnknownDiceMode(f"Unknown dice_mode {dice_mode!r}, expected one of {sorted(DICE_MODES)}")
 
 
 def _check_pin(pin: str) -> None:
@@ -145,7 +164,7 @@ def list_pilots(campaign_id: int) -> list[dict]:
         rows = conn.execute(
             """
             SELECT id, campaign_id, name, callsign, gunnery, piloting, faction,
-                   hits, status, owner_token, review_note, color, die_style, created_at,
+                   hits, status, owner_token, review_note, color, die_style, dice_mode, created_at,
                    (pin_hash IS NOT NULL) AS has_pin
             FROM pilots WHERE campaign_id = ? ORDER BY id
             """,
@@ -197,14 +216,18 @@ def update_pilot(
     faction: str | None = None,
     hits: int | None = None,
     color: str | None = None,
+    dice_mode: str | None = None,
 ) -> dict | None:
     if faction is not None:
         _check_faction(faction)
+    if dice_mode is not None:
+        _check_dice_mode(dice_mode)
     fields = {
         k: v
         for k, v in {
             "name": name, "callsign": callsign, "gunnery": gunnery,
             "piloting": piloting, "faction": faction, "hits": hits, "color": color,
+            "dice_mode": dice_mode,
         }.items()
         if v is not None
     }
@@ -291,7 +314,7 @@ def _get(conn, pilot_id: int) -> dict | None:
     row = conn.execute(
         """
         SELECT id, campaign_id, name, callsign, gunnery, piloting, faction,
-               hits, status, owner_token, review_note, color, die_style, created_at,
+               hits, status, owner_token, review_note, color, die_style, dice_mode, created_at,
                (pin_hash IS NOT NULL) AS has_pin
         FROM pilots WHERE id = ?
         """,

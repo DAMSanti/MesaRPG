@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react'
 import type { InitiativeRoll, Pilot, RoundState, Unit } from './api'
 import { FACTION_LABELS, type Faction } from './factions'
 
@@ -106,7 +107,12 @@ export function activeAttackPilotIds(round: RoundState, units: Unit[]): Set<numb
         : []
   if (eligible.length === 0) return new Set()
   const eligibleSet = new Set(eligible)
-  const acted = new Set(round.acted_pilot_ids)
+  // acted_pilot_ids (a real attack) blocks both phases; the phase-scoped
+  // passed set (api.ts's passRoundPhase) only blocks THIS one — see
+  // RoundState's own ranged_passed_pilot_ids/melee_passed_pilot_ids doc
+  // comment for why the two are kept separate.
+  const passedThisPhase = phase === 'ranged' ? round.ranged_passed_pilot_ids : round.melee_passed_pilot_ids
+  const acted = new Set([...round.acted_pilot_ids, ...passedThisPhase])
   const sortedRolls = [...round.rolls].sort((a, b) => a.total - b.total)
 
   if (round.mode === 'individual') {
@@ -157,9 +163,9 @@ export function activeAttackPilotIds(round: RoundState, units: Unit[]): Set<numb
  * landing on 'other'. */
 export type RoundPhase = 'none' | 'initiative' | 'movement' | 'ranged' | 'melee' | 'heat' | 'other'
 
-function _pending(ids: number[], acted: number[]): boolean {
-  const actedSet = new Set(acted)
-  return ids.some((id) => !actedSet.has(id))
+function _pending(ids: number[], acted: number[], passed: number[]): boolean {
+  const doneSet = new Set([...acted, ...passed])
+  return ids.some((id) => !doneSet.has(id))
 }
 
 export function currentPhase(round: RoundState): RoundPhase {
@@ -167,8 +173,8 @@ export function currentPhase(round: RoundState): RoundPhase {
   if (round.movement_order.length === 0) return 'initiative'
   const allMoved = round.movement_order.every((id) => round.moved_pilot_ids.includes(id))
   if (!allMoved) return 'movement'
-  if (_pending(round.ranged_target_pilot_ids, round.acted_pilot_ids)) return 'ranged'
-  if (_pending(round.melee_target_pilot_ids, round.acted_pilot_ids)) return 'melee'
+  if (_pending(round.ranged_target_pilot_ids, round.acted_pilot_ids, round.ranged_passed_pilot_ids)) return 'ranged'
+  if (_pending(round.melee_target_pilot_ids, round.acted_pilot_ids, round.melee_passed_pilot_ids)) return 'melee'
   if (!round.heat_resolved) return 'heat'
   return 'other'
 }
@@ -181,4 +187,58 @@ export const PHASE_LABELS: Record<RoundPhase, string> = {
   melee: 'Combate a melee',
   heat: 'Heat',
   other: 'Fin de ronda',
+}
+
+/** Same phase currentPhase() computes, but held on screen for at least
+ * `holdMs` before advancing — real user report: an empty melee phase
+ * (nobody adjacent) or an already-idempotent heat phase resolves within
+ * the SAME WS round-trip as whatever ended the phase before it, so the
+ * raw phase value jumps straight from e.g. 'ranged' to 'other' — reading
+ * as "it skipped melee/heat entirely" even though the engine genuinely
+ * considered (and correctly emptied out) each one. "AUN DEBE PASAR POR
+ * ESAS FASES AUNQUE SEA UN SEGUNDO, INDICANDO QUE LA HA TENIDO EN
+ * CUENTA" — every DISTINCT phase value currentPhase ever reports is
+ * queued and shown in order, each for at least holdMs. A real
+ * interactive phase (e.g. 'ranged' waiting on a GM click) is never held
+ * artificially long — nothing new gets enqueued while it's still the
+ * live raw value, so it stays displayed exactly as long as it actually
+ * is one.
+ *
+ * This is a DISPLAY-ONLY concern — anything that GATES real
+ * interactivity (UnitContextMenu's showAttack, activeAttackPilotIds,
+ * etc.) must keep using currentPhase() directly, never this hook, or
+ * real actions would be artificially delayed behind the hold. */
+export function useDisplayedPhase(round: RoundState | null, holdMs = 900): RoundPhase {
+  const raw = round ? currentPhase(round) : 'none'
+  const [displayed, setDisplayed] = useState<RoundPhase>(raw)
+  const queueRef = useRef<RoundPhase[]>([])
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const displayedRef = useRef<RoundPhase>(raw)
+  displayedRef.current = displayed
+
+  useEffect(() => {
+    const queue = queueRef.current
+    const last = queue.length > 0 ? queue[queue.length - 1] : displayedRef.current
+    if (raw !== last) queue.push(raw)
+
+    if (timerRef.current == null) {
+      const step = () => {
+        const next = queueRef.current.shift()
+        if (next === undefined) {
+          timerRef.current = null
+          return
+        }
+        setDisplayed(next)
+        timerRef.current = setTimeout(step, holdMs)
+      }
+      step()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [raw])
+
+  useEffect(() => () => {
+    if (timerRef.current != null) clearTimeout(timerRef.current)
+  }, [])
+
+  return displayed
 }

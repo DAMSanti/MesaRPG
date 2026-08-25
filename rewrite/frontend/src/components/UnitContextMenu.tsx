@@ -21,7 +21,7 @@ import './UnitContextMenu.css'
  * this menu button specifically is gone. */
 export function UnitContextMenu({
   unit, mech, canAct, x, y, onAttack, onClose,
-  showAttack,
+  showAttack, onSkipAttack,
   showRollInitiative, canRollInitiative, onRollInitiative,
   showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement, onStandUp,
 }: {
@@ -39,6 +39,13 @@ export function UnitContextMenu({
    * phase (initiative order / has a target — rounds.ts's
    * activeAttackPilotIds), shown as disabled+hint same as before. */
   showAttack?: boolean
+  /** Counts this pilot as having acted this ranged/melee phase without
+   * attacking anyone — same "record a skip" pattern as onSkipMovement
+   * below (real user request: "en el menu de ataque a distancia haya
+   * una opcion de pasar turno"), so a pilot with nothing worth shooting
+   * at (or who just doesn't want to) can free up the phase for everyone
+   * else instead of the GM being stuck waiting on them. */
+  onSkipAttack?: () => void
   /** Individual initiative mode + this unit's pilot is an enemy (the GM
    * rolls for their own side; players roll their own from PlayerView) —
    * see GMView's needsInitiative/rollInitiativeForPilot. Also requires
@@ -81,6 +88,7 @@ export function UnitContextMenu({
         <>
           {!canAct && <div className="unit-menu-hint">no es su turno</div>}
           <button disabled={!canAct} onClick={onAttack}>Atacar</button>
+          <button disabled={!canAct} onClick={onSkipAttack}>Pasar turno</button>
         </>
       )}
       {showPhaseMovement && (

@@ -13,6 +13,11 @@ export interface Campaign {
   grid_type: 'hex' | 'square'
   initiative_mode: InitiativeMode
   gm_die_style: string | null
+  /** Real user request: TableView shows a 360°-orbit cinematic modal
+   * the instant an enemy enters the team's LOS — this campaign-wide
+   * toggle (default on) lets the GM turn it off from their own Ajustes
+   * modal. */
+  enemy_reveal_cinematic: boolean
   pilot_count: number
   mech_count: number
 }
@@ -241,6 +246,12 @@ export interface Pilot {
    * picked one — exclusive across the whole campaign (see
    * setPilotDieStyle). */
   die_style: string | null
+  /** Real user request: "cada jugador puede escoger en opciones si
+   * quiere dados físicos siempre o tiradas automáticas" — only
+   * meaningful for individual-mode initiative (team mode already
+   * auto-rolls both sides server-side regardless). 'physical' is the
+   * default. */
+  dice_mode: 'physical' | 'auto'
   is_own: boolean
   /** Whether this pilot has a 4-digit PIN set (never the PIN/hash
    * itself, which never leaves the server) — a pilot without one is
@@ -711,6 +722,14 @@ export interface RoundState {
    * — no weapon/ammo/range involved, physical attacks only need
    * proximity. */
   melee_target_pilot_ids: number[]
+  /** Pilot ids who explicitly "Pasar turno"-ed the ranged/melee phase
+   * (api.ts's passPhase) — deliberately separate from acted_pilot_ids:
+   * a real attack blocks BOTH phases (acted_pilot_ids), but an explicit
+   * pass with nothing to shoot/punch only satisfies THAT phase, so the
+   * same pilot can still melee an adjacent enemy after passing on a
+   * target-less ranged turn (real user report). */
+  ranged_passed_pilot_ids: number[]
+  melee_passed_pilot_ids: number[]
   /** Whether turns.py's resolve_heat_phase has already run for this
    * round — False the instant ranged/melee both empty out is exactly
    * when GMView calls resolveHeatPhase itself (rounds.ts's currentPhase
@@ -780,10 +799,25 @@ export const setGmDieStyle = (campaignId: number, style: string | null) =>
     body: JSON.stringify({ style }),
   })
 
+export const setEnemyRevealCinematic = (campaignId: number, enabled: boolean) =>
+  request<Campaign>(`/api/campaigns/${campaignId}/enemy-reveal-cinematic`, {
+    method: 'POST',
+    body: JSON.stringify({ enabled }),
+  })
+
 export const markRoundActed = (campaignId: number, pilotId: number) =>
   request<RoundState>(`/api/campaigns/${campaignId}/round/act`, {
     method: 'POST',
     body: JSON.stringify({ pilot_id: pilotId }),
+  })
+
+// "Pasar turno" for ONE phase only — see RoundState's own
+// ranged_passed_pilot_ids/melee_passed_pilot_ids doc comment for why
+// this is a separate endpoint from markRoundActed above.
+export const passRoundPhase = (campaignId: number, pilotId: number, phase: 'ranged' | 'melee') =>
+  request<RoundState>(`/api/campaigns/${campaignId}/round/pass`, {
+    method: 'POST',
+    body: JSON.stringify({ pilot_id: pilotId, phase }),
   })
 
 // Individual-mode only — team mode rolls both sides atomically inside
@@ -877,6 +911,7 @@ export const updatePilot = (
   pilotId: number,
   body: Partial<{
     name: string; callsign: string; gunnery: number; piloting: number; faction: Faction; hits: number; color: string
+    dice_mode: 'physical' | 'auto'
   }>,
   token?: string,
 ) => request<Pilot>(`/api/pilots/${pilotId}`, { method: 'PATCH', body: JSON.stringify(body), headers: tokenHeaders(token) })

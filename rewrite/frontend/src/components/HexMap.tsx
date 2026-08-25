@@ -159,6 +159,7 @@ function tilePropsEqual(prev: Readonly<TileProps>, next: Readonly<TileProps>) {
     && prev.pathPreviewHighlighted === next.pathPreviewHighlighted
     && prev.targetableHighlighted === next.targetableHighlighted
     && prev.physics === next.physics
+    && prev.fogged === next.fogged
 }
 
 type TileProps = {
@@ -201,6 +202,16 @@ type TileProps = {
    * (blue) and activeMoverHighlighted (amber) so the three never read as
    * the same kind of hex. */
   targetableHighlighted: boolean
+  /** This tile is currently under a FogTile (HexMap's own teamVisibleHexes
+   * computation) — real user request: "que no se muestren las
+   * decoraciones de tile que esten cubiertas por niebla". Terrain/groove
+   * still render underneath (fog needs real ground to sit on, and
+   * TableView's physics collider shouldn't disappear just because a tile
+   * is unseen), only TerrainDecor's trees/buildings/rubble skip —
+   * doubles as a perf win, since decor is real (sometimes tens of
+   * thousands of triangles) GLTF geometry that a hidden tile has no
+   * reason to pay for. */
+  fogged?: boolean
   /** Give this tile a real physics collider matching its own hex/height
    * (TableView only, for the initiative dice to land and roll across
    * the actual board instead of a flat invisible floor) — must only be
@@ -213,7 +224,7 @@ type TileProps = {
 
 const Tile = memo(function Tile({
   tile, lookup, losHighlighted, dragHighlighted, needsInitiativeHighlighted, activeMoverHighlighted, moveHighlighted,
-  pathPreviewHighlighted, targetableHighlighted, physics,
+  pathPreviewHighlighted, targetableHighlighted, physics, fogged,
   onPointerMove, onPointerUp,
 }: TileProps) {
   const [x, z] = hexToWorld(tile.q, tile.r)
@@ -261,7 +272,7 @@ const Tile = memo(function Tile({
     <group position={[x, 0, z]}>
       {groove}
       {physics ? <RigidBody type="fixed" colliders="hull">{terrainMesh}</RigidBody> : terrainMesh}
-      {tile.terrain === 'road' && (
+      {tile.terrain === 'road' && !fogged && (
         <RoadMarkings q={tile.q} r={tile.r} height={height} lookup={lookup} gridType="hex" worldPos={hexToWorld} />
       )}
       {/* forest/light_forest/building all dropped from the hull-collider
@@ -276,7 +287,7 @@ const Tile = memo(function Tile({
           never land under anyway. The flat ground plane above still
           gets a (cheap, hex-shaped) collider for every tile regardless,
           so dice still land on the table correctly either way. */}
-      <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} />
+      {!fogged && <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} />}
       {losHighlighted && <LosDebugOverlay height={height} color="#39ff8f" />}
       {dragHighlighted && <LosDebugOverlay height={height} color="#f5c542" y={height + 0.03} />}
       {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.04} />}
@@ -627,7 +638,16 @@ const UnitMarker = memo(function UnitMarker({
           </mesh>
         )}
       </Select>
-      {unit.mech_id != null && heat != null && heat >= 5 && <SteamPuffs heat={heat} />}
+      {/* Real user report: this used to show whenever heat_current>=5 in
+          ANY phase — the actual request was "los mechs EN ESTA FASE
+          [Heat] desprenderán vapor", i.e. only DURING the Heat phase,
+          for any mech carrying real heat (>0). Callers only pass a
+          non-zero `heat` prop while the round is actually in its Heat
+          phase (see heatByUnitId's own doc comment at each of GMView/
+          TableView/FirstPersonView) — HexMap itself has no notion of
+          round phase, so the gating lives entirely in what's handed to
+          this prop. */}
+      {unit.mech_id != null && heat != null && heat > 0 && <SteamPuffs heat={heat} />}
     </>
   )
 
@@ -872,45 +892,103 @@ function FogPuff({
   return (
     <mesh ref={ref}>
       <planeGeometry args={[size, size]} />
-      <meshBasicMaterial ref={matRef} map={getCloudTexture()} color="#dfe7e8" transparent opacity={baseOpacity} depthWrite={false} />
+      <meshBasicMaterial ref={matRef} map={getCloudTexture()} color="#6b7478" transparent opacity={baseOpacity} depthWrite={false} />
     </mesh>
   )
 }
+
+// Same radius Tile's own groove mesh uses to fill the seam left by its
+// slightly-undersized (0.95) terrain top — confirmed (by that mesh's own
+// doc comment) to be the exact "reaches the true shared edge with the
+// neighboring hex, no gap" size for this grid's spacing. Fog reuses it
+// for the same reason: two adjacent fogged tiles' pucks need to butt up
+// PERFECTLY, or the seam between them reads as two separate patches
+// again — precisely what "cubrirlos de niebla completos... en lugar de
+// puffs individuales con offsets" (real user follow-up, after the
+// randomly-offset billboard-only version still looked like discrete
+// blobs even overlapping) was asking to fix.
+const FOG_PUCK_RADIUS = 1
+const FOG_PUCK_HEIGHT = 0.6
+
+// Standard axial pointy-top neighbor offsets, matching hexToWorld's own
+// q/r convention — used only to find each fogged tile's own "am I on
+// the edge of the fog mass" boundary check (see FogTile's `edge` prop).
+const HEX_NEIGHBOR_OFFSETS: [number, number][] = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]
 
 /** Real user request: "niebla de guerra real en el table view. Debe
  * mostrar literalmente niebla como nubes en las casillas que el equipo
  * jugador no ve" — one of these per hex HexMap's own fog computation
  * (see teamVisibleHexes prop below) decides is currently unknown.
  *
- * Three randomly-jittered puffs per tile (real user follow-up: "me
- * gustaria que los puffs de niebla se juntasen entre si y no fuesen
- * independientes unos de otros") — sized well past hex spacing so a
- * fogged tile's own puffs reach deep into every fogged neighbor,
- * combined with getCloudTexture's own wide soft falloff so the overlap
- * blends into one continuous mass instead of showing each tile's own
- * distinct disc silhouette. Randomized (not fixed) offsets/sizes per
- * tile via useMemo (seeded once at mount, stable across re-renders —
- * same pattern SteamPuffs already uses) keep it from reading as a
- * uniform grid of identical clouds. FogPuff's own close-camera opacity
- * fade is what keeps this from blowing out FirstPersonView's close-up
- * eye-level view despite the larger size here. */
-function FogTile({ x, z, seed }: { x: number; z: number; seed: number }) {
-  const puffs = useMemo(
-    () => Array.from({ length: 3 }, (_, i) => ({
-      dx: (Math.random() - 0.5) * 0.7,
-      dz: (Math.random() - 0.5) * 0.7,
-      y: 0.35 + i * 0.35 + Math.random() * 0.15,
-      size: 2.1 + Math.random() * 0.5,
-      baseOpacity: 0.48 + Math.random() * 0.14,
+ * Two-part design after two rounds of real user feedback: an initial
+ * billboard-only version read as separate blobs even when enlarged and
+ * overlapped, since each puff's own soft circular edge always shows
+ * *some* falloff right where it meets its neighbor. The actual fix
+ * needed geometry, not more/bigger sprites:
+ *
+ * - A solid, HARD-edged hex "puck" (same radius/shape as the terrain
+ *   tile underneath) is the primary cover layer. Because it exactly
+ *   matches the tile's own footprint, adjacent fogged tiles' pucks tile
+ *   together with zero gap or visible seam automatically — the same way
+ *   the terrain hexes themselves already tile seamlessly — with no
+ *   flood-fill/cluster computation needed to get a continuous shape:
+ *   uniform edge-to-edge tiles inherently produce one.
+ * - A couple of the original drifting cloud billboards still float on
+ *   top, purely for texture/character (so it still reads as "niebla
+ *   como nubes", not a flat colored slab) and to keep FirstPersonView's
+ *   higher eye-level obstructed too — the puck alone tops out well
+ *   below head height.
+ *
+ * `y` is the tile's own real ground height (HexMap's own heightAt) so
+ * the puck sits on the actual terrain surface instead of a flat
+ * assumed-0 baseline — matters on elevated/building tiles, which
+ * otherwise would leave the puck either buried in the hill or floating
+ * above a low neighbor.
+ *
+ * `edge` (real user follow-up: "podemos hacer que la niebla sea mas
+ * organica? ahora tiene la forma regular muy definida") marks a tile
+ * that borders a visible hex or the map's own edge — i.e. one whose
+ * puck actually contributes to the fog mass's OUTER silhouette. Only
+ * those get extra oversized, softly-overlapping puffs spilling past the
+ * hex's own straight edge (into the neighboring visible tile's airspace
+ * a little, fading via getCloudTexture's own falloff) — an interior
+ * fogged tile's edges are already invisible (covered by its neighbors'
+ * own pucks on every side), so there's nothing to soften there. */
+function FogTile({ x, z, y, seed, edge }: { x: number; z: number; y: number; seed: number; edge: boolean }) {
+  const wisps = useMemo(
+    () => Array.from({ length: 2 }, (_, i) => ({
+      dx: (Math.random() - 0.5) * 0.5,
+      dz: (Math.random() - 0.5) * 0.5,
+      y: y + FOG_PUCK_HEIGHT * 0.55 + i * 0.4 + Math.random() * 0.15,
+      size: 1.7 + Math.random() * 0.4,
+      baseOpacity: 0.4 + Math.random() * 0.12,
       speed: 0.08 + Math.random() * 0.08,
       seed: seed + i * 4.1 + Math.random(),
     })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [seed],
+    [seed, y],
+  )
+  const edgePuffs = useMemo(
+    () => (edge ? Array.from({ length: 3 }, (_, i) => ({
+      dx: (Math.random() - 0.5) * 1.7,
+      dz: (Math.random() - 0.5) * 1.7,
+      y: y + FOG_PUCK_HEIGHT * (0.2 + Math.random() * 0.5),
+      size: 1.3 + Math.random() * 0.8,
+      baseOpacity: 0.32 + Math.random() * 0.14,
+      speed: 0.06 + Math.random() * 0.06,
+      seed: seed + i * 5.3 + Math.random() + 20,
+    })) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [edge, seed, y],
   )
   return (
     <group position={[x, 0, z]}>
-      {puffs.map((p, i) => <FogPuff key={i} {...p} />)}
+      <mesh position={[0, y + FOG_PUCK_HEIGHT / 2 + 0.04, 0]}>
+        <cylinderGeometry args={[FOG_PUCK_RADIUS, FOG_PUCK_RADIUS, FOG_PUCK_HEIGHT, 6]} />
+        <meshBasicMaterial color="#585f62" transparent opacity={0.72} depthWrite={false} />
+      </mesh>
+      {wisps.map((w, i) => <FogPuff key={i} {...w} />)}
+      {edgePuffs.map((p, i) => <FogPuff key={`e${i}`} {...p} />)}
     </group>
   )
 }
@@ -972,10 +1050,12 @@ export function HexMap({
   outlineUnitIds?: Set<number>
   /** unit.mech_id's own mech.heat_current, keyed by UNIT id (not mech
    * id) to match how every other per-unit lookup here is keyed — drives
-   * SteamPuffs (heat >= 5) on the corresponding UnitMarker. Omitted
-   * entirely (not just per-unit-missing) by any caller that hasn't
-   * wired heat data through yet; a unit with no entry just renders no
-   * steam, same as heat 0. */
+   * SteamPuffs (heat > 0) on the corresponding UnitMarker. Callers only
+   * populate this with real values while the round is in its Heat phase
+   * (real user report: steam should show ONLY during that phase, on
+   * every mech carrying heat, not any phase a mech happens to be
+   * hot) — outside it they pass an empty Map or all-zero values, same
+   * as any caller that hasn't wired heat data through at all. */
   heatByUnitId?: Map<number, number>
   /** Unit ids whose mech is currently prone/shutdown (mechs.is_prone/
    * is_shutdown) — same per-view "caller resolves its own mechs lookup,
@@ -1239,6 +1319,7 @@ export function HexMap({
           moveHighlighted={moveHighlightHexes?.has(`${tile.q},${tile.r}`) ?? false}
           pathPreviewHighlighted={pathPreviewHexes?.has(`${tile.q},${tile.r}`) ?? false}
           targetableHighlighted={targetableHexes?.has(`${tile.q},${tile.r}`) ?? false}
+          fogged={teamVisibleHexes ? !teamVisibleHexes.has(`${tile.q},${tile.r}`) : false}
           physics={physics}
           onPointerMove={(e) => {
             if (!dragRef.current) return
@@ -1255,7 +1336,19 @@ export function HexMap({
         .filter((tile) => !teamVisibleHexes.has(`${tile.q},${tile.r}`))
         .map((tile) => {
           const [x, z] = hexToWorld(tile.q, tile.r)
-          return <FogTile key={`fog-${tile.q},${tile.r}`} x={x} z={z} seed={tile.q * 7.13 + tile.r * 3.7} />
+          // Borders a visible hex or the map's own edge — see FogTile's
+          // own `edge` doc comment for why only these get the extra
+          // organic-silhouette puffs.
+          const isEdge = HEX_NEIGHBOR_OFFSETS.some(([dq, dr]) => {
+            const key = `${tile.q + dq},${tile.r + dr}`
+            return !elevationAt.has(key) || teamVisibleHexes.has(key)
+          })
+          return (
+            <FogTile
+              key={`fog-${tile.q},${tile.r}`} x={x} z={z} y={heightAt(tile.q, tile.r)}
+              seed={tile.q * 7.13 + tile.r * 3.7} edge={isEdge}
+            />
+          )
         })}
       {visibleUnits.map((unit) => (
         <UnitMarker

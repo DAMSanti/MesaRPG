@@ -131,6 +131,21 @@ async def set_gm_die_style(campaign_id: int, body: GmDieStyleIn) -> dict:
     return updated
 
 
+class EnemyRevealCinematicIn(BaseModel):
+    enabled: bool
+
+
+@app.post("/api/campaigns/{campaign_id}/enemy-reveal-cinematic")
+async def set_enemy_reveal_cinematic(campaign_id: int, body: EnemyRevealCinematicIn) -> dict:
+    _require_campaign(campaign_id)
+    updated = campaigns.set_enemy_reveal_cinematic(campaign_id, body.enabled)
+    # Same reasoning as gm-die-style above — TableView (the one screen
+    # that actually shows the cinematic) needs to learn the GM just
+    # toggled this live, not only on its next unrelated refetch.
+    await manager.broadcast(campaign_id, {"type": "roster_updated"})
+    return updated
+
+
 def _require_campaign(campaign_id: int) -> dict:
     campaign = campaigns.get_campaign(campaign_id)
     if not campaign:
@@ -263,6 +278,7 @@ class PilotPatchIn(BaseModel):
     faction: str | None = None
     hits: int | None = None
     color: str | None = None
+    dice_mode: str | None = None
 
 
 @app.patch("/api/pilots/{pilot_id}")
@@ -276,7 +292,7 @@ async def patch_pilot(
     affected_maps = units.maps_for_pilot(pilot_id) if body.faction is not None else set()
     try:
         updated = pilots.update_pilot(pilot_id, **body.model_dump())
-    except pilots.UnknownFaction as exc:
+    except (pilots.UnknownFaction, pilots.UnknownDiceMode) as exc:
         raise HTTPException(422, str(exc)) from exc
     for campaign_id, map_id in affected_maps:
         await _broadcast_visibility(campaign_id, map_id)
@@ -1104,23 +1120,57 @@ async def mark_round_acted(campaign_id: int, body: RoundActIn) -> dict:
     return result
 
 
+class RoundPassIn(BaseModel):
+    pilot_id: int
+    phase: str
+
+
+@app.post("/api/campaigns/{campaign_id}/round/pass")
+async def pass_round_phase(campaign_id: int, body: RoundPassIn) -> dict:
+    """Explicit "Pasar turno" for one phase only — see turns.pass_phase's
+    own doc comment for why this is a separate endpoint from /round/act
+    rather than reusing it."""
+    _require_campaign(campaign_id)
+    try:
+        result = turns.pass_phase(campaign_id, body.pilot_id, body.phase)
+    except turns.InvalidPassPhase as exc:
+        raise HTTPException(422, str(exc))
+    await manager.broadcast(campaign_id, {"type": "round_updated", **result})
+    return result
+
+
 class RollInitiativeIn(BaseModel):
     pilot_id: int
 
 
 @app.post("/api/campaigns/{campaign_id}/round/roll-initiative")
 async def request_round_initiative(campaign_id: int, body: RollInitiativeIn) -> dict:
-    """Doesn't roll anything itself — validates the pilot may roll right
-    now and broadcasts "please physically throw dice for this pilot" to
-    every connected client. The shared table (TableView) is the one that
-    actually rolls, by reporting whatever its physics dice land on (see
-    /round/report-initiative below) — this app no longer has a
-    server-side random-number stand-in for this flow."""
+    """Validates the pilot may roll right now, then branches on their own
+    dice_mode preference (real user request: "cada jugador puede escoger
+    en opciones si quiere dados físicos siempre o tiradas automáticas"):
+    'physical' (default) broadcasts "please physically throw dice for
+    this pilot" — the shared table (TableView) is the one that actually
+    rolls, by reporting whatever its physics dice land on (see
+    /round/report-initiative below). 'auto' skips that entirely and
+    records a real server-rolled 2d6 immediately, same idempotent path
+    report-initiative uses, so no physical dice ever get thrown for this
+    pilot at all."""
     _require_campaign(campaign_id)
     try:
         result = turns.request_pilot_initiative(campaign_id, body.pilot_id)
     except (turns.WrongInitiativeMode, turns.RoundNotStarted, turns.UnknownCombatPilot) as exc:
         raise HTTPException(422, str(exc)) from exc
+
+    pilot = pilots.get_pilot(body.pilot_id)
+    if pilot and pilot["dice_mode"] == "auto":
+        _, _, total = combat.roll_2d6()
+        try:
+            round_state = turns.report_pilot_initiative(campaign_id, body.pilot_id, total)
+        except (turns.WrongInitiativeMode, turns.RoundNotStarted, turns.UnknownCombatPilot, turns.InvalidRollValue) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        await manager.broadcast(campaign_id, {"type": "round_updated", **round_state})
+        return round_state
+
     await manager.broadcast(campaign_id, {"type": "initiative_roll_requested", **result})
     return result
 

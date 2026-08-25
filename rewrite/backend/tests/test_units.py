@@ -256,6 +256,23 @@ def test_visible_enemies_from_unit_excludes_whats_behind(campaign, pilot):
     assert units.visible_enemies_from_unit(observer["id"]) == []
 
 
+def test_visible_enemies_from_unit_require_facing_false_includes_whats_behind(campaign, pilot):
+    # require_facing=False (real user report: melee.py's resolve_melee_
+    # attack never checks facing, only adjacency+LOS — turns.py's
+    # _pilots_with_melee_targets uses this to match that rule instead of
+    # the stricter facing-cone default used everywhere else, like FPV's
+    # own "what do I see" HUD).
+    enemy_pilot = pilots.create_pilot(campaign["id"], "Hostile", faction="enemy")
+    enemy_mech = _mech(campaign["id"], enemy_pilot["id"])
+    m = maps.create_map(campaign["id"], "Open field", width=8, height=3)
+    observer = units.create_unit(campaign["id"], m["id"], q=3, r=0, pilot_id=pilot["id"], facing_deg=0)
+    target = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=enemy_mech["id"], pilot_id=enemy_pilot["id"])
+
+    assert units.visible_enemies_from_unit(observer["id"]) == [], "still excluded by default"
+    enemies = units.visible_enemies_from_unit(observer["id"], require_facing=False)
+    assert [e["unit_id"] for e in enemies] == [target["id"]]
+
+
 def test_visible_enemies_from_unit_respects_los(campaign, pilot):
     enemy_pilot = pilots.create_pilot(campaign["id"], "Hostile", faction="enemy")
     enemy_mech = _mech(campaign["id"], enemy_pilot["id"])

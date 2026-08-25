@@ -27,7 +27,7 @@ import { FACTION_COLORS, FACTION_LABELS, NEUTRAL_UNIT_COLOR, type Faction } from
 import { suggestPilotColor } from '../pilotColors'
 import { DIE_STYLES, buildHeldByMap } from '../dieStyles'
 import {
-  activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative,
+  activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative, useDisplayedPhase,
 } from '../rounds'
 import { mapCenter, worldToHex } from '../hexMath'
 import {
@@ -57,11 +57,13 @@ import {
   markRoundActed,
   moveUnit,
   moveUnitWithMp,
+  passRoundPhase,
   resolveHeatPhase,
   reviewMech,
   requestInitiative,
   requestMovement,
   reviewPilot,
+  setEnemyRevealCinematic,
   setGmDieStyle,
   setInitiativeMode,
   standUp,
@@ -187,9 +189,19 @@ function GMViewBattletech() {
       return r ? { ...m, heat_current: r.heat_current } : m
     }))
   }, [heatPhaseResult])
-  const heatByUnitId = new Map(
-    units.filter((u) => u.mech_id != null).map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
-  )
+  // Held phase (rounds.ts's useDisplayedPhase) — real user report: an
+  // empty melee/heat phase used to resolve within the same WS
+  // round-trip as whatever ended the phase before it, reading as
+  // "skipped" even though it was genuinely considered. Drives the round
+  // bar's phase label below AND steam gating (only DURING the Heat
+  // phase, on every mech carrying real heat — real user report this
+  // used to show in every phase instead).
+  const displayedPhase = useDisplayedPhase(roundState)
+  const heatByUnitId = displayedPhase === 'heat'
+    ? new Map(
+        units.filter((u) => u.mech_id != null).map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
+      )
+    : new Map<number, number>()
   const proneUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
   const shutdownUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
 
@@ -413,6 +425,19 @@ function GMViewBattletech() {
     }
   }
 
+  // Real user request: "se puede desactivar desde las opciones de
+  // campaña en el GM view" — TableView's own 360°-orbit cinematic modal
+  // on enemy reveal.
+  const submitEnemyRevealCinematic = async (enabled: boolean) => {
+    if (!campaignId) return
+    try {
+      const c = await setEnemyRevealCinematic(campaignId, enabled)
+      setCampaign(c)
+    } catch {
+      setError('No se pudo cambiar la cinemática de revelación.')
+    }
+  }
+
   // Toggle-off if re-picking your own current style, otherwise switch
   // directly (the old one is simply overwritten server-side, freeing it).
   const submitGmDieStyle = async (styleId: string) => {
@@ -433,6 +458,21 @@ function GMViewBattletech() {
       await markRoundActed(campaignId, pilotId)
     } catch {
       setError('No se pudo marcar la activación.')
+    }
+  }
+
+  // "Pasar turno" (real user request/report) — phase-scoped, NOT the
+  // same as submitMarkActed above: a real attack blocks both ranged and
+  // melee for this pilot, but an explicit pass with nothing to shoot
+  // only satisfies the phase it was pressed in, leaving the other still
+  // open (e.g. a target-less ranged turn no longer burns a real melee
+  // opportunity against an adjacent enemy).
+  const submitPassAttack = async (pilotId: number, phase: 'ranged' | 'melee') => {
+    if (!campaignId) return
+    try {
+      await passRoundPhase(campaignId, pilotId, phase)
+    } catch {
+      setError('No se pudo pasar el turno.')
     }
   }
 
@@ -649,6 +689,7 @@ function GMViewBattletech() {
   const [editPiloting, setEditPiloting] = useState(5)
   const [editPilotFaction, setEditPilotFaction] = useState<Faction>('player')
   const [editPilotColor, setEditPilotColor] = useState('#9aa4a2')
+  const [editPilotDiceMode, setEditPilotDiceMode] = useState<'physical' | 'auto'>('physical')
   const [editingMech, setEditingMech] = useState<Mech | null>(null)
   const [editMechPilotId, setEditMechPilotId] = useState<number | ''>('')
   const [confirmDeletePilot, setConfirmDeletePilot] = useState<Pilot | null>(null)
@@ -662,6 +703,7 @@ function GMViewBattletech() {
     setEditPiloting(p.piloting)
     setEditPilotFaction(p.faction)
     setEditPilotColor(p.color)
+    setEditPilotDiceMode(p.dice_mode)
   }
 
   const submitEditPilot = async () => {
@@ -674,6 +716,7 @@ function GMViewBattletech() {
         piloting: editPiloting,
         faction: editPilotFaction,
         color: editPilotColor,
+        dice_mode: editPilotDiceMode,
       })
       setEditingPilot(null)
       refetch()
@@ -933,7 +976,7 @@ function GMViewBattletech() {
       <div className="round-bar">
         <span className="round-bar-label">
           RONDA: {roundState && roundState.round_number > 0 ? roundState.round_number : '—'}
-          {roundState && roundState.round_number > 0 && ` — ${PHASE_LABELS[currentPhase(roundState)]}`}
+          {roundState && roundState.round_number > 0 && ` — ${PHASE_LABELS[displayedPhase]}`}
         </span>
         <button onClick={submitStartRound}>
           {roundState && roundState.round_number > 0 ? 'Siguiente ronda' : 'Empezar ronda'}
@@ -1151,6 +1194,21 @@ function GMViewBattletech() {
               {campaign?.initiative_mode === 'individual' ? 'Individual (1 tirada por piloto)' : 'Por equipos (regla real)'}
             </span>
           </div>
+
+          <div className="row settings-row">
+            <span>Cinemática de revelación</span>
+            <label className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={campaign?.enemy_reveal_cinematic ?? true}
+                onChange={(e) => submitEnemyRevealCinematic(e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </label>
+            <span className="toggle-label">
+              {(campaign?.enemy_reveal_cinematic ?? true) ? 'Activada' : 'Desactivada'}
+            </span>
+          </div>
         </Modal>
       )}
 
@@ -1300,6 +1358,7 @@ function GMViewBattletech() {
             piloting={editPiloting} onPiloting={setEditPiloting}
             faction={editPilotFaction} onFaction={setEditPilotFaction} showFaction
             color={editPilotColor} onColor={setEditPilotColor}
+            diceMode={editPilotDiceMode} onDiceMode={setEditPilotDiceMode}
             onSubmit={submitEditPilot} submitLabel="Guardar" submitDisabled={!editPilotName}
           />
         </Modal>
@@ -1360,6 +1419,12 @@ function GMViewBattletech() {
             onAttack={() => { setPickingTargetFor(menu.unit.id); setMenu(null) }}
             onClose={() => setMenu(null)}
             showAttack={menuPhase === 'ranged' || menuPhase === 'melee'}
+            onSkipAttack={() => {
+              if (menuUnitPilot && (menuPhase === 'ranged' || menuPhase === 'melee')) {
+                submitPassAttack(menuUnitPilot.id, menuPhase)
+              }
+              setMenu(null)
+            }}
             showRollInitiative={menuPhase === 'initiative' && campaign?.initiative_mode === 'individual' && menuUnitPilot?.faction === 'enemy'}
             canRollInitiative={menuUnitPilot != null && needsInitiative(menuUnitPilot.id)}
             onRollInitiative={() => { if (menuUnitPilot) rollInitiativeForPilot(menuUnitPilot.id); setMenu(null) }}

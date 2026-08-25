@@ -66,6 +66,17 @@ def test_new_campaign_defaults_to_no_gm_die_style(campaign):
     assert campaign["gm_die_style"] is None
 
 
+def test_new_campaign_defaults_to_enemy_reveal_cinematic_enabled(campaign):
+    assert campaign["enemy_reveal_cinematic"] is True
+
+
+def test_set_enemy_reveal_cinematic_can_disable_and_reenable(campaign):
+    disabled = campaigns.set_enemy_reveal_cinematic(campaign["id"], False)
+    assert disabled["enemy_reveal_cinematic"] is False
+    reenabled = campaigns.set_enemy_reveal_cinematic(campaign["id"], True)
+    assert reenabled["enemy_reveal_cinematic"] is True
+
+
 def test_set_gm_die_style_sets_and_clears(campaign):
     updated = campaigns.set_gm_die_style(campaign["id"], "chrome-metallic")
     assert updated["gm_die_style"] == "chrome-metallic"

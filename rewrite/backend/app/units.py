@@ -319,14 +319,25 @@ def visible_hexes_from_unit(unit_id: int) -> list[dict] | None:
     return visible
 
 
-def visible_enemies_from_unit(unit_id: int) -> list[dict] | None:
+def visible_enemies_from_unit(unit_id: int, require_facing: bool = True) -> list[dict] | None:
     """Enemy units inside this unit's own facing cone + LoS — the
     unit-vs-unit sibling of visible_hexes_from_unit, for the first-person
     HUD (PlayerView's "Vista en 1ª persona"): what this mech would
     actually spot looking the way it's currently facing, unlike
     combined_visibility() which is 360° and only considers pilot-owned
     observers. A target with no pilot assigned still counts as an
-    unidentified contact — it isn't hidden just for lacking a faction."""
+    unidentified contact — it isn't hidden just for lacking a faction.
+
+    require_facing=False drops the facing-cone check (LoS + distance
+    only) — melee.py's resolve_melee_attack itself never checks facing
+    at all, just adjacency + LoS (physical attacks don't need "spotting"
+    the way aiming a weapon does), so turns.py's _pilots_with_melee_targets
+    uses this to gate the melee phase's existence on the SAME rule the
+    actual attack enforces. Real user report: the melee phase was
+    getting skipped even with an enemy standing right next to the mech,
+    whenever that enemy happened to be outside the 180° facing cone —
+    the phase-gating check was stricter than what an actual melee attack
+    would have allowed, silently hiding a legal action."""
     unit = get_unit(unit_id)
     if unit is None:
         return None
@@ -349,9 +360,10 @@ def visible_enemies_from_unit(unit_id: int) -> list[dict] | None:
             continue
         if target["pilot_faction"] is not None and target["pilot_faction"] == unit["pilot_faction"]:
             continue
-        dx, dz = _world_delta(unit["q"], unit["r"], target["q"], target["r"], grid_type)
-        if not _within_facing_arc(dx, dz, facing_deg, _VISION_ARC_DEG):
-            continue
+        if require_facing:
+            dx, dz = _world_delta(unit["q"], unit["r"], target["q"], target["r"], grid_type)
+            if not _within_facing_arc(dx, dz, facing_deg, _VISION_ARC_DEG):
+                continue
         target_elevation = tiles.get((target["q"], target["r"]), {}).get("elevation", 0)
         target_cell = cell_cls(target["q"], target["r"])
         if not los(observer, observer_elevation, target_cell, target_elevation, tiles):

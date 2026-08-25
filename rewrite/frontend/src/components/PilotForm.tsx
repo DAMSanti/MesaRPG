@@ -20,6 +20,14 @@ interface Props {
    * has full access regardless). */
   pin?: string
   onPin?: (v: string) => void
+  /** Real user request: "cada jugador puede escoger en opciones si
+   * quiere dados físicos siempre o tiradas automáticas" — optional so
+   * PlayerView's own creation form (which uses its Ajustes modal for
+   * this instead — real-time, no page reload needed) can omit it; only
+   * GMView's edit-pilot modal wires it here, for setting it on
+   * enemy/npc pilots. */
+  diceMode?: 'physical' | 'auto'
+  onDiceMode?: (v: 'physical' | 'auto') => void
   onSubmit: () => void
   submitLabel: string
   submitDisabled?: boolean
@@ -35,6 +43,7 @@ interface Props {
 export function PilotForm({
   name, onName, callsign, onCallsign, gunnery, onGunnery, piloting, onPiloting,
   faction, onFaction, showFaction = false, color, onColor, pin, onPin,
+  diceMode, onDiceMode,
   onSubmit, submitLabel, submitDisabled, hideSubmit = false,
 }: Props) {
   return (
@@ -64,6 +73,16 @@ export function PilotForm({
       {color !== undefined && onColor && (
         <label className="pilot-color-picker" title="Color de dados">
           <input type="color" value={color} onChange={(e) => onColor(e.target.value)} />
+        </label>
+      )}
+      {diceMode !== undefined && onDiceMode && (
+        <label title="Tiradas de iniciativa: dados físicos en la mesa o automáticas">
+          <input
+            type="checkbox"
+            checked={diceMode === 'auto'}
+            onChange={(e) => onDiceMode(e.target.checked ? 'auto' : 'physical')}
+          />
+          {' '}iniciativa automática
         </label>
       )}
       {!hideSubmit && (

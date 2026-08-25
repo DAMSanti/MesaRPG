@@ -188,6 +188,23 @@ CREATE TABLE IF NOT EXISTS bt_round_acted (
     PRIMARY KEY (campaign_id, pilot_id)
 );
 
+-- Explicit "Pasar turno" per phase (real user request) — deliberately
+-- separate from bt_round_acted above: a real ranged/melee attack still
+-- writes to bt_round_acted, which blocks BOTH phases for that pilot
+-- this round (the existing "can't punch with an arm that fired"
+-- simplification — see turns.py's own docstring). A pilot who simply
+-- had nothing to shoot/punch and passed shouldn't lose an opportunity
+-- they never actually used: passing ranged only satisfies ranged,
+-- leaving melee still open if they have a real target there (real user
+-- report: passing on a target-less ranged turn was silently burning
+-- their melee turn too, even against an adjacent enemy).
+CREATE TABLE IF NOT EXISTS bt_round_passed (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    pilot_id INTEGER NOT NULL REFERENCES pilots(id) ON DELETE CASCADE,
+    phase TEXT NOT NULL,
+    PRIMARY KEY (campaign_id, pilot_id, phase)
+);
+
 -- One row per initiative roll made this round: either a whole faction
 -- ("team" mode — the real rule) or one pilot ("individual" mode — a
 -- GM-selectable alternative, not from the rulebook, requested directly).
@@ -385,6 +402,14 @@ def init_db() -> None:
         # pilot-color look, same as every pilot before this feature existed.
         _ensure_column(conn, "pilots", "die_style", "TEXT")
         _ensure_column(conn, "campaigns", "gm_die_style", "TEXT")
+        # Real user request: cinematic 360° reveal modal on TableView the
+        # instant an enemy enters the team's LOS, toggleable per campaign
+        # from GMView's own "Ajustes" modal.
+        _ensure_column(conn, "campaigns", "enemy_reveal_cinematic", "INTEGER NOT NULL DEFAULT 1")
+        # Real user request: per-pilot choice between physical dice
+        # (thrown on TableView) and automatic server-rolled initiative —
+        # see pilots.py's DICE_MODES.
+        _ensure_column(conn, "pilots", "dice_mode", "TEXT NOT NULL DEFAULT 'physical'")
         # Melee/heat-phase/critical-hit state (ROADMAP.md follow-up —
         # "fase de melee... fase de heat... shutdown... sistema PSR/
         # caída/prono... daño a componentes por crítico"). Gyro/engine/

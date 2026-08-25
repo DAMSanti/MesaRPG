@@ -33,6 +33,23 @@ def test_update_pilot_rejects_unknown_faction(campaign):
         pilots.update_pilot(p["id"], faction="villain")
 
 
+def test_create_pilot_defaults_to_physical_dice_mode(campaign):
+    p = pilots.create_pilot(campaign["id"], "Traditionalist")
+    assert p["dice_mode"] == "physical"
+
+
+def test_update_pilot_can_switch_to_auto_dice_mode(campaign):
+    p = pilots.create_pilot(campaign["id"], "Speedrunner")
+    updated = pilots.update_pilot(p["id"], dice_mode="auto")
+    assert updated["dice_mode"] == "auto"
+
+
+def test_update_pilot_rejects_unknown_dice_mode(campaign):
+    p = pilots.create_pilot(campaign["id"], "Confused")
+    with pytest.raises(pilots.UnknownDiceMode):
+        pilots.update_pilot(p["id"], dice_mode="telepathic")
+
+
 def test_create_pilot_starts_with_zero_hits(campaign):
     p = pilots.create_pilot(campaign["id"], "Fresh Recruit")
     assert p["hits"] == 0

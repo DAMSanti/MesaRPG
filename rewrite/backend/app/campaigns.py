@@ -21,6 +21,7 @@ def list_campaigns() -> list[dict]:
         rows = conn.execute(
             """
             SELECT c.id, c.name, c.created_at, c.active_map_id, c.system, c.initiative_mode, c.gm_die_style,
+                   c.enemy_reveal_cinematic,
                    (SELECT COUNT(*) FROM pilots WHERE campaign_id = c.id) AS pilot_count,
                    (SELECT COUNT(*) FROM mechs WHERE campaign_id = c.id) AS mech_count
             FROM campaigns c
@@ -69,14 +70,29 @@ def set_gm_die_style(campaign_id: int, style: str | None) -> dict | None:
         return _get(conn, campaign_id)
 
 
+def set_enemy_reveal_cinematic(campaign_id: int, enabled: bool) -> dict | None:
+    """Real user request: TableView shows a 360°-orbit cinematic modal
+    the instant an enemy enters the team's LOS — this toggle (default
+    on) lets the GM turn it off from their own Ajustes modal."""
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE campaigns SET enemy_reveal_cinematic = ? WHERE id = ?", (1 if enabled else 0, campaign_id)
+        )
+        return _get(conn, campaign_id)
+
+
 def _with_grid_type(campaign: dict) -> dict:
     campaign["grid_type"] = systems.grid_type_for(campaign["system"])
+    campaign["enemy_reveal_cinematic"] = bool(campaign["enemy_reveal_cinematic"])
     return campaign
 
 
 def _get(conn, campaign_id: int) -> dict | None:
     row = conn.execute(
-        "SELECT id, name, created_at, active_map_id, system, initiative_mode, gm_die_style FROM campaigns WHERE id = ?",
+        """
+        SELECT id, name, created_at, active_map_id, system, initiative_mode, gm_die_style, enemy_reveal_cinematic
+        FROM campaigns WHERE id = ?
+        """,
         (campaign_id,),
     ).fetchone()
     return _with_grid_type(dict(row)) if row else None

@@ -1,0 +1,72 @@
+.enemy-reveal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.72);
+  animation: enemy-reveal-fade-in 0.35s ease;
+}
+
+@keyframes enemy-reveal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.enemy-reveal-frame {
+  position: relative;
+  width: min(72vw, 900px);
+  height: min(72vh, 620px);
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 0 40px rgba(227, 93, 93, 0.35);
+}
+
+.enemy-reveal-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 18px 24px 22px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85), transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  pointer-events: none;
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+}
+
+.enemy-reveal-chassis {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--danger);
+  text-transform: uppercase;
+}
+
+.enemy-reveal-model {
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+.enemy-reveal-close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: rgba(18, 33, 31, 0.75);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.enemy-reveal-close:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}

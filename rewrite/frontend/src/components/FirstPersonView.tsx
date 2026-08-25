@@ -14,7 +14,7 @@ import {
   type AttackResult, type Mech, type MapData, type MeleeAttackType, type MovementType, type ReachableHex,
   type RoundState, type Unit, type VisibleEnemy, type VisibleHex, type WeaponStats,
 } from '../api'
-import { activeMoverPilotId, currentPhase } from '../rounds'
+import { activeMoverPilotId, currentPhase, useDisplayedPhase } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
 import type { UnitWalked } from '../ws'
 import './FirstPersonView.css'
@@ -568,11 +568,11 @@ function WeaponHud({
   )
 }
 
-// Iniciativa, Movimiento, Distancia and Melee are all real, tracked
-// phases now (see turns.py's movement_order/moved_pilot_ids/
-// ranged_target_pilot_ids/melee_target_pilot_ids) — Heat still has no
-// real phase of its own (dissipation happens once per round instead, see
-// turns.py's own docstring), so that pill stays purely cosmetic.
+// All five are real, tracked phases now (see turns.py's movement_order/
+// moved_pilot_ids/ranged_target_pilot_ids/melee_target_pilot_ids/
+// heat_resolved) — Heat highlights via activePhases below same as the
+// rest, driven by the held displayedPhase so it's actually visible for a
+// beat instead of resolving invisibly within the same round-trip.
 type Phase = 'iniciativa' | 'movimiento' | 'distancia' | 'melee' | 'heat'
 const PHASES: { key: Phase; label: string }[] = [
   { key: 'iniciativa', label: 'Iniciativa' },
@@ -744,6 +744,16 @@ export function FirstPersonView({
   // own exact turn made this pill skip straight from Iniciativa to
   // Distancia/Melee for anyone who wasn't first to move.
   const phase = roundState ? currentPhase(roundState) : 'none'
+  // Held phase (rounds.ts's useDisplayedPhase) — display-only, for the
+  // phase pill row and steam below, NEVER for gating real interactivity
+  // (canAttack/isMyMoveTurn/the melee HUD switch above all correctly
+  // keep using the raw `phase` — an artificially delayed gate would make
+  // real actions lag behind what the round state already allows). Real
+  // user report: an empty melee/heat phase used to resolve within the
+  // same WS round-trip as whatever ended the phase before it, so this
+  // pill row jumped straight past them, reading as "skipped" even though
+  // they were genuinely considered.
+  const displayedPhase = useDisplayedPhase(roundState)
   // Unlike activePhases below (the phase pill row, deliberately global —
   // see its own comment), this one IS specifically "is it my own turn" —
   // an "¡INICIATIVA YA!"/"¡TU TURNO!" banner that fires for everyone in
@@ -751,15 +761,17 @@ export function FirstPersonView({
   // the one being waited on.
   const isMyMoveTurn = roundState != null && unit.pilot_id != null && activeMoverPilotId(roundState) === unit.pilot_id
   const activePhases: Set<Phase> =
-    phase === 'movement'
+    displayedPhase === 'movement'
       ? new Set(['movimiento'])
-      : phase === 'initiative'
+      : displayedPhase === 'initiative'
         ? new Set(['iniciativa'])
-        : phase === 'ranged'
+        : displayedPhase === 'ranged'
           ? new Set(['distancia'])
-          : phase === 'melee'
+          : displayedPhase === 'melee'
             ? new Set(['melee'])
-            : new Set()
+            : displayedPhase === 'heat'
+              ? new Set(['heat'])
+              : new Set()
 
   // The Iniciativa pill doubles as the roll button when it's this
   // pilot's turn to throw — "un botón de iniciativa, por así decirlo" —
@@ -1078,9 +1090,14 @@ export function FirstPersonView({
   const sceneUnits = units.filter(
     (u) => u.id !== unit.id && (u.pilot_faction === unit.pilot_faction || visibleEnemyUnitIds.has(u.id)),
   )
-  const heatByUnitId = new Map(
-    sceneUnits.filter((u) => u.mech_id != null).map((u) => [u.id, mechs?.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
-  )
+  // Real user report: steam was showing on ANY hot mech in every phase —
+  // the actual request was only DURING the Heat phase ("los mechs EN
+  // ESTA FASE desprenderán vapor"), on every mech carrying real heat.
+  const heatByUnitId = displayedPhase === 'heat'
+    ? new Map(
+        sceneUnits.filter((u) => u.mech_id != null).map((u) => [u.id, mechs?.find((m) => m.id === u.mech_id)?.heat_current ?? 0]),
+      )
+    : new Map<number, number>()
   const proneUnitIds = new Set(sceneUnits.filter((u) => mechs?.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
   const shutdownUnitIds = new Set(sceneUnits.filter((u) => mechs?.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
   // This cockpit's own fog of war (real user request: "esa niebla en el

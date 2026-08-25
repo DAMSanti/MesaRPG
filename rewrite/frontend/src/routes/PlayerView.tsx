@@ -446,6 +446,20 @@ export function PlayerView() {
     }
   }
 
+  // Real user request: "cada jugador puede escoger en opciones si
+  // quiere dados físicos siempre o tiradas automáticas" — only matters
+  // for individual-mode initiative (turns.py's own docstring: team mode
+  // already auto-rolls both sides regardless of this).
+  const submitPilotDiceMode = async (mode: 'physical' | 'auto') => {
+    if (!pilot) return
+    try {
+      await updatePilot(pilot.id, { dice_mode: mode }, getDeviceToken())
+      refetch()
+    } catch {
+      setError('No se pudo cambiar el modo de dados.')
+    }
+  }
+
   const editLocation = async (
     location: string,
     field: 'armor_current' | 'armor_rear_current' | 'structure_current',
@@ -779,6 +793,27 @@ export function PlayerView() {
             onPick={submitPilotDieStyle}
             disabled={!pilot}
           />
+
+          {campaign?.initiative_mode === 'individual' && (
+            <>
+              <h3 className="step-label">Iniciativa</h3>
+              <div className="row settings-row">
+                <span>Tiradas de iniciativa</span>
+                <label className="toggle-switch">
+                  <input
+                    type="checkbox"
+                    checked={pilot?.dice_mode === 'auto'}
+                    disabled={!pilot}
+                    onChange={(e) => submitPilotDiceMode(e.target.checked ? 'auto' : 'physical')}
+                  />
+                  <span className="toggle-slider" />
+                </label>
+                <span className="toggle-label">
+                  {pilot?.dice_mode === 'auto' ? 'Automáticas' : 'Dados físicos en la mesa'}
+                </span>
+              </div>
+            </>
+          )}
         </Modal>
       )}
 

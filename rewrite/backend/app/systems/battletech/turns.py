@@ -34,10 +34,14 @@ Neither mode gates movement or attacks behind whose turn it is — "no es
 tu turno" warns, it doesn't block (matches how the rest of this app is
 server-authoritative on outcomes but permissive on order).
 
-Starting a new round also dissipates heat for every mech in the
-campaign (see app/mechs.py `dissipate_all_heat` and app/combat.py's
-heat_penalty) — the closest mapping available to the real Heat Phase
-without a full phase-by-phase turn structure.
+Heat dissipates for every mech in the campaign as part of resolve_heat_phase
+below (see app/mechs.py's `dissipate_all_heat` and app/combat.py's
+heat_penalty) — real user report: it used to happen silently at the START
+of the NEXT round (before the Heat phase was even visible), which read as
+"the Heat phase doesn't do anything" even though it correctly triggered
+shutdown/ammo-explosion/pilot-damage checks. Moved so heat visibly drops
+(steam clearing, thermometer animating) during THIS round's own Heat
+phase, not invisibly carried into the next one.
 """
 
 import json
@@ -112,12 +116,6 @@ def start_round(campaign_id: int) -> dict:
                 faction_rolls = {f: _roll_2d6() for f in factions_present}
         rolls = [(f, None, roll) for f, roll in faction_rolls.items()]
 
-    # Snapshot every mech's heat BEFORE dissipate_all_heat below floors
-    # it at zero — undoing "empezar ronda" needs the exact prior value
-    # (real user request: undo covers round starts too), which can't be
-    # recovered afterward if a mech's heat had already dropped to 0.
-    heat_before = {m["id"]: m["heat_current"] for m in mechs.list_mechs(campaign_id)}
-
     with db.connect() as conn:
         prev_round_row = conn.execute(
             "SELECT round_number FROM bt_rounds WHERE campaign_id = ?", (campaign_id,)
@@ -132,6 +130,7 @@ def start_round(campaign_id: int) -> dict:
             (campaign_id,),
         )
         conn.execute("DELETE FROM bt_round_acted WHERE campaign_id = ?", (campaign_id,))
+        conn.execute("DELETE FROM bt_round_passed WHERE campaign_id = ?", (campaign_id,))
         conn.execute("DELETE FROM bt_round_rolls WHERE campaign_id = ?", (campaign_id,))
         conn.execute("DELETE FROM bt_round_moves WHERE campaign_id = ?", (campaign_id,))
         for faction, pilot_id, roll in rolls:
@@ -141,14 +140,10 @@ def start_round(campaign_id: int) -> dict:
             )
         events.log_event(
             conn, campaign_id, "round_started", f"Ronda {prev_round_number + 1} iniciada",
-            {"prev_round_number": prev_round_number, "heat_before": heat_before},
+            {"prev_round_number": prev_round_number},
         )
         state = _get(conn, campaign_id, mode)
 
-    # Closest mapping this app has to the real Heat Phase without a full
-    # phase-by-phase turn (ROADMAP.md Fase R2 follow-up) — heat drops by
-    # each mech's own heat sink count once per new round.
-    mechs.dissipate_all_heat(campaign_id)
     return state
 
 
@@ -247,13 +242,37 @@ def report_pilot_initiative(campaign_id: int, pilot_id: int, roll: int) -> dict:
 
 
 def mark_acted(campaign_id: int, pilot_id: int) -> dict:
-    """Record that a pilot has taken their activation this round."""
+    """Record that a pilot has taken their activation this round — a REAL
+    attack (ranged or melee), which blocks BOTH phases for them this
+    round (the "can't punch with an arm that fired" simplification)."""
     campaign = campaigns.get_campaign(campaign_id)
     mode = campaign["initiative_mode"] if campaign else "team"
     with db.connect() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO bt_round_acted (campaign_id, pilot_id) VALUES (?, ?)",
             (campaign_id, pilot_id),
+        )
+        return _get(conn, campaign_id, mode)
+
+
+class InvalidPassPhase(ValueError):
+    pass
+
+
+def pass_phase(campaign_id: int, pilot_id: int, phase: str) -> dict:
+    """Record an explicit "Pasar turno" for ONE phase only (real user
+    request/report — see bt_round_passed's own doc comment for why this
+    is deliberately separate from mark_acted above: a pilot who simply
+    had nothing to shoot shouldn't lose their real melee opportunity
+    against an adjacent enemy just because they passed on ranged)."""
+    if phase not in ("ranged", "melee"):
+        raise InvalidPassPhase(f"phase must be 'ranged' or 'melee', got {phase!r}")
+    campaign = campaigns.get_campaign(campaign_id)
+    mode = campaign["initiative_mode"] if campaign else "team"
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO bt_round_passed (campaign_id, pilot_id, phase) VALUES (?, ?, ?)",
+            (campaign_id, pilot_id, phase),
         )
         return _get(conn, campaign_id, mode)
 
@@ -290,14 +309,15 @@ def _movement_order(campaign_id: int, mode: str, rolls: list[dict]) -> list[int]
 # tiene alcance y en LoS algún mech al que pueda atacar") -----------------
 
 
-def _combat_pilots_with_targets(map_id: int | None, target_check) -> list[int]:
+def _combat_pilots_with_targets(map_id: int | None, target_check, require_facing: bool = True) -> list[int]:
     """Every combat pilot with a live unit+mech on the given map whose
     mech currently has at least one enemy satisfying target_check(mech,
     enemies) — enemies is units.visible_enemies_from_unit's own result
-    (facing-cone + LOS + real distance, already built for the 1st-person
-    HUD), reused here rather than re-deriving the same geometry. None/no
-    active map -> nobody has anything (mirrors movement.py's own "no map,
-    nothing reachable" handling)."""
+    (LOS + real distance, plus facing-cone unless require_facing=False —
+    already built for the 1st-person HUD), reused here rather than
+    re-deriving the same geometry. None/no active map -> nobody has
+    anything (mirrors movement.py's own "no map, nothing reachable"
+    handling)."""
     if map_id is None:
         return []
     result = []
@@ -307,7 +327,7 @@ def _combat_pilots_with_targets(map_id: int | None, target_check) -> list[int]:
         mech = mechs.get_mech(u["mech_id"])
         if mech is None:
             continue
-        enemies = units.visible_enemies_from_unit(u["id"]) or []
+        enemies = units.visible_enemies_from_unit(u["id"], require_facing=require_facing) or []
         if target_check(mech, enemies):
             result.append(u["pilot_id"])
     return result
@@ -335,10 +355,16 @@ def _pilots_with_ranged_targets(map_id: int | None) -> list[int]:
 
 def _pilots_with_melee_targets(map_id: int | None) -> list[int]:
     """A pilot "has a melee target" if some enemy is standing adjacent
-    (distance 1) — physical attacks need no weapon/ammo/range check, just
-    proximity (and enemies is already filtered by facing-cone/LOS, both
-    trivially satisfied at distance 1)."""
-    return _combat_pilots_with_targets(map_id, lambda mech, enemies: any(e["distance"] <= 1 for e in enemies))
+    (distance 1) and in LOS — physical attacks need no weapon/ammo/range
+    check, just proximity. require_facing=False: melee.py's
+    resolve_melee_attack itself never checks facing, only adjacency+LOS
+    (a physical attack doesn't need "spotting" the way aiming a weapon
+    does) — gating the phase's existence on the stricter facing-cone
+    check used to hide the melee phase even when an actual attack would
+    have been legal (real user report)."""
+    return _combat_pilots_with_targets(
+        map_id, lambda mech, enemies: any(e["distance"] <= 1 for e in enemies), require_facing=False,
+    )
 
 
 # ---- Heat Phase (CAT3500D rulebook pp. 37-42 — verified directly against
@@ -376,17 +402,17 @@ def _pick_ammo_bin(mech: dict) -> dict | None:
 
 
 def resolve_heat_phase(campaign_id: int) -> dict:
-    """The Heat Scale's shutdown/restart, ammo-explosion, and life-
-    support pilot-damage checks — idempotent per round via bt_rounds.
-    heat_resolved (a second call for the same round is a safe no-op, so
-    the frontend can call this itself the instant it observes the round
-    has nothing left to act on, rather than needing a GM-clicked button).
-
-    Dissipation itself already happened at this round's own start_round
-    (this app's "closest mapping to the real Heat Phase" — see module
-    docstring); this resolves the CONSEQUENCES of whatever heat has
-    already built up this round, same order the rulebook itself
-    specifies (dissipate, then check thresholds against the result).
+    """Dissipates every mech's heat (real user report: this used to
+    happen silently at the previous start_round instead, before the
+    Heat phase was even visible — moved here so it actually happens
+    DURING this round's own Heat phase), then the Heat Scale's
+    shutdown/restart, ammo-explosion, and life-support pilot-damage
+    checks against the result — same order the rulebook itself specifies
+    (dissipate, then check thresholds). Idempotent per round via
+    bt_rounds.heat_resolved (a second call for the same round is a safe
+    no-op, so the frontend can call this itself the instant it observes
+    the round has nothing left to act on, rather than needing a
+    GM-clicked button).
 
     Movement/to-hit penalties from heat (Heat Scale's other columns) are
     already live via movement.py's _heat_mp_penalty/combat.py's
@@ -397,6 +423,8 @@ def resolve_heat_phase(campaign_id: int) -> dict:
         if round_row and round_row["heat_resolved"]:
             return {"campaign_id": campaign_id, "results": [], "already_resolved": True}
         conn.execute("UPDATE bt_rounds SET heat_resolved = 1 WHERE campaign_id = ?", (campaign_id,))
+
+    mechs.dissipate_all_heat(campaign_id)
 
     results = []
     for mech in mechs.list_mechs(campaign_id):
@@ -483,6 +511,12 @@ def _get(conn, campaign_id: int, mode: str) -> dict:
         "SELECT pilot_id FROM bt_round_acted WHERE campaign_id = ? ORDER BY pilot_id",
         (campaign_id,),
     ).fetchall()
+    passed_rows = conn.execute(
+        "SELECT pilot_id, phase FROM bt_round_passed WHERE campaign_id = ? ORDER BY pilot_id",
+        (campaign_id,),
+    ).fetchall()
+    ranged_passed_pilot_ids = [r["pilot_id"] for r in passed_rows if r["phase"] == "ranged"]
+    melee_passed_pilot_ids = [r["pilot_id"] for r in passed_rows if r["phase"] == "melee"]
 
     move_rows = conn.execute(
         "SELECT pilot_id, unit_id, movement_type, hexes_moved FROM bt_round_moves WHERE campaign_id = ? ORDER BY pilot_id",
@@ -514,6 +548,15 @@ def _get(conn, campaign_id: int, mode: str) -> dict:
         "mode": mode,
         "rolls": rolls,
         "acted_pilot_ids": [r["pilot_id"] for r in acted_rows],
+        # Explicit "Pasar turno" per phase (real user request/report:
+        # passing a target-less ranged turn was silently burning the SAME
+        # pilot's melee turn too, since both used to share the one flat
+        # acted_pilot_ids set above). A real attack still writes to
+        # acted_pilot_ids (blocking both phases, the existing "can't
+        # punch with an arm that fired" simplification) — these two are
+        # ONLY for an explicit no-op pass, phase-scoped on purpose.
+        "ranged_passed_pilot_ids": ranged_passed_pilot_ids,
+        "melee_passed_pilot_ids": melee_passed_pilot_ids,
         "movement_order": movement_order,
         "moved_pilot_ids": moved_pilot_ids,
         # Real recorded movement per pilot this round — AttackPanel reads

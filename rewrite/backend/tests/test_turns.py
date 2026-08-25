@@ -32,28 +32,24 @@ def test_starting_a_round_increments_round_number(campaign):
     assert second["round_number"] == 2
 
 
-def test_starting_a_new_round_dissipates_heat_for_every_mech(campaign):
+def test_starting_a_new_round_does_not_dissipate_heat(campaign):
+    # Real user report: dissipation used to happen silently at the NEXT
+    # round's start_round, before the Heat phase was even visible — moved
+    # to resolve_heat_phase (see its own test below) so it happens
+    # visibly DURING this round's own Heat phase instead.
     m = mechs.create_mech(
         campaign_id=campaign["id"], chassis="Hot", tonnage=50, walk_mp=4, run_mp=6,
         locations=ATLAS_LOCATIONS, heat_sinks=10,
     )
     mechs.add_heat(m["id"], 15)
     turns.start_round(campaign["id"])
-    assert mechs.get_mech(m["id"])["heat_current"] == 5  # 15 - 10 heat sinks
+    assert mechs.get_mech(m["id"])["heat_current"] == 15
 
 
-def test_undo_round_started_restores_round_number_and_heat(campaign):
-    m = mechs.create_mech(
-        campaign_id=campaign["id"], chassis="Hot", tonnage=50, walk_mp=4, run_mp=6,
-        locations=ATLAS_LOCATIONS, heat_sinks=10,
-    )
-    mechs.add_heat(m["id"], 15)
+def test_undo_round_started_restores_round_number(campaign):
     turns.start_round(campaign["id"])
-    assert mechs.get_mech(m["id"])["heat_current"] == 5
-
     events.undo_last_event(campaign["id"])
     assert turns.get_round(campaign["id"])["round_number"] == 0
-    assert mechs.get_mech(m["id"])["heat_current"] == 15
 
 
 def test_undo_round_started_after_two_rounds_restores_the_second(campaign):
@@ -263,6 +259,34 @@ def test_starting_a_new_round_clears_who_has_acted_and_prior_rolls(campaign, pil
     state = turns.start_round(campaign["id"])
     assert state["acted_pilot_ids"] == []
     assert len(state["rolls"]) == 1  # fresh roll for this round, not stacked
+
+
+def test_pass_phase_is_reflected_in_round_state_and_scoped_to_that_phase(campaign, pilot):
+    turns.start_round(campaign["id"])
+    state = turns.pass_phase(campaign["id"], pilot["id"], "ranged")
+    assert state["ranged_passed_pilot_ids"] == [pilot["id"]]
+    assert state["melee_passed_pilot_ids"] == []
+    assert state["acted_pilot_ids"] == [], "an explicit pass is NOT a real attack"
+
+
+def test_pass_phase_the_same_pilot_twice_does_not_duplicate(campaign, pilot):
+    turns.start_round(campaign["id"])
+    turns.pass_phase(campaign["id"], pilot["id"], "ranged")
+    state = turns.pass_phase(campaign["id"], pilot["id"], "ranged")
+    assert state["ranged_passed_pilot_ids"] == [pilot["id"]]
+
+
+def test_pass_phase_rejects_an_unknown_phase(campaign, pilot):
+    turns.start_round(campaign["id"])
+    with pytest.raises(turns.InvalidPassPhase):
+        turns.pass_phase(campaign["id"], pilot["id"], "movement")
+
+
+def test_starting_a_new_round_clears_prior_passes(campaign, pilot):
+    turns.start_round(campaign["id"])
+    turns.pass_phase(campaign["id"], pilot["id"], "ranged")
+    state = turns.start_round(campaign["id"])
+    assert state["ranged_passed_pilot_ids"] == []
 
 
 def test_round_state_is_scoped_per_campaign(campaign, pilot):
@@ -475,6 +499,50 @@ def test_melee_target_pilot_ids_populated_when_adjacent(campaign):
     assert set(state["melee_target_pilot_ids"]) == {attacker_pilot["id"], target_pilot["id"]}
 
 
+def test_melee_target_pilot_ids_populated_even_when_target_is_outside_facing_arc(campaign):
+    # Real user report: the melee phase was skipped even with an enemy
+    # standing right next to the mech, whenever that enemy happened to be
+    # outside the attacker's 180° facing cone. melee.py's
+    # resolve_melee_attack itself never checks facing — only adjacency +
+    # LOS — so the phase-gating check must match that, not the stricter
+    # facing-cone rule visible_enemies_from_unit applies by default for
+    # the FPV "what do I see" HUD.
+    from app import campaigns as campaigns_module, maps, units as units_module
+    from app.systems.battletech import movement
+
+    campaigns_module.set_initiative_mode(campaign["id"], "individual")
+    attacker_pilot = pilots.create_pilot(campaign["id"], "Attacker", faction="player")
+    target_pilot = pilots.create_pilot(campaign["id"], "Target", faction="enemy")
+    m = maps.create_map(campaign["id"], "Facing Test", width=6, height=6)
+    campaigns_module.set_active_map(campaign["id"], m["id"])
+    attacker_mech = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Attacker", tonnage=50, walk_mp=4, run_mp=6,
+        pilot_id=attacker_pilot["id"], locations=ATLAS_LOCATIONS,
+    )
+    target_mech = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Target", tonnage=50, walk_mp=4, run_mp=6,
+        pilot_id=target_pilot["id"], locations=ATLAS_LOCATIONS,
+    )
+    # Attacker faces AWAY from the target (target sits at +q, attacker
+    # faces toward -q) — squarely behind, outside any 180° front cone.
+    attacker_unit = units_module.create_unit(
+        campaign["id"], m["id"], q=0, r=0, mech_id=attacker_mech["id"], pilot_id=attacker_pilot["id"],
+        facing_deg=180,
+    )
+    target_unit = units_module.create_unit(
+        campaign["id"], m["id"], q=1, r=0, mech_id=target_mech["id"], pilot_id=target_pilot["id"],
+    )
+
+    turns.start_round(campaign["id"])
+    turns.report_pilot_initiative(campaign["id"], attacker_pilot["id"], 5)
+    turns.report_pilot_initiative(campaign["id"], target_pilot["id"], 8)
+    movement.execute_move(campaign["id"], attacker_unit["id"], 0, 0, "walk")
+    movement.execute_move(campaign["id"], target_unit["id"], 1, 0, "walk")
+
+    state = turns.get_round(campaign["id"])
+    assert set(state["melee_target_pilot_ids"]) == {attacker_pilot["id"], target_pilot["id"]}
+
+
 # ---- Heat Phase -----------------------------------------------------------
 
 
@@ -501,13 +569,30 @@ def test_starting_a_new_round_resets_heat_resolved(campaign):
     assert turns.get_round(campaign["id"])["heat_resolved"] is False
 
 
+def test_resolve_heat_phase_dissipates_heat_for_every_mech(campaign):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Hot", tonnage=50, walk_mp=4, run_mp=6,
+        locations=ATLAS_LOCATIONS, heat_sinks=10,
+    )
+    mechs.add_heat(m["id"], 15)
+    turns.start_round(campaign["id"])
+    result = turns.resolve_heat_phase(campaign["id"])
+    assert mechs.get_mech(m["id"])["heat_current"] == 5  # 15 - 10 heat sinks
+    mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
+    assert mech_result["heat_current"] == 5, "result payload reflects the POST-dissipation value"
+
+
 def test_resolve_heat_phase_shuts_down_at_30_with_no_roll_needed(campaign):
+    # heat_sinks=0 so this test's exact heat value isn't muddied by
+    # resolve_heat_phase's own dissipation (see the dedicated
+    # dissipation test above) — this one is purely about threshold
+    # behavior at a known heat value.
     m = mechs.create_mech(
         campaign_id=campaign["id"], chassis="Overheated", tonnage=50, walk_mp=4, run_mp=6,
-        locations=ATLAS_LOCATIONS,
+        locations=ATLAS_LOCATIONS, heat_sinks=0,
     )
     turns.start_round(campaign["id"])
-    mechs.add_heat(m["id"], 30)  # added AFTER start_round, which would otherwise dissipate it first
+    mechs.add_heat(m["id"], 30)
     result = turns.resolve_heat_phase(campaign["id"])
     mech_result = next(r for r in result["results"] if r["mech_id"] == m["id"])
     assert mech_result["shutdown"] is True
@@ -547,7 +632,7 @@ def test_resolve_heat_phase_shutdown_avoid_roll_uses_the_highest_threshold_cross
     # bracket's TN but must still fail the real (10+) check.
     m = mechs.create_mech(
         campaign_id=campaign["id"], chassis="VeryHot", tonnage=50, walk_mp=4, run_mp=6,
-        locations=ATLAS_LOCATIONS,
+        locations=ATLAS_LOCATIONS, heat_sinks=0,
     )
     turns.start_round(campaign["id"])
     mechs.add_heat(m["id"], 26)
@@ -561,7 +646,7 @@ def test_resolve_heat_phase_shutdown_avoid_roll_uses_the_highest_threshold_cross
 def test_resolve_heat_phase_shutdown_avoided_on_a_successful_roll(campaign):
     m = mechs.create_mech(
         campaign_id=campaign["id"], chassis="Lucky", tonnage=50, walk_mp=4, run_mp=6,
-        locations=ATLAS_LOCATIONS,
+        locations=ATLAS_LOCATIONS, heat_sinks=0,
     )
     turns.start_round(campaign["id"])
     mechs.add_heat(m["id"], 14)  # avoid on 4+
@@ -575,7 +660,7 @@ def test_resolve_heat_phase_shutdown_avoided_on_a_successful_roll(campaign):
 def test_resolve_heat_phase_ammo_explosion_wounds_pilot_and_zeroes_ammo(campaign, pilot):
     m = mechs.create_mech(
         campaign_id=campaign["id"], chassis="Loaded", tonnage=50, walk_mp=4, run_mp=6,
-        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"],
+        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"], heat_sinks=0,
     )
     mechs.add_weapon(m["id"], "SRM 6", "RT")
     turns.start_round(campaign["id"])
@@ -591,7 +676,7 @@ def test_resolve_heat_phase_ammo_explosion_wounds_pilot_and_zeroes_ammo(campaign
 def test_resolve_heat_phase_ammo_explosion_avoided_deals_no_damage(campaign, pilot):
     m = mechs.create_mech(
         campaign_id=campaign["id"], chassis="Loaded", tonnage=50, walk_mp=4, run_mp=6,
-        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"],
+        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"], heat_sinks=0,
     )
     mechs.add_weapon(m["id"], "SRM 6", "RT")
     turns.start_round(campaign["id"])
@@ -606,7 +691,7 @@ def test_resolve_heat_phase_ammo_explosion_avoided_deals_no_damage(campaign, pil
 def test_resolve_heat_phase_life_support_damage_scales_with_heat(campaign, pilot):
     m = mechs.create_mech(
         campaign_id=campaign["id"], chassis="Cooked", tonnage=50, walk_mp=4, run_mp=6,
-        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"],
+        locations=ATLAS_LOCATIONS, pilot_id=pilot["id"], heat_sinks=0,
     )
     from app.systems.battletech import criticals
     criticals.apply_critical_effects(m["id"], [{"location": "HD", "slot_index": 0, "item_name": "Life Support"}])
