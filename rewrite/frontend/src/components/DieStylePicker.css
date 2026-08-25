@@ -1,41 +1,91 @@
-.die-style-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 10px;
+.die-style-picker {
+  position: relative;
   margin-bottom: 14px;
 }
 
-.die-style-swatch {
+.die-style-toggle {
+  width: 100%;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 8px;
+  gap: 10px;
+  padding: 8px 12px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--panel);
+  color: var(--text);
   cursor: pointer;
   font-family: inherit;
 }
 
-.die-style-swatch:hover:not(:disabled) {
+.die-style-toggle:hover:not(:disabled) {
   border-color: var(--accent);
 }
 
-.die-style-swatch.mine {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
+.die-style-toggle:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
-.die-style-swatch.taken {
+.die-style-toggle-name {
+  flex: 1;
+  text-align: left;
+  font-size: 13px;
+}
+
+.die-style-toggle-placeholder {
+  color: var(--text-secondary);
+}
+
+.die-style-caret {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.die-style-menu {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.die-style-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.die-style-option:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.die-style-option.mine {
+  border-color: var(--accent);
+}
+
+.die-style-option.taken {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
 .die-style-swatch-color {
   position: relative;
-  width: 100%;
-  aspect-ratio: 1;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
   border-radius: 6px;
   background: var(--die-style-color);
   display: flex;
@@ -46,13 +96,13 @@
 /* Metallic/pearl swatches get an extra diagonal sheen layered on top of
    the flat base color — same idea as Die.tsx's own metalness/iridescence
    distinction, just as a cheap CSS gradient instead of a 3D material. */
-.die-style-swatch.material-metallic .die-style-swatch-color {
+.die-style-swatch-color.material-metallic {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.55) 0%, transparent 35%, transparent 65%, rgba(0, 0, 0, 0.35) 100%),
     var(--die-style-color);
 }
 
-.die-style-swatch.material-pearl .die-style-swatch-color {
+.die-style-swatch-color.material-pearl {
   background:
     linear-gradient(135deg, rgba(255, 158, 203, 0.35), rgba(158, 203, 255, 0.35) 45%, rgba(255, 232, 158, 0.35) 100%),
     var(--die-style-color);
@@ -61,34 +111,31 @@
 .die-style-marking {
   color: #fff;
   mix-blend-mode: difference;
-  font-size: 22px;
+  font-size: 13px;
   font-weight: 700;
   font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
 }
 
-.die-style-check {
-  position: absolute;
-  top: 2px;
-  right: 4px;
-  color: var(--accent);
-  font-weight: 700;
-  text-shadow: 0 0 3px var(--bg-deep);
-}
-
-.die-style-label {
+.die-style-option-label {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  text-align: center;
+  gap: 1px;
+  text-align: left;
 }
 
 .die-style-name {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text);
 }
 
 .die-style-status {
   font-size: 10px;
   color: var(--text-secondary);
+}
+
+.die-style-check {
+  flex-shrink: 0;
+  color: var(--accent);
+  font-weight: 700;
 }
