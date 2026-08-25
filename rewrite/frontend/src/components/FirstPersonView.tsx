@@ -9,10 +9,10 @@ import { MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
 import { ARMOR_GEOMETRY, ARMOR_VIEWBOX, type MechLocationCode } from '../mechSheetGeometry'
 import { FacingPicker } from './FacingPicker'
 import {
-  attack, getMap, getUnitVisibleEnemies, getWeaponCatalog, markRoundActed, moveUnit,
+  attack, getMap, getUnitVisibleEnemies, getUnitVisibleHexes, getWeaponCatalog, markRoundActed, moveUnit,
   moveUnitWithMp, requestInitiative, requestMovement, submitMeleeAttack,
   type AttackResult, type Mech, type MapData, type MeleeAttackType, type MovementType, type ReachableHex,
-  type RoundState, type Unit, type VisibleEnemy, type WeaponStats,
+  type RoundState, type Unit, type VisibleEnemy, type VisibleHex, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
@@ -623,6 +623,7 @@ export function FirstPersonView({
 }) {
   const [map, setMap] = useState<MapData | null>(null)
   const [enemies, setEnemies] = useState<VisibleEnemy[]>([])
+  const [visibleHexes, setVisibleHexes] = useState<VisibleHex[]>([])
   const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
   const labelRefs = useRef<Record<number, HTMLDivElement | null>>({})
   // Edge-of-screen arrow for a detected enemy currently outside the
@@ -656,13 +657,31 @@ export function FirstPersonView({
   // weapon without PlayerView needing to pass its own copy down.
   useEffect(() => {
     let cancelled = false
-    Promise.all([getMap(unit.map_id), getUnitVisibleEnemies(unit.id), getWeaponCatalog()]).then(([m, e, w]) => {
+    Promise.all([
+      getMap(unit.map_id), getUnitVisibleEnemies(unit.id), getWeaponCatalog(),
+    ]).then(([m, e, w]) => {
       if (!cancelled) {
         setMap(m)
         setEnemies(e)
         setWeaponCatalog(w)
       }
     })
+    return () => {
+      cancelled = true
+    }
+  }, [unit.map_id, unit.id, visibility])
+
+  // This cockpit's own fog of war data — kept as its own fetch (not
+  // folded into the Promise.all above) so a failure here can't leave
+  // map/enemies/weaponCatalog stuck stale too, and so it's independently
+  // retriable/debuggable (real user report: FPV was fogging every tile
+  // rather than just the handful outside this unit's own facing-cone
+  // LoS — see cockpitVisibleHexes below).
+  useEffect(() => {
+    let cancelled = false
+    getUnitVisibleHexes(unit.id).then((h) => {
+      if (!cancelled) setVisibleHexes(h)
+    }).catch(() => {})
     return () => {
       cancelled = true
     }
@@ -1064,6 +1083,11 @@ export function FirstPersonView({
   )
   const proneUnitIds = new Set(sceneUnits.filter((u) => mechs?.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
   const shutdownUnitIds = new Set(sceneUnits.filter((u) => mechs?.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
+  // This cockpit's own fog of war (real user request: "esa niebla en el
+  // FPV pero ahí solo mostrará lo que ve el personaje") — deliberately
+  // NOT the team-wide union TableView uses, just this one unit's own
+  // facing-cone LoS (visibleHexes, from getUnitVisibleHexes).
+  const cockpitVisibleHexes = new Set(visibleHexes.map((h) => `${h.q},${h.r}`))
 
   return (
     <div className="first-person-view">
@@ -1201,6 +1225,7 @@ export function FirstPersonView({
                     heatByUnitId={heatByUnitId}
                     proneUnitIds={proneUnitIds}
                     shutdownUnitIds={shutdownUnitIds}
+                    teamVisibleHexes={cockpitVisibleHexes}
                   />
                 </Suspense>
                 <EnemyMarkersController

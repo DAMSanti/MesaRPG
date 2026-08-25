@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getRound, type ReachableHex, type RoundState } from './api'
+import { getRound, type ReachableHex, type RoundState, type VisibleHex } from './api'
 
 const WS_BASE = import.meta.env.VITE_WS_URL ?? 'ws://localhost:8124/ws'
 
@@ -25,6 +25,7 @@ export interface VisibilityUpdate {
   type: 'visibility_update'
   visible: Record<string, number[]>
   newly_revealed: number[]
+  visible_hexes: VisibleHex[]
 }
 
 export interface AttackResult {

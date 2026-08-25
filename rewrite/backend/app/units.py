@@ -243,7 +243,46 @@ def combined_visibility(campaign_id: int, map_id: int) -> dict:
                 conn.execute("UPDATE units SET revealed = 1 WHERE id = ?", (u["id"],))
                 newly_revealed.append(u["id"])
 
-    return {"visible": visible, "newly_revealed": newly_revealed}
+    return {
+        "visible": visible,
+        "newly_revealed": newly_revealed,
+        "visible_hexes": _team_visible_hexes(units, tiles, map_id, "player"),
+    }
+
+
+def _team_visible_hexes(units: list[dict], tiles: dict, map_id: int, faction: str) -> list[dict]:
+    """Every hex at least one `faction` unit can currently see (front-
+    facing cone + LoS — same per-unit computation visible_hexes_from_unit
+    already does for the debug overlay/FirstPersonView's own cockpit fog,
+    just unioned across a whole team here). Drives the real user-
+    requested fog of war on the shared table screen: "niebla de guerra
+    real en el table view... casillas que el equipo jugador no ve".
+    GMView renders no fog at all (the GM is meant to be omniscient), so
+    this is only ever computed for 'player' in practice — a ghost unit
+    (ON PURPOSE excluded, matching the pilot-observer exclusion above)
+    never contributes since it has no real miniature on the table yet to
+    see anything from."""
+    m = get_map(map_id)
+    grid_type = m["grid_type"] if m else "hex"
+    cell_cls, los = (Cell, square_has_los) if grid_type == "square" else (Hex, has_los)
+
+    visible_hex_set: set[tuple[int, int]] = set()
+    for u in units:
+        if u["pilot_faction"] != faction or u["is_ghost"]:
+            continue
+        observer = cell_cls(u["q"], u["r"])
+        observer_elevation = tiles.get((u["q"], u["r"]), {}).get("elevation", 0)
+        facing_deg = u["facing_deg"]
+        for (q, r), tile in tiles.items():
+            if (q, r) in visible_hex_set:
+                continue
+            dx, dz = _world_delta(u["q"], u["r"], q, r, grid_type)
+            if not _within_facing_arc(dx, dz, facing_deg, _VISION_ARC_DEG):
+                continue
+            if los(observer, observer_elevation, cell_cls(q, r), tile.get("elevation", 0), tiles):
+                visible_hex_set.add((q, r))
+
+    return [{"q": q, "r": r} for q, r in visible_hex_set]
 
 
 def visible_hexes_from_unit(unit_id: int) -> list[dict] | None:

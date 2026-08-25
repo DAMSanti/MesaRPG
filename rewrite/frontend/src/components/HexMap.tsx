@@ -794,10 +794,131 @@ function FootprintTrail({ marks }: { marks: FootprintMark[] }) {
   )
 }
 
+/** Baked once and reused for every fog puff — several overlapping soft
+ * radial blobs at fixed offsets instead of one perfect circle (like
+ * AttackEffects' getGlowTexture), so the silhouette reads as an
+ * irregular cloud rather than a glowing disc. */
+let cloudTextureCache: THREE.Texture | null = null
+function getCloudTexture(): THREE.Texture {
+  if (cloudTextureCache) return cloudTextureCache
+  const size = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const blobs = [
+    { x: 0.5, y: 0.5, r: 0.42 },
+    { x: 0.3, y: 0.42, r: 0.28 },
+    { x: 0.7, y: 0.4, r: 0.3 },
+    { x: 0.42, y: 0.66, r: 0.3 },
+    { x: 0.64, y: 0.62, r: 0.26 },
+  ]
+  for (const b of blobs) {
+    const cx = b.x * size, cy = b.y * size, r = b.r * size
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r)
+    // Wider, gentler falloff than a typical glow sprite (getGlowTexture's
+    // own 0.4 stop) — real user request: neighboring tiles' puffs should
+    // visually merge into one continuous bank, not read as separate
+    // touching-but-distinct blobs. A big soft "skirt" reaching most of
+    // the way to full-transparent at the very edge is what lets two
+    // overlapping puffs blend smoothly instead of showing two ring-like
+    // edges next to each other.
+    grad.addColorStop(0, 'rgba(255,255,255,0.9)')
+    grad.addColorStop(0.35, 'rgba(255,255,255,0.6)')
+    grad.addColorStop(0.75, 'rgba(255,255,255,0.22)')
+    grad.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = grad
+    ctx.fillRect(0, 0, size, size)
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  cloudTextureCache = tex
+  return tex
+}
+
+const _fogScratchVec = new THREE.Vector3()
+
+/** One drifting billboard puff — always faces the camera, so the exact
+ * same puff reads as a flat cloud patch from TableView's near-vertical
+ * top-down camera and as a wall of mist from FirstPersonView's
+ * eye-level one, with no view-specific code needed. Gentle looping
+ * drift (position only, never fades out) — unlike SteamPuff/
+ * FlameParticle, this isn't a one-shot effect, it's a standing fog
+ * bank that just breathes slightly so it doesn't read as a static
+ * decal.
+ *
+ * Opacity fades out at close range (real user report: FPV's low eye-
+ * level camera standing right next to a fogged neighboring tile turned
+ * the ENTIRE screen white — a puff barely a meter from the lens still
+ * subtends most of the frame even at a modest size). TableView's
+ * camera sits many units up regardless of tile, so it never trips this
+ * — only a puff genuinely close to whichever camera is rendering it
+ * gets dimmed, distant/unexplored terrain stays properly opaque. */
+function FogPuff({
+  dx, dz, y, size, baseOpacity, speed, seed,
+}: { dx: number; dz: number; y: number; size: number; baseOpacity: number; speed: number; seed: number }) {
+  const ref = useRef<THREE.Mesh>(null)
+  const matRef = useRef<THREE.MeshBasicMaterial>(null)
+  useFrame((state) => {
+    if (!ref.current) return
+    const t = state.clock.elapsedTime * speed + seed
+    ref.current.position.set(dx + Math.sin(t) * 0.1, y + Math.sin(t * 0.7) * 0.06, dz + Math.cos(t) * 0.1)
+    ref.current.quaternion.copy(state.camera.quaternion)
+    if (matRef.current) {
+      ref.current.getWorldPosition(_fogScratchVec)
+      const dist = state.camera.position.distanceTo(_fogScratchVec)
+      const fade = THREE.MathUtils.clamp((dist - 0.6) / 2.4, 0.12, 1)
+      matRef.current.opacity = baseOpacity * fade
+    }
+  })
+  return (
+    <mesh ref={ref}>
+      <planeGeometry args={[size, size]} />
+      <meshBasicMaterial ref={matRef} map={getCloudTexture()} color="#dfe7e8" transparent opacity={baseOpacity} depthWrite={false} />
+    </mesh>
+  )
+}
+
+/** Real user request: "niebla de guerra real en el table view. Debe
+ * mostrar literalmente niebla como nubes en las casillas que el equipo
+ * jugador no ve" — one of these per hex HexMap's own fog computation
+ * (see teamVisibleHexes prop below) decides is currently unknown.
+ *
+ * Three randomly-jittered puffs per tile (real user follow-up: "me
+ * gustaria que los puffs de niebla se juntasen entre si y no fuesen
+ * independientes unos de otros") — sized well past hex spacing so a
+ * fogged tile's own puffs reach deep into every fogged neighbor,
+ * combined with getCloudTexture's own wide soft falloff so the overlap
+ * blends into one continuous mass instead of showing each tile's own
+ * distinct disc silhouette. Randomized (not fixed) offsets/sizes per
+ * tile via useMemo (seeded once at mount, stable across re-renders —
+ * same pattern SteamPuffs already uses) keep it from reading as a
+ * uniform grid of identical clouds. FogPuff's own close-camera opacity
+ * fade is what keeps this from blowing out FirstPersonView's close-up
+ * eye-level view despite the larger size here. */
+function FogTile({ x, z, seed }: { x: number; z: number; seed: number }) {
+  const puffs = useMemo(
+    () => Array.from({ length: 3 }, (_, i) => ({
+      dx: (Math.random() - 0.5) * 0.7,
+      dz: (Math.random() - 0.5) * 0.7,
+      y: 0.35 + i * 0.35 + Math.random() * 0.15,
+      size: 2.1 + Math.random() * 0.5,
+      baseOpacity: 0.48 + Math.random() * 0.14,
+      speed: 0.08 + Math.random() * 0.08,
+      seed: seed + i * 4.1 + Math.random(),
+    })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [seed],
+  )
+  return (
+    <group position={[x, 0, z]}>
+      {puffs.map((p, i) => <FogPuff key={i} {...p} />)}
+    </group>
+  )
+}
+
 export function HexMap({
   map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
   moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, outlineUnitIds, heatByUnitId, proneUnitIds, shutdownUnitIds,
-  physics, activeAttack, onAttackEffectDone,
+  teamVisibleHexes, physics, activeAttack, onAttackEffectDone,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
 }: {
   map: MapData
@@ -861,6 +982,17 @@ export function HexMap({
    * HexMap just renders" pattern as heatByUnitId above. */
   proneUnitIds?: Set<number>
   shutdownUnitIds?: Set<number>
+  /** Real fog of war — "q,r" keys of every hex the CALLER considers
+   * currently known (TableView: the whole player team's union, via
+   * app/units.py's _team_visible_hexes; FirstPersonView: just this one
+   * cockpit's own facing-cone LoS, getUnitVisibleHexes). Any map tile
+   * NOT in this set renders a FogTile instead of being left bare.
+   * Omitted entirely (undefined, not an empty Set) means "this caller
+   * has no fog concept" — GMView/MapEditorView never pass it, so the
+   * GM stays omniscient exactly as before this existed. An empty Set is
+   * a real, meaningful value (the team currently sees nothing at all),
+   * not the same as omitting the prop. */
+  teamVisibleHexes?: Set<string>
   /** Give every tile and mech a real physics collider (initiative dice
    * roll and bounce across the actual board — TableView only). Must
    * only be set true when this HexMap is rendered inside a <Physics>
@@ -1119,6 +1251,12 @@ export function HexMap({
           onPointerUp={(e) => resolveAt(tile.q, tile.r, e)}
         />
       ))}
+      {teamVisibleHexes && map.tiles
+        .filter((tile) => !teamVisibleHexes.has(`${tile.q},${tile.r}`))
+        .map((tile) => {
+          const [x, z] = hexToWorld(tile.q, tile.r)
+          return <FogTile key={`fog-${tile.q},${tile.r}`} x={x} z={z} seed={tile.q * 7.13 + tile.r * 3.7} />
+        })}
       {visibleUnits.map((unit) => (
         <UnitMarker
           key={unit.id}

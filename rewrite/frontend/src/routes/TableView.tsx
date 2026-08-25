@@ -11,41 +11,13 @@ import { useTableSocket } from '../ws'
 import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import {
-  getUnitVisibleHexes, listCampaigns, listMechs, moveUnitWithMp, reportInitiative,
-  type Mech, type MovementType, type ReachableHex, type Unit,
+  getVisibility, listCampaigns, listMechs, moveUnitWithMp, reportInitiative,
+  type Mech, type MovementType, type ReachableHex,
 } from '../api'
 import { useMapState } from '../useMapState'
-import { activeAttackPilotIds, activeMoverPilotId, currentPhase, formatRolls, PHASE_LABELS, pilotsNeedingInitiative } from '../rounds'
+import { activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative } from '../rounds'
 import { SquareMap } from '../components/SquareMap'
 import './TableView.css'
-
-// Debug-only LoS view (see HexMap's LosDebugOverlay + app/units.py's
-// visible_hexes_from_unit) — real per-player vision-cone fog is still
-// unbuilt (VISION.md §4.2), so this is the "prove it's computing
-// something" stand-in: pick any unit on the map, see the tiles it has
-// LoS to highlighted, regardless of whether it even has a pilot linked
-// (unlike the real fog, which is pilot-gated).
-function useUnitLosDebug(units: Unit[]) {
-  const [unitId, setUnitId] = useState<number | null>(null)
-  const [hexes, setHexes] = useState<Set<string>>(new Set())
-
-  useEffect(() => {
-    if (unitId == null) {
-      setHexes(new Set())
-      return
-    }
-    let cancelled = false
-    getUnitVisibleHexes(unitId).then((visible) => {
-      if (!cancelled) setHexes(new Set(visible.map((h) => `${h.q},${h.r}`)))
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [unitId, units])
-
-  return { unitId, setUnitId, hexes }
-}
-
 
 // Manual per-pilot initiative rolls (individual mode) roll physically on
 // the shared table's own board instead of a popup on the GM's/player's
@@ -164,7 +136,6 @@ function TableViewBattletech() {
   // broadcast), same as GMView's own useMapState call.
   const { map, units } = useMapState(mapId, visibility ?? lastAttack)
   const [replay, setReplay] = useState<string | null>(null)
-  const losDebug = useUnitLosDebug(units)
 
   // Mechs aren't part of useMapState (units alone drive the board's own
   // positions/facings) — fetched separately here purely to read
@@ -192,6 +163,30 @@ function TableViewBattletech() {
   )
   const proneUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
   const shutdownUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
+
+  // Real fog of war (real user request: "niebla de guerra real en el
+  // table view... casillas que el equipo jugador no ve") — every hex at
+  // least one player-faction unit currently sees, unioned server-side
+  // (app/units.py's _team_visible_hexes). Seeded via a real GET on
+  // mapId change (WS only carries updates going FORWARD from when it
+  // connects, same reasoning as useMapState's own units/map fetch), then
+  // kept live off the same visibility_update broadcast everything else
+  // here already listens to.
+  const [teamVisibleHexes, setTeamVisibleHexes] = useState<Set<string> | null>(null)
+  useEffect(() => {
+    if (mapId == null) return
+    let cancelled = false
+    getVisibility(mapId).then((v) => {
+      if (!cancelled) setTeamVisibleHexes(new Set(v.visible_hexes.map((h) => `${h.q},${h.r}`)))
+    }).catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [mapId])
+  useEffect(() => {
+    if (!visibility) return
+    setTeamVisibleHexes(new Set(visibility.visible_hexes.map((h) => `${h.q},${h.r}`)))
+  }, [visibility])
 
   useEffect(() => {
     if (lastAttack?.mech_destroyed) {
@@ -324,30 +319,17 @@ function TableViewBattletech() {
         {lastRevealedUnitId != null && (
           <span className="roll-badge reveal-badge">¡figura revelada! #{lastRevealedUnitId}</span>
         )}
-        {roundState && roundState.round_number > 0 && (
-          <>
-            <span className="roll-badge phase-badge">Fase: {PHASE_LABELS[currentPhase(roundState)]}</span>
-            <span className="roll-badge round-badge">
-              Ronda {roundState.round_number} · {formatRolls(roundState.rolls)}
-            </span>
-          </>
-        )}
       </div>
 
-      {units.length > 0 && (
-        <div className="los-debug">
-          <span>LoS debug</span>
-          <select
-            value={losDebug.unitId ?? ''}
-            onChange={(e) => losDebug.setUnitId(e.target.value === '' ? null : Number(e.target.value))}
-          >
-            <option value="">apagado</option>
-            {units.map((u) => (
-              <option key={u.id} value={u.id}>
-                #{u.id} {u.is_ghost ? '(fantasma)' : ''} {u.pilot_faction ?? 'sin piloto'} @ {u.q},{u.r}
-              </option>
-            ))}
-          </select>
+      {/* Real user request: centered at the top instead of tucked into
+          the left-corner HUD strip, and just phase + round number — no
+          initiative-roll listing (that moved out of this shared screen
+          entirely, real user request: "eliminar iniciativas de la table
+          view"). */}
+      {roundState && roundState.round_number > 0 && (
+        <div className="phase-indicator">
+          <span className="phase-indicator-phase">{PHASE_LABELS[currentPhase(roundState)]}</span>
+          <span className="phase-indicator-round">Ronda {roundState.round_number}</span>
         </div>
       )}
 
@@ -372,7 +354,6 @@ function TableViewBattletech() {
               <HexMap
                 map={map}
                 units={units}
-                losDebugHexes={losDebug.hexes}
                 needsInitiativePilotIds={pilotsNeedingInitiative(roundState, units)}
                 activeMoverPilotId={roundState ? activeMoverPilotId(roundState) : null}
                 activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}
@@ -381,6 +362,7 @@ function TableViewBattletech() {
                 heatByUnitId={heatByUnitId}
                 proneUnitIds={proneUnitIds}
                 shutdownUnitIds={shutdownUnitIds}
+                teamVisibleHexes={teamVisibleHexes ?? undefined}
                 activeAttack={activeAttackVfx}
                 onAttackEffectDone={onAttackEffectDone}
                 onTileClick={onTableTileClick}

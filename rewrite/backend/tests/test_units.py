@@ -30,6 +30,30 @@ def test_hill_blocks_ghost_visibility(campaign, pilot):
     assert units.get_unit(ghost["id"])["revealed"] is False
 
 
+def test_combined_visibility_reports_team_visible_hexes(campaign, pilot):
+    # Real user request: "niebla de guerra real en el table view... casillas
+    # que el equipo jugador no ve" — combined_visibility's new
+    # "visible_hexes" key is the union of every 'player'-faction unit's own
+    # facing-cone LoS (same computation visible_hexes_from_unit already
+    # does per-unit for the debug overlay).
+    m = maps.create_map(campaign["id"], "Open field", width=6, height=3)
+    units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"], facing_deg=0)
+
+    visibility = units.combined_visibility(campaign["id"], m["id"])
+    visible_hexes = {(h["q"], h["r"]) for h in visibility["visible_hexes"]}
+    assert (0, 0) in visible_hexes
+    assert (3, 0) in visible_hexes, "clear line of sight in the facing direction"
+
+
+def test_combined_visibility_team_hexes_exclude_enemy_units(campaign):
+    m = maps.create_map(campaign["id"], "Open field", width=6, height=3)
+    enemy_pilot = pilots.create_pilot(campaign["id"], "Hostile", faction="enemy")
+    units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=enemy_pilot["id"], facing_deg=0)
+
+    visibility = units.combined_visibility(campaign["id"], m["id"])
+    assert visibility["visible_hexes"] == []
+
+
 def test_moving_observer_around_hill_reveals_ghost(campaign, pilot):
     m = maps.create_map(campaign["id"], "Valley", width=6, height=6, elevations={(1, 0): 3})
     observer = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"])

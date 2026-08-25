@@ -126,6 +126,11 @@ export interface Unit {
 export interface Visibility {
   visible: Record<string, number[]>
   newly_revealed: number[]
+  /** Every hex at least one 'player'-faction unit can currently see
+   * (facing cone + LoS, unioned across the whole team) — real user
+   * request: "niebla de guerra real en el table view... casillas que el
+   * equipo jugador no ve". See app/units.py's _team_visible_hexes. */
+  visible_hexes: VisibleHex[]
 }
 
 export const listMaps = (campaignId: number) =>
