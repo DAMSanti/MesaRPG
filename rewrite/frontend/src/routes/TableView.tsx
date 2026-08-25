@@ -151,7 +151,7 @@ function TableViewBattletech() {
   const campaignId = useCampaignId()
   const {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState, initiativeRollRequest,
-    movementStarted,
+    movementStarted, unitWalked,
   } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   // NOT lastRevealedUnitId ?? visibility — a `??` chain here would make
@@ -237,6 +237,22 @@ function TableViewBattletech() {
   // eventually reflects the new q/r (via broadcast + refetch), HexMap
   // walks the actual calculated path instead of a straight line.
   const [walkPaths, setWalkPaths] = useState<Map<number, { q: number; r: number }[]>>(new Map())
+  // unit_walked (real user report) covers every OTHER source of a move
+  // this screen didn't itself resolve a tile click for — GMView's own
+  // embedded map, PlayerView's Acciones tab, or FirstPersonView's cockpit
+  // HUD — none of which this client would otherwise ever learn a real
+  // route from, leaving HexMap to fall back to a straight line through
+  // whatever was in between. Guarded against re-applying to a move THIS
+  // screen just resolved locally above — that already has fresher path
+  // data (no network round trip), and re-setting walkPaths from the
+  // broadcast's later-arriving, reference-different array would reset
+  // the walk mid-stride back to its first waypoint.
+  const selfResolvedMoveRef = useRef<Set<number>>(new Set())
+  useEffect(() => {
+    if (!unitWalked) return
+    if (selfResolvedMoveRef.current.delete(unitWalked.unit_id)) return
+    if (unitWalked.path.length > 0) setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+  }, [unitWalked])
 
   // The move itself can also complete somewhere that never clicks a tile
   // HERE — GMView's own embedded map resolves its own moves directly
@@ -257,7 +273,10 @@ function TableViewBattletech() {
     const hex = activeMovement.hexes.get(key)
     setActiveMovement(null)
     if (hex) {
-      if (hex.path.length > 0) setWalkPaths((prev) => new Map(prev).set(unitId, hex.path))
+      if (hex.path.length > 0) {
+        setWalkPaths((prev) => new Map(prev).set(unitId, hex.path))
+        selfResolvedMoveRef.current.add(unitId)
+      }
       moveUnitWithMp(unitId, q, r, movementType).catch(() => {})
     }
   }
