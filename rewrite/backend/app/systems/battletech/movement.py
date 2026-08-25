@@ -467,11 +467,26 @@ def execute_move(
     # without this, any client that didn't itself pick this destination
     # (the shared table screen watching a move initiated from
     # PlayerView/FirstPersonView, say) had no route data at all and
+    # jump's step["path"] (from reachable_hexes, line ~330) is already
+    # [{"q", "r"}, ...] dicts, but walk/run's comes straight from
+    # _reachable_states/_reconstruct_path as raw (q, r) tuples — normalize
+    # both to the same {"q", "r"} shape reachable_hexes() itself already
+    # returns (line ~352), matching what the frontend's walkPath consumers
+    # (HexMap's UnitMarker) expect. Left un-normalized, a tuple serializes
+    # to JSON as a bare [q, r] array, so the frontend's `p.q`/`p.r` reads
+    # come back undefined -> NaN, silently poisoning that unit's animation
+    # position for the rest of the tab's life (real user report: the unit
+    # vanishes on every OTHER connected client until they reload the page —
+    # exactly the broadcast-only path Caminar/Correr triggers and drag-and-
+    # drop, which never touches walkPath, does not).
     # animated a straight line through whatever was in between instead
     # of the real path. Merged into the same dict already returned here
     # (not a separate return value) so this stays backward-compatible
     # with every existing caller that reads updated["q"]/["facing_deg"].
-    updated = {**updated, "path": step["path"]}
+    updated = {
+        **updated,
+        "path": [p if isinstance(p, dict) else {"q": p[0], "r": p[1]} for p in step["path"]],
+    }
 
     # Movement itself generates heat (Heat Scale) — walking/running are a
     # flat amount regardless of hexes covered (even a turn-in-place still

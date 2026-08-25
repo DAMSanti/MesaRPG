@@ -195,6 +195,38 @@ def test_execute_move_records_a_bt_round_moves_row(campaign, pilot):
     assert row["mp_spent"] == 2
 
 
+def test_execute_move_path_is_q_r_dicts_not_bare_tuples(campaign, pilot):
+    # Real user report: a unit moved via Caminar/Correr vanished on every
+    # OTHER connected client (GMView<->FirstPersonView) until they
+    # reloaded the page. Root cause: this walk/run branch's path came
+    # straight from _reachable_states as raw (q, r) tuples, which
+    # serialize over the wire as bare [q, r] JSON arrays — the frontend's
+    # walkPath consumer reads p.q/p.r, gets undefined on an array, and
+    # NaN permanently poisons that unit's animation position (a useRef,
+    # so only a full remount/reload clears it). reachable_hexes() already
+    # returns {"q", "r"} dicts (see the test above); this pins execute_move's
+    # own return value to the same shape so the two never drift apart again.
+    m = maps.create_map(campaign["id"], "Flat", width=10, height=6)
+    mech = _mech(campaign["id"], pilot["id"], walk_mp=3)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=mech["id"], pilot_id=pilot["id"])
+
+    updated = movement.execute_move(campaign["id"], unit["id"], 2, 0, "walk")
+
+    assert updated["path"] == [{"q": 1, "r": 0}, {"q": 2, "r": 0}]
+    for step in updated["path"]:
+        assert isinstance(step, dict) and set(step) == {"q", "r"}
+
+
+def test_execute_move_jump_path_is_also_q_r_dicts(campaign, pilot):
+    m = maps.create_map(campaign["id"], "Flat", width=10, height=6)
+    mech = _mech(campaign["id"], pilot["id"], jump_mp=3)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=mech["id"], pilot_id=pilot["id"])
+
+    updated = movement.execute_move(campaign["id"], unit["id"], 2, 0, "jump")
+
+    assert updated["path"] == [{"q": 2, "r": 0}]
+
+
 def test_reachable_hexes_path_is_the_real_route_not_just_the_destination(campaign, pilot):
     m = maps.create_map(campaign["id"], "Flat", width=10, height=6)
     mech = _mech(campaign["id"], pilot["id"], walk_mp=3)
