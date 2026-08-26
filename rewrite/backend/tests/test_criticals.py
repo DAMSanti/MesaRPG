@@ -1,3 +1,6 @@
+import pytest
+
+from app.dice_source import NeedsRoll, SuppliedDice
 from app.systems.battletech import criticals, mechs
 from tests.conftest import ATLAS_LOCATIONS
 
@@ -48,6 +51,39 @@ def test_blow_off_location_destroys_structure_and_marks_every_real_slot(atlas):
     assert all(s["hit"] for s in mechs.get_mech(atlas["id"])["criticals"]["LA"] if s["item_name"] != "-Empty-")
 
 
+def test_decide_criticals_is_pure_and_apply_criticals_is_the_only_mutator(atlas):
+    # Fase B (dados físicos): decide_criticals must NOT touch the database
+    # at all — apply_criticals is the only half that does. Deterministic
+    # via SuppliedDice: crit_count roll totals 10 (-> 2 criticals), then
+    # two slot rolls landing on two known-applicable HD slots (HD is a
+    # head-or-leg location — one 1d6 per attempt, no block-roll).
+    mech = mechs.get_mech(atlas["id"])
+    hd_slots = mech["criticals"]["HD"]
+    applicable = [s["slot_index"] for s in hd_slots if s["item_name"] != "-Empty-" and not s["hit"]]
+    assert len(applicable) >= 2
+    idx1, idx2 = applicable[0], applicable[1]
+    dice = SuppliedDice([
+        ("crit_count", [5, 5]),  # 10 -> 2 criticals
+        ("crit_slot", [idx1 + 1]),
+        ("crit_slot", [idx2 + 1]),
+    ])
+
+    hits = criticals.decide_criticals(mech, "HD", dice)
+    assert {h["slot_index"] for h in hits} == {idx1, idx2}
+    assert mechs.get_mech(atlas["id"])["criticals"]["HD"] == hd_slots  # still untouched
+
+    criticals.apply_criticals(atlas["id"], hits)
+    after = mechs.get_mech(atlas["id"])["criticals"]["HD"]
+    for idx in (idx1, idx2):
+        assert next(s for s in after if s["slot_index"] == idx)["hit"] is True
+
+
+def test_decide_criticals_raises_needs_roll_when_supplied_dice_runs_dry(atlas):
+    mech = mechs.get_mech(atlas["id"])
+    with pytest.raises(NeedsRoll):
+        criticals.decide_criticals(mech, "HD", SuppliedDice([]), pilot_id=atlas["pilot_id"])
+
+
 def test_actuator_damage_fraction_halves_cumulatively(atlas):
     assert criticals.actuator_damage_fraction(atlas["id"], "RA") == (1, 1)
     upper = next(c for c in atlas["criticals"]["RA"] if c["item_name"] == "Upper Arm Actuator")
@@ -65,6 +101,12 @@ def test_apply_critical_effects_cockpit_kills_pilot_and_destroys_mech(atlas):
     from app.systems.battletech import pilots
     updated_pilot = pilots.get_pilot(atlas["pilot_id"])
     assert updated_pilot["hits"] == 6
+    # Fase D: persisted, not just an ephemeral summary field — the pilot
+    # is dead (distinct from merely being knocked out by wounds) and the
+    # mech is marked destroyed for the 'pilot_killed' reason specifically
+    # (falls limp — structurally it's otherwise untouched).
+    assert updated_pilot["is_dead"] is True
+    assert mechs.get_mech(atlas["id"])["destroyed_reason"] == "pilot_killed"
 
 
 def test_apply_critical_effects_engine_adds_heat_then_destroys_on_third_hit(atlas):
@@ -80,6 +122,9 @@ def test_apply_critical_effects_engine_adds_heat_then_destroys_on_third_hit(atla
 
     summary = criticals.apply_critical_effects(atlas["id"], [{"location": "CT", "slot_index": 2, "item_name": "Engine"}])
     assert summary["mech_destroyed"] is True
+    # Fase D: 'structural', not 'pilot_killed' — the pilot themselves is
+    # untouched by a 3rd engine hit, only the mech.
+    assert mechs.get_mech(atlas["id"])["destroyed_reason"] == "structural"
 
 
 def test_apply_critical_effects_second_gyro_hit_reports_fell(atlas):

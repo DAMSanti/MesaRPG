@@ -47,7 +47,8 @@ phase, not invisibly carried into the next one.
 import json
 import random
 
-from ... import campaigns, db, events, units
+from ... import campaigns, db, dice_resolution, events, units
+from ...dice_source import DiceSource
 from . import criticals, mechs, pilots, weapons
 
 # NPCs are non-aggressive by definition (ROADMAP.md S2 follow-up) — they
@@ -64,6 +65,10 @@ class RoundNotStarted(ValueError):
 
 
 class UnknownCombatPilot(ValueError):
+    pass
+
+
+class PilotIsDestroyed(ValueError):
     pass
 
 
@@ -88,6 +93,111 @@ def _initiative_modifiers(pilot: dict, mech: dict | None) -> list[dict]:
 
 def _combat_pilots(campaign_id: int) -> list[dict]:
     return [p for p in pilots.list_pilots(campaign_id) if p["faction"] in COMBAT_FACTIONS]
+
+
+def _destroyed_pilot_ids(campaign_id: int) -> set[int]:
+    """Pilots whose own mech is already destroyed (Fase D) — a destroyed
+    mech can't move (movement.execute_move's own MechIncapacitated check),
+    so leaving its pilot in movement_order would stall the movement phase
+    forever waiting on a "turn" that can never resolve (nothing would ever
+    add them to moved_pilot_ids). Standalone query rather than routing
+    through mechs.get_mech per pilot — this only needs the one column,
+    for every mech in the campaign at once. Also the set a destroyed
+    pilot is checked against before being allowed to roll initiative at
+    all (turns.py's own _validate_can_roll) — permanent, unlike shutdown
+    below, so it's kept separate rather than folded into
+    _incapacitated_pilot_ids (which is round-scoped and self-corrects the
+    instant a mech restarts)."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT pilot_id FROM mechs WHERE campaign_id = ? AND pilot_id IS NOT NULL AND destroyed_reason IS NOT NULL",
+            (campaign_id,),
+        ).fetchall()
+        return {r["pilot_id"] for r in rows}
+
+
+def _incapacitated_pilot_ids(campaign_id: int) -> set[int]:
+    """Real user report: an overheated (shutdown) mech's pilot stayed
+    stuck as "their turn" in the movement/ranged/melee phases forever —
+    movement.execute_move/combat.py/melee.py already block a shutdown
+    mech from actually moving or attacking (MechIncapacitated), but
+    nothing ever removed that pilot from movement_order/the target-
+    eligible lists, so nobody could ever mark them as moved/acted and the
+    phase just stalled on them — the exact same class of bug Fase D's
+    destroyed-mech exclusion fixed, just for a RECOVERABLE state instead
+    of a permanent one. Deliberately does NOT include is_prone — a fallen
+    mech can still use its movement action to try standing back up, so it
+    must stay eligible to be offered a turn, unlike shutdown/destroyed
+    which block BOTH movement and attacks outright. Superset of
+    _destroyed_pilot_ids (every destroyed mech is also incapacitated) —
+    callers that only care about "can't move/attack this round" should
+    use this one; only the initiative-roll gate cares about destroyed
+    specifically (see _destroyed_pilot_ids' own doc comment)."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT pilot_id FROM mechs WHERE campaign_id = ? AND pilot_id IS NOT NULL "
+            "AND (destroyed_reason IS NOT NULL OR is_shutdown = 1)",
+            (campaign_id,),
+        ).fetchall()
+        return {r["pilot_id"] for r in rows}
+
+
+def remove_participant(campaign_id: int, pilot_id: int) -> None:
+    """Real user report: a pilot whose unit gets removed from the map
+    mid-round ("quitar de la mesa") stayed stuck in THIS round's own
+    bt_round_participants snapshot forever — nothing re-derives that
+    snapshot mid-round (start_round is the only place that ever populates
+    it), so movement_order kept waiting on a turn for a pilot with no
+    unit left to give one to. Called from main.py's DELETE /api/units/
+    {id} endpoint (the "Quitar del mapa" action) — a no-op if no round is
+    in progress or this pilot was never a participant to begin with, so
+    it's always safe to call unconditionally. Deliberately does NOT touch
+    _combat_pilots/start_round's own broader "who rolls at all" set —
+    plenty of existing tests/flows roll initiative for a pilot who never
+    had a unit placed yet, and that's an intentional, unrelated case this
+    function doesn't need to (and shouldn't) touch; this only removes a
+    pilot from a round they were ALREADY snapshotted into once their unit
+    disappears out from under them mid-round."""
+    with db.connect() as conn:
+        conn.execute(
+            "DELETE FROM bt_round_participants WHERE campaign_id = ? AND pilot_id = ?",
+            (campaign_id, pilot_id),
+        )
+
+
+def _round_participant_pilot_ids(campaign_id: int) -> set[int]:
+    """Which combat pilots were actually part of THIS round — the
+    bt_round_participants snapshot start_round takes, not a live re-scan
+    of every combat pilot in the campaign right now. See
+    bt_round_participants' own doc comment in db.py for the real user
+    report this fixes (a mech added mid-round shouldn't get a turn until
+    the NEXT round)."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT pilot_id FROM bt_round_participants WHERE campaign_id = ?", (campaign_id,)
+        ).fetchall()
+        return {r["pilot_id"] for r in rows}
+
+
+def _round_mode(campaign_id: int) -> str:
+    """The initiative mode actually GOVERNING right now — the round's own
+    FROZEN mode (bt_rounds.mode, captured by start_round) while a round is
+    in progress, or the campaign's live `initiative_mode` setting when
+    none is (round_number == 0, nothing to freeze yet). Real user report:
+    switching modes mid-round used to change how the round ALREADY in
+    progress was interpreted immediately (an individual-mode round's
+    per-pilot rolls suddenly read as a team-mode round's per-faction
+    ones, or vice versa) — every reader of `mode` below now goes through
+    this instead of re-deriving it fresh from the campaign each time, so
+    a mid-round change is inert until the NEXT start_round call."""
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT round_number, mode FROM bt_rounds WHERE campaign_id = ?", (campaign_id,)
+        ).fetchone()
+    if row and row["round_number"] > 0:
+        return row["mode"]
+    campaign = campaigns.get_campaign(campaign_id)
+    return campaign["initiative_mode"] if campaign else "team"
 
 
 def start_round(campaign_id: int) -> dict:
@@ -123,16 +233,42 @@ def start_round(campaign_id: int) -> dict:
         prev_round_number = prev_round_row["round_number"] if prev_round_row else 0
         conn.execute(
             """
-            INSERT INTO bt_rounds (campaign_id, round_number, heat_resolved)
-            VALUES (?, 1, 0)
-            ON CONFLICT(campaign_id) DO UPDATE SET round_number = round_number + 1, heat_resolved = 0
+            INSERT INTO bt_rounds (campaign_id, round_number, heat_resolved, mode)
+            VALUES (?, 1, 0, ?)
+            ON CONFLICT(campaign_id) DO UPDATE SET round_number = round_number + 1, heat_resolved = 0, mode = ?
             """,
-            (campaign_id,),
+            (campaign_id, mode, mode),
         )
         conn.execute("DELETE FROM bt_round_acted WHERE campaign_id = ?", (campaign_id,))
         conn.execute("DELETE FROM bt_round_passed WHERE campaign_id = ?", (campaign_id,))
         conn.execute("DELETE FROM bt_round_rolls WHERE campaign_id = ?", (campaign_id,))
         conn.execute("DELETE FROM bt_round_moves WHERE campaign_id = ?", (campaign_id,))
+        conn.execute("DELETE FROM bt_round_participants WHERE campaign_id = ?", (campaign_id,))
+        # Real user report: a pilot removed from the map ("quitar de la
+        # mesa") stayed stuck as a required participant in every
+        # SUBSEQUENT round too, not just the one they were removed
+        # during — remove_participant (see its own doc comment) only
+        # patches the round already in progress at the moment of
+        # removal; start_round itself re-snapshots from _combat_pilots,
+        # which has no notion of "has a unit" at all, so a start-round-
+        # fresh pilot with no unit anywhere got re-included every time.
+        # Only pilots with at least one REAL unit somewhere in the
+        # campaign become participants — a pilot with nothing to move
+        # can't meaningfully be asked to roll/act this round regardless
+        # of why they have no unit (never placed, or removed earlier).
+        pilots_with_units = {
+            r["pilot_id"] for r in conn.execute(
+                "SELECT DISTINCT pilot_id FROM units WHERE campaign_id = ? AND pilot_id IS NOT NULL",
+                (campaign_id,),
+            ).fetchall()
+        }
+        for p in combat_pilots:
+            if p["id"] not in pilots_with_units:
+                continue
+            conn.execute(
+                "INSERT INTO bt_round_participants (campaign_id, pilot_id) VALUES (?, ?)",
+                (campaign_id, p["id"]),
+            )
         for faction, pilot_id, roll in rolls:
             conn.execute(
                 "INSERT INTO bt_round_rolls (campaign_id, faction, pilot_id, roll) VALUES (?, ?, ?, ?)",
@@ -142,9 +278,16 @@ def start_round(campaign_id: int) -> dict:
             conn, campaign_id, "round_started", f"Ronda {prev_round_number + 1} iniciada",
             {"prev_round_number": prev_round_number},
         )
-        state = _get(conn, campaign_id, mode)
 
-    return state
+    # _get (via _movement_order/_combat_pilots_with_targets) reads
+    # bt_round_participants back through its OWN fresh connection
+    # (_round_participant_pilot_ids) — building the state from inside the
+    # `with` block above, before this transaction commits, made those
+    # just-inserted rows invisible to that second connection (a real bug
+    # caught by test_movement_order_in_team_mode_groups_by_side_total:
+    # team mode's movement_order came back empty). Reading AFTER the
+    # block closes/commits avoids the cross-connection visibility gap.
+    return get_round(campaign_id)
 
 
 class InvalidRollValue(ValueError):
@@ -156,14 +299,20 @@ def _validate_can_roll(campaign_id: int, pilot_id: int) -> tuple[str, dict]:
     "individual" mode only, round already started, pilot is a real
     combat pilot (player/enemy, never npc) of this campaign. Returns
     (mode, pilot) so callers don't have to re-fetch either."""
-    campaign = campaigns.get_campaign(campaign_id)
-    mode = campaign["initiative_mode"] if campaign else "team"
+    mode = _round_mode(campaign_id)
     if mode != "individual":
         raise WrongInitiativeMode(f"Initiative is rolled per-pilot only in 'individual' mode, campaign is {mode!r}")
 
     pilot = pilots.get_pilot(pilot_id)
     if not pilot or pilot["campaign_id"] != campaign_id or pilot["faction"] not in COMBAT_FACTIONS:
         raise UnknownCombatPilot(f"Pilot {pilot_id} is not a combat pilot ({COMBAT_FACTIONS}) in campaign {campaign_id}")
+    # Fase D real user request: "los muertos no deberían tirar
+    # iniciativas" — a destroyed mech's pilot is already excluded from
+    # movement_order/target lists (turns.py's own _destroyed_pilot_ids);
+    # this is the same exclusion applied to the manual roll endpoint
+    # itself, as defense in depth behind the frontend's own gating.
+    if pilot_id in _destroyed_pilot_ids(campaign_id):
+        raise PilotIsDestroyed(f"Pilot {pilot_id}'s mech is destroyed and can't roll initiative")
 
     with db.connect() as conn:
         round_row = conn.execute(
@@ -241,17 +390,40 @@ def report_pilot_initiative(campaign_id: int, pilot_id: int, roll: int) -> dict:
         return _get(conn, campaign_id, mode)
 
 
+def current_round_number(campaign_id: int) -> int:
+    """0 if the campaign has never started a round. combat.py/melee.py
+    stamp this into every attack/melee event's payload so a "turn_acted"
+    undo (below) knows exactly which prior events belong to the turn it's
+    reverting — see _undo_turn_acted in events.py."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT round_number FROM bt_rounds WHERE campaign_id = ?", (campaign_id,)).fetchone()
+    return row["round_number"] if row else 0
+
+
 def mark_acted(campaign_id: int, pilot_id: int) -> dict:
     """Record that a pilot has taken their activation this round — a REAL
     attack (ranged or melee), which blocks BOTH phases for them this
-    round (the "can't punch with an arm that fired" simplification)."""
-    campaign = campaigns.get_campaign(campaign_id)
-    mode = campaign["initiative_mode"] if campaign else "team"
+    round (the "can't punch with an arm that fired" simplification).
+
+    Logs its own undoable "turn_acted" event (real user request: undoing
+    a mech's completed turn should revert EVERY shot it fired this
+    activation, not just the last one) — its own undo handler
+    (events.py's _undo_turn_acted) cascades back through every attack/
+    melee event this pilot logged this round, not just this one row."""
+    mode = _round_mode(campaign_id)
+    round_number = current_round_number(campaign_id)
     with db.connect() as conn:
-        conn.execute(
+        cur = conn.execute(
             "INSERT OR IGNORE INTO bt_round_acted (campaign_id, pilot_id) VALUES (?, ?)",
             (campaign_id, pilot_id),
         )
+        if cur.rowcount:  # already-acted (idempotent re-call) logs nothing new
+            pilot = pilots.get_pilot(pilot_id)
+            events.log_event(
+                conn, campaign_id, "turn_acted",
+                f"Turno de {pilot['name'] if pilot else pilot_id} completado",
+                {"pilot_id": pilot_id, "round_number": round_number},
+            )
         return _get(conn, campaign_id, mode)
 
 
@@ -267,19 +439,24 @@ def pass_phase(campaign_id: int, pilot_id: int, phase: str) -> dict:
     against an adjacent enemy just because they passed on ranged)."""
     if phase not in ("ranged", "melee"):
         raise InvalidPassPhase(f"phase must be 'ranged' or 'melee', got {phase!r}")
-    campaign = campaigns.get_campaign(campaign_id)
-    mode = campaign["initiative_mode"] if campaign else "team"
+    mode = _round_mode(campaign_id)
     with db.connect() as conn:
-        conn.execute(
+        cur = conn.execute(
             "INSERT OR IGNORE INTO bt_round_passed (campaign_id, pilot_id, phase) VALUES (?, ?, ?)",
             (campaign_id, pilot_id, phase),
         )
+        if cur.rowcount:
+            pilot = pilots.get_pilot(pilot_id)
+            events.log_event(
+                conn, campaign_id, "phase_passed",
+                f"{pilot['name'] if pilot else pilot_id} pasó turno ({phase})",
+                {"pilot_id": pilot_id, "phase": phase},
+            )
         return _get(conn, campaign_id, mode)
 
 
 def get_round(campaign_id: int) -> dict:
-    campaign = campaigns.get_campaign(campaign_id)
-    mode = campaign["initiative_mode"] if campaign else "team"
+    mode = _round_mode(campaign_id)
     with db.connect() as conn:
         return _get(conn, campaign_id, mode)
 
@@ -291,12 +468,25 @@ def _movement_order(campaign_id: int, mode: str, rolls: list[dict]) -> list[int]
     pilot their own side's total (a documented simplification of the
     real "unequal numbers" proportional-alternation rule — see the
     module docstring); individual mode uses each pilot's own roll."""
-    combat_pilots = _combat_pilots(campaign_id)
+    participant_ids = _round_participant_pilot_ids(campaign_id)
+    incapacitated_ids = _incapacitated_pilot_ids(campaign_id)
+    combat_pilots = [
+        p for p in _combat_pilots(campaign_id)
+        if p["id"] in participant_ids and p["id"] not in incapacitated_ids
+    ]
     if not combat_pilots:
         return []
     if mode == "individual":
         total_by_pilot = {r["pilot_id"]: r["total"] for r in rolls if r["pilot_id"] is not None}
-        if set(total_by_pilot) != {p["id"] for p in combat_pilots}:
+        # Subset, not exact-equality: a pilot destroyed in an EARLIER
+        # round is still excluded from combat_pilots above but nothing
+        # stops them from still rolling initiative this round (their own
+        # roll just goes nowhere) — total_by_pilot can legitimately hold
+        # more ids than combat_pilots now. Requiring exact equality here
+        # would permanently return [] the instant any mech in the
+        # campaign was ever destroyed, since that pilot's own still-
+        # present roll would never match the now-smaller combat_pilots set.
+        if not {p["id"] for p in combat_pilots} <= set(total_by_pilot):
             return []
         return [p["id"] for p in sorted(combat_pilots, key=lambda p: (total_by_pilot[p["id"]], p["id"]))]
     total_by_faction = {r["faction"]: r["total"] for r in rolls}
@@ -309,7 +499,9 @@ def _movement_order(campaign_id: int, mode: str, rolls: list[dict]) -> list[int]
 # tiene alcance y en LoS algún mech al que pueda atacar") -----------------
 
 
-def _combat_pilots_with_targets(map_id: int | None, target_check, require_facing: bool = True) -> list[int]:
+def _combat_pilots_with_targets(
+    campaign_id: int, map_id: int | None, target_check, require_facing: bool = True,
+) -> list[int]:
     """Every combat pilot with a live unit+mech on the given map whose
     mech currently has at least one enemy satisfying target_check(mech,
     enemies) — enemies is units.visible_enemies_from_unit's own result
@@ -320,12 +512,23 @@ def _combat_pilots_with_targets(map_id: int | None, target_check, require_facing
     handling)."""
     if map_id is None:
         return []
+    # Real user report: "si se mete un nuevo mech en mitad de un combate,
+    # debe poder tirar iniciativa y empezar a actuar en el SIGUIENTE
+    # turno" — a pilot who joined after this round's start_round hasn't
+    # been snapshotted into bt_round_participants yet, so they're not
+    # eligible to attack THIS round either, same reasoning as
+    # _movement_order's own participant filter.
+    participant_ids = _round_participant_pilot_ids(campaign_id)
     result = []
     for u in units.list_units(map_id):
-        if u["pilot_id"] is None or u["mech_id"] is None:
+        if u["pilot_id"] is None or u["mech_id"] is None or u["pilot_id"] not in participant_ids:
             continue
         mech = mechs.get_mech(u["mech_id"])
-        if mech is None:
+        # Real user report: a shutdown mech's pilot stayed stuck as
+        # eligible-to-attack forever — combat.py/melee.py already refuse
+        # to actually fire for one, but nothing excluded them from this
+        # target scan, so the phase never had a way to mark them past it.
+        if mech is None or mech["destroyed_reason"] is not None or mech["is_shutdown"]:
             continue
         enemies = units.visible_enemies_from_unit(u["id"], require_facing=require_facing) or []
         if target_check(mech, enemies):
@@ -333,7 +536,7 @@ def _combat_pilots_with_targets(map_id: int | None, target_check, require_facing
     return result
 
 
-def _pilots_with_ranged_targets(map_id: int | None) -> list[int]:
+def _pilots_with_ranged_targets(campaign_id: int, map_id: int | None) -> list[int]:
     """A pilot "has a ranged target" if some mounted weapon that still has
     ammo (or never needed any — ammo_remaining is None for energy
     weapons) could reach some visible enemy within its own long-range
@@ -350,10 +553,10 @@ def _pilots_with_ranged_targets(map_id: int | None) -> list[int]:
         max_range = max(long_ranges)
         return any(e["distance"] <= max_range for e in enemies)
 
-    return _combat_pilots_with_targets(map_id, check)
+    return _combat_pilots_with_targets(campaign_id, map_id, check)
 
 
-def _pilots_with_melee_targets(map_id: int | None) -> list[int]:
+def _pilots_with_melee_targets(campaign_id: int, map_id: int | None) -> list[int]:
     """A pilot "has a melee target" if some enemy is standing adjacent
     (distance 1) and in LOS — physical attacks need no weapon/ammo/range
     check, just proximity. require_facing=False: melee.py's
@@ -363,7 +566,7 @@ def _pilots_with_melee_targets(map_id: int | None) -> list[int]:
     check used to hide the melee phase even when an actual attack would
     have been legal (real user report)."""
     return _combat_pilots_with_targets(
-        map_id, lambda mech, enemies: any(e["distance"] <= 1 for e in enemies), require_facing=False,
+        campaign_id, map_id, lambda mech, enemies: any(e["distance"] <= 1 for e in enemies), require_facing=False,
     )
 
 
@@ -401,80 +604,184 @@ def _pick_ammo_bin(mech: dict) -> dict | None:
     return max(candidates, key=lambda w: (damage_value(w), w["ammo_remaining"]))
 
 
-def resolve_heat_phase(campaign_id: int) -> dict:
-    """Dissipates every mech's heat (real user report: this used to
-    happen silently at the previous start_round instead, before the
-    Heat phase was even visible — moved here so it actually happens
-    DURING this round's own Heat phase), then the Heat Scale's
-    shutdown/restart, ammo-explosion, and life-support pilot-damage
-    checks against the result — same order the rulebook itself specifies
-    (dissipate, then check thresholds). Idempotent per round via
-    bt_rounds.heat_resolved (a second call for the same round is a safe
-    no-op, so the frontend can call this itself the instant it observes
-    the round has nothing left to act on, rather than needing a
-    GM-clicked button).
-
-    Movement/to-hit penalties from heat (Heat Scale's other columns) are
-    already live via movement.py's _heat_mp_penalty/combat.py's
-    heat_penalty, reading heat_current directly — nothing to do here for
-    those."""
+def _prepare_heat_phase(campaign_id: int) -> dict | None:
+    """None means already resolved this round (idempotency guard) — the
+    caller returns the same {"already_resolved": True} shape this always
+    had. Otherwise dissipates heat (unconditional, no dice — same
+    ordering the rulebook specifies: dissipate, then check thresholds)
+    and returns ctx: just the ordered list of mech ids to process, since
+    each mech's own shutdown/restart-avoid and ammo-explosion-avoid
+    rolls (the step functions below) can tell on their own, from that
+    mech's CURRENT state, whether they need a roll at all — no separate
+    dynamic step list to compute up front (unlike melee's grouped
+    damage), which is what keeps this simple enough to be fully
+    physical-dice-aware, not a documented scope limit like charge/DFA."""
     with db.connect() as conn:
         round_row = conn.execute("SELECT heat_resolved FROM bt_rounds WHERE campaign_id = ?", (campaign_id,)).fetchone()
         if round_row and round_row["heat_resolved"]:
-            return {"campaign_id": campaign_id, "results": [], "already_resolved": True}
+            return None
         conn.execute("UPDATE bt_rounds SET heat_resolved = 1 WHERE campaign_id = ?", (campaign_id,))
-
     mechs.dissipate_all_heat(campaign_id)
+    mech_ids = [m["id"] for m in mechs.list_mechs(campaign_id)]
+    return {"campaign_id": campaign_id, "mech_ids": mech_ids}
 
+
+def _step_mech_shutdown(mech_id: int, dice: DiceSource) -> dict:
+    """Handles BOTH the shutdown-avoid roll (mech not yet shut down, heat
+    crossed a shutdown threshold) and the restart roll (mech already
+    shut down, heat now below 30) — identical logic to what this module
+    always ran per mech, just re-reading fresh mech state (dissipation
+    already happened in _prepare_heat_phase; nothing else mutates this
+    mech before this step runs) instead of a snapshot captured earlier
+    in a shared loop. A no-op (`{}`, no dice consumed) when neither
+    applies — most mechs most rounds."""
+    mech = mechs.get_mech(mech_id)
+    if mech["destroyed_reason"] is not None:
+        return {}  # a wreck has nothing left to shut down or restart
+    heat = mech["heat_current"]
+    pilot_id = mech["pilot_id"]
+    shutdown_triggered, shutdown_avoid_tn = _highest_bracket(heat, _SHUTDOWN_AVOID_TN)
+    if mech["is_shutdown"]:
+        if heat < 14:
+            mechs.set_shutdown(mech_id, False)
+            return {"restarted": True}
+        if heat < 30:
+            _, _, roll = dice.next_2d6("heat_restart", pilot_id)
+            restarted = shutdown_avoid_tn is not None and roll >= shutdown_avoid_tn
+            if restarted:
+                mechs.set_shutdown(mech_id, False)
+            return {"restarted": restarted}
+        # heat >= 30: "heat must be below 30 before a restart can occur"
+        # — stays shut down, no roll.
+        return {"restarted": None}
+    if shutdown_triggered:
+        if shutdown_avoid_tn is None:
+            mechs.set_shutdown(mech_id, True)
+            return {"shutdown": True}
+        _, _, roll = dice.next_2d6("heat_shutdown", pilot_id)
+        avoided = roll >= shutdown_avoid_tn
+        if not avoided:
+            mechs.set_shutdown(mech_id, True)
+        return {"shutdown": not avoided}
+    return {}
+
+
+def _step_mech_ammo(mech_id: int, dice: DiceSource) -> dict:
+    mech = mechs.get_mech(mech_id)
+    if mech["destroyed_reason"] is not None:
+        return {"ammo_explosion": None}  # a wreck's ammo already cooked off (or never will)
+    heat = mech["heat_current"]
+    _, ammo_avoid_tn = _highest_bracket(heat, _AMMO_EXPLOSION_AVOID_TN)
+    if ammo_avoid_tn is None:
+        return {"ammo_explosion": None}
+    _, _, roll = dice.next_2d6("heat_ammo_explosion", mech["pilot_id"])
+    if roll < ammo_avoid_tn:
+        ammo_bin = _pick_ammo_bin(mech)
+        if ammo_bin:
+            return {"ammo_explosion": criticals.explode_ammo_by_weapon(mech_id, ammo_bin["id"])}
+    return {"ammo_explosion": None}
+
+
+def _run_heat_step_fn(step: str, dice: DiceSource):
+    kind, mech_id_str = step.split("_", 1)
+    mech_id = int(mech_id_str)
+    if kind == "shutdown":
+        return _step_mech_shutdown(mech_id, dice)
+    if kind == "ammo":
+        return _step_mech_ammo(mech_id, dice)
+    raise ValueError(step)
+
+
+def _finalize_heat_phase(ctx: dict, committed: dict) -> dict:
     results = []
-    for mech in mechs.list_mechs(campaign_id):
+    for mech_id in ctx["mech_ids"]:
+        mech = mechs.get_mech(mech_id)
         heat = mech["heat_current"]
+        shutdown_result = committed.get(f"shutdown_{mech_id}", {})
+        ammo_result = committed.get(f"ammo_{mech_id}", {})
         mech_result = {
-            "mech_id": mech["id"], "heat_current": heat,
-            "shutdown": None, "restarted": None, "ammo_explosion": None, "pilot_wound": None,
+            "mech_id": mech_id, "heat_current": heat,
+            # The actual resulting state (mech["is_shutdown"], already
+            # fresh — every _step_mech_shutdown mutation for this mech
+            # already ran above), not just the transition flags below —
+            # real user report: the frontend's own instant-patch effect
+            # (GMView.tsx/TableView.tsx, applied the moment this broadcast
+            # arrives, without waiting for a slower full mechs refetch)
+            # had no unambiguous "is it shut down NOW" signal to read,
+            # since shutdown=True/restarted=None/etc. only describe what
+            # HAPPENED this phase, not the resulting boolean — so the
+            # overheat tint stayed stale until some later, unrelated
+            # refetch caught up.
+            "is_shutdown": mech["is_shutdown"],
+            # Same reasoning as is_shutdown above, for the OTHER way this
+            # phase can kill a mech outright — an ammo-explosion severe
+            # enough to zero CT/HD structure (mechs.apply_damage already
+            # marks this by the time this function runs). Without it, a
+            # heat-phase kill's explosion VFX (HexMap's own
+            # MechExplosionOnce) waited on whatever LATER, unrelated
+            # refetch happened to patch destroyed_reason in — sometimes
+            # much later, reading as "no explosion at all".
+            "destroyed_reason": mech["destroyed_reason"],
+            "shutdown": shutdown_result.get("shutdown"), "restarted": shutdown_result.get("restarted"),
+            "ammo_explosion": ammo_result.get("ammo_explosion"), "pilot_wound": None,
         }
-
-        shutdown_triggered, shutdown_avoid_tn = _highest_bracket(heat, _SHUTDOWN_AVOID_TN)
-        if mech["is_shutdown"]:
-            if heat < 14:
-                mechs.set_shutdown(mech["id"], False)
-                mech_result["restarted"] = True
-            elif heat < 30:
-                roll = _roll_2d6()
-                restarted = shutdown_avoid_tn is not None and roll >= shutdown_avoid_tn
-                if restarted:
-                    mechs.set_shutdown(mech["id"], False)
-                mech_result["restarted"] = restarted
-            # heat >= 30: "heat must be below 30 before a restart can
-            # occur" — stays shut down, no roll.
-        elif shutdown_triggered:
-            if shutdown_avoid_tn is None:
-                mechs.set_shutdown(mech["id"], True)
-                mech_result["shutdown"] = True
-            else:
-                roll = _roll_2d6()
-                avoided = roll >= shutdown_avoid_tn
-                mech_result["shutdown"] = not avoided
-                if not avoided:
-                    mechs.set_shutdown(mech["id"], True)
-
-        _, ammo_avoid_tn = _highest_bracket(heat, _AMMO_EXPLOSION_AVOID_TN)
-        if ammo_avoid_tn is not None:
-            roll = _roll_2d6()
-            if roll < ammo_avoid_tn:
-                ammo_bin = _pick_ammo_bin(mech)
-                if ammo_bin:
-                    mech_result["ammo_explosion"] = criticals.explode_ammo_by_weapon(mech["id"], ammo_bin["id"])
-
         if mech["life_support_hit"] and mech["pilot_id"] is not None:
             wound_count = 2 if heat >= 26 else 1 if heat >= 15 else 0
             if wound_count:
                 pilots.add_pilot_hits(mech["pilot_id"], wound_count)
                 mech_result["pilot_wound"] = wound_count
-
         results.append(mech_result)
+    return {"campaign_id": ctx["campaign_id"], "results": results}
 
-    return {"campaign_id": campaign_id, "results": results}
+
+def run_heat_phase(
+    campaign_id: int, *, ctx: dict | None = None, committed: dict | None = None,
+    collected: list | None = None, force_auto: bool = False,
+) -> dict:
+    """The Fase B driver — same shape as combat.py's run_attack/melee.py's
+    run_melee_attack/psr.py's run_stand_up. Dissipates every mech's heat,
+    then the Heat Scale's shutdown/restart, ammo-explosion, and life-
+    support pilot-damage checks against the result — same order the
+    rulebook specifies. Idempotent per round via bt_rounds.heat_resolved.
+    Raises dice_resolution.PendingRoll if a step needs a real physical
+    die — each mech's own pilot governs whether THEIR shutdown/ammo rolls
+    pause, independent of every other mech's.
+
+    Movement/to-hit penalties from heat (Heat Scale's other columns) are
+    already live via movement.py's _heat_mp_penalty/combat.py's
+    heat_penalty, reading heat_current directly — nothing to do here for
+    those."""
+    if ctx is None:
+        prepared = _prepare_heat_phase(campaign_id)
+        if prepared is None:
+            return {"campaign_id": campaign_id, "results": [], "already_resolved": True}
+        ctx = prepared
+        committed = {}
+        collected = []
+
+    first = True
+    for mech_id in ctx["mech_ids"]:
+        for kind in ("shutdown", "ammo"):
+            step = f"{kind}_{mech_id}"
+            if step in committed:
+                continue
+            this_step_collected = collected if first else []
+            first = False
+            result = dice_resolution.run_step(
+                lambda dice, _step=step: _run_heat_step_fn(_step, dice), this_step_collected,
+                campaign_id=campaign_id, kind="heat_phase", step=step, ctx=ctx, committed=committed,
+                force_auto=force_auto,
+            )
+            committed[step] = result
+
+    return _finalize_heat_phase(ctx, committed)
+
+
+def resolve_heat_phase(campaign_id: int) -> dict:
+    """Old, fully synchronous entrypoint — ALWAYS instant (force_auto),
+    kept 100% behavior-identical to before Fase B. See run_heat_phase for
+    the physical-dice-aware entrypoint."""
+    return run_heat_phase(campaign_id, force_auto=True)
 
 
 def _get(conn, campaign_id: int, mode: str) -> dict:
@@ -539,8 +846,8 @@ def _get(conn, campaign_id: int, mode: str) -> dict:
     if movement_done:
         campaign = campaigns.get_campaign(campaign_id)
         active_map_id = campaign["active_map_id"] if campaign else None
-        ranged_target_pilot_ids = _pilots_with_ranged_targets(active_map_id)
-        melee_target_pilot_ids = _pilots_with_melee_targets(active_map_id)
+        ranged_target_pilot_ids = _pilots_with_ranged_targets(campaign_id, active_map_id)
+        melee_target_pilot_ids = _pilots_with_melee_targets(campaign_id, active_map_id)
 
     return {
         "campaign_id": campaign_id,
@@ -576,4 +883,13 @@ def _get(conn, campaign_id: int, mode: str) -> dict:
         # heat-damage pass actually happens instead of the phase being
         # purely cosmetic. False for a round that hasn't started at all.
         "heat_resolved": bool(round_row["heat_resolved"]) if round_row else False,
+        # Real user report: a mech added mid-round correctly never got
+        # asked to move/attack (see _round_participant_pilot_ids), but the
+        # frontend's own "needs initiative" red-tile check had no way to
+        # know that and kept flagging them as missing a roll they were
+        # never going to be allowed to use this round anyway. Exposed so
+        # the frontend can exclude non-participants the same way it
+        # already excludes destroyed pilots (rounds.ts's
+        # pilotsNeedingInitiative).
+        "participant_pilot_ids": sorted(_round_participant_pilot_ids(campaign_id)) if round_row and round_row["round_number"] > 0 else [],
     }

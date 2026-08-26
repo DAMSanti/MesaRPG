@@ -241,6 +241,28 @@ def test_create_pilot_allows_same_owner_token_in_different_campaigns(campaign):
     assert a["id"] != b["id"]
 
 
+def test_claim_pilot_assigns_an_unclaimed_pilot(campaign):
+    p = pilots.create_pilot(campaign["id"], "GM Pilot")
+    claimed = pilots.claim_pilot(p["id"], "device-1")
+    assert claimed["owner_token"] == "device-1"
+
+
+def test_claim_pilot_rejects_a_pilot_already_claimed_by_a_different_device(campaign):
+    p = pilots.create_pilot(campaign["id"], "Player-made", owner_token="device-1")
+    with pytest.raises(pilots.PilotAlreadyClaimed):
+        pilots.claim_pilot(p["id"], "device-2")
+
+
+def test_claim_pilot_by_the_same_device_twice_is_a_no_op(campaign):
+    p = pilots.create_pilot(campaign["id"], "Player-made", owner_token="device-1")
+    claimed = pilots.claim_pilot(p["id"], "device-1")
+    assert claimed["owner_token"] == "device-1"
+
+
+def test_claim_pilot_unknown_pilot_returns_none(campaign):
+    assert pilots.claim_pilot(999999, "device-1") is None
+
+
 def test_pilot_die_style_defaults_to_none(campaign):
     p = pilots.create_pilot(campaign["id"], "Unstyled")
     assert p["die_style"] is None

@@ -142,6 +142,83 @@ def test_dfa_damage_and_self_damage_formulas(campaign):
             break
     assert result["hit"]
     assert result["damage"] == 17  # ceil(55/10 * 3) = ceil(16.5) = 17
+
+
+def test_dfa_result_includes_attacker_mech_destroyed_field(campaign):
+    # Real gap found while auditing for undo: a Charge/DFA that destroys
+    # the ATTACKER via its own self-damage was never even reported —
+    # _mech_destroyed only ever checked the TARGET's hit_results. This is
+    # a regression guard that the field exists and is sane in the common
+    # (non-destroying) case; the wiring itself is exercised for real by
+    # whatever self_damage_results this hit happens to produce.
+    from app.systems.battletech import movement
+
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(
+        campaign, attacker_tonnage=55, attacker_piloting=2, target_piloting=9,
+    )
+    units.move_unit(attacker_unit["id"], 3, 0)
+    movement.execute_move(campaign["id"], attacker_unit["id"], 0, 0, "jump")
+    for _ in range(20):
+        result = melee.resolve_melee_attack(campaign["id"], attacker_unit["id"], target_unit["id"], "dfa")
+        if result["hit"]:
+            break
+    assert result["hit"]
+    assert isinstance(result["attacker_mech_destroyed"], bool)
+    assert result["self_damage_results"]
+
+
+def test_melee_attack_logs_an_undoable_event(campaign):
+    # Real gap: melee.resolve_melee_attack logged NOTHING before this —
+    # confirmed by grepping the module for events.log_event and finding
+    # zero call sites. A punch (single target, no self-damage) is the
+    # simplest case to confirm the event now exists and undo works at all.
+    from app import events
+
+    _, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(
+        campaign, attacker_tonnage=65, attacker_piloting=0,
+    )
+    before_target = mechs.get_mech(target_mech["id"])
+    for _ in range(20):
+        result = melee.resolve_melee_attack(campaign["id"], attacker_unit["id"], target_unit["id"], "punch", arm="right")
+        if result["hit"]:
+            break
+    assert result["hit"]
+
+    undone = events.undo_last_event(campaign["id"])
+    assert undone is not None
+    assert undone["event_type"] == "melee"
+    after_undo = mechs.get_mech(target_mech["id"])
+    assert after_undo["locations"] == before_target["locations"]
+    assert after_undo["criticals"] == before_target["criticals"]
+
+
+def test_undo_charge_restores_both_attacker_and_target(campaign):
+    # Charge damages BOTH mechs (target from the hit, attacker from its
+    # own recoil) — confirms undo's full-snapshot restore covers both
+    # sides, not just the target (the old narrow before/weapon payload
+    # never tracked the attacker's own self-damage at all).
+    from app import events
+    from app.systems.battletech import combat, movement
+
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(campaign, attacker_tonnage=65)
+    units.move_unit(attacker_unit["id"], 3, 0)
+    movement.execute_move(campaign["id"], attacker_unit["id"], 0, 0, "walk")
+
+    before_attacker = mechs.get_mech(attacker_mech["id"])
+    before_target = mechs.get_mech(target_mech["id"])
+    for _ in range(20):
+        result = melee.resolve_melee_attack(campaign["id"], attacker_unit["id"], target_unit["id"], "charge")
+        if result["hit"]:
+            break
+    assert result["hit"]
+    assert result["self_damage_results"]
+
+    undone = events.undo_last_event(campaign["id"])
+    assert undone["event_type"] == "melee"
+    after_attacker = mechs.get_mech(attacker_mech["id"])
+    after_target = mechs.get_mech(target_mech["id"])
+    assert after_attacker["locations"] == before_attacker["locations"]
+    assert after_target["locations"] == before_target["locations"]
     assert result["self_damage_results"]
     assert melee.math.ceil(55 / 5) == 11
 
@@ -150,6 +227,24 @@ def test_incapacitated_mech_cannot_melee(campaign):
     _, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(campaign)
     mechs.set_shutdown(attacker_mech["id"], True)
     with pytest.raises(melee.MechIncapacitated):
+        melee.resolve_melee_attack(campaign["id"], attacker_unit["id"], target_unit["id"], "punch", arm="left")
+
+
+def test_destroyed_mech_cannot_melee(campaign):
+    # Fase D: a destroyed mech is a wreck, not just shut-down/prone —
+    # can't act ever again, regardless of reason.
+    _, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(campaign)
+    mechs.mark_destroyed(attacker_mech["id"], "structural")
+    with pytest.raises(melee.MechIncapacitated):
+        melee.resolve_melee_attack(campaign["id"], attacker_unit["id"], target_unit["id"], "punch", arm="left")
+
+
+def test_cannot_melee_an_already_destroyed_target(campaign):
+    # Real user report: "tampoco se tiene que poder atacar a un muerto".
+    from app.systems.battletech import combat
+    _, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(campaign)
+    mechs.mark_destroyed(target_mech["id"], "structural")
+    with pytest.raises(combat.TargetAlreadyDestroyed):
         melee.resolve_melee_attack(campaign["id"], attacker_unit["id"], target_unit["id"], "punch", arm="left")
 
 
@@ -169,3 +264,102 @@ def test_missed_kick_fells_the_attacker(campaign):
         assert result["self_fall"] is not None
         updated = mechs.get_mech(attacker_mech["id"])
         assert updated["is_prone"] is True
+
+
+def _drive_physical_melee(campaign_id, params, supplied=6):
+    """Drives run_melee_attack's pause/resume loop to completion, always
+    supplying `supplied` for whichever purpose it's currently waiting on
+    (default 6: a guaranteed-hit 6+6=12 for the shared to_hit roll, and a
+    harmless real value for any 1d6 location/slot roll it asks for
+    afterward). Mirrors test_combat.py's own drive helper."""
+    from app import dice_resolution
+
+    ctx = committed = collected = None
+    result = None
+    for _ in range(30):
+        try:
+            result = (
+                melee.run_melee_attack(campaign_id, **params) if ctx is None
+                else melee.run_melee_attack(campaign_id, ctx=ctx, committed=committed, collected=collected)
+            )
+            break
+        except dice_resolution.PendingRoll as exc:
+            pending = dice_resolution.get_pending(exc.pending_roll_id)
+            dice_resolution.delete_pending(exc.pending_roll_id)
+            ctx, committed = pending["ctx"], pending["committed"]
+            values = [supplied, supplied] if pending["next_dice_spec"] == "2d6" else [supplied]
+            collected = pending["collected"] + [(pending["next_purpose"], values)]
+    return result
+
+
+def test_run_melee_attack_never_pauses_for_an_auto_mode_pilot(campaign):
+    _, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(campaign, attacker_piloting=0)
+    pilots.update_pilot(attacker_unit["pilot_id"], dice_mode="auto")
+    result = melee.run_melee_attack(
+        campaign["id"], attacker_unit["id"], target_unit["id"], "punch", arm="right",
+    )
+    assert result["hit"] in (True, False)  # proves it fully resolved in one call, no PendingRoll
+
+
+def test_run_melee_attack_punch_pauses_and_resumes_to_a_full_result(campaign):
+    # Fase B: punch/kick (a single hit, no damage grouping) ARE physical-
+    # dice-aware — to_hit, the hit-location roll, and any resulting
+    # criticals/fall all pause for a pilot in dice_mode='physical' (the
+    # default), same mechanism as combat.py's ranged attacks.
+    _, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(campaign, attacker_piloting=0)
+    result = _drive_physical_melee(
+        campaign["id"],
+        {"attacker_unit_id": attacker_unit["id"], "target_unit_id": target_unit["id"], "attack_type": "punch", "arm": "right"},
+    )
+    assert result is not None
+    assert result["hit"] is True
+    assert result["roll"] == 12
+
+
+def test_run_melee_attack_kick_chain_pauses_and_resumes(campaign):
+    # Kick additionally chains the kicked-target's own PSR (and a
+    # possible fall) after the hit itself — confirms the WHOLE chain
+    # survives pause/resume, not just the first roll.
+    _, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(campaign, attacker_piloting=0)
+    result = _drive_physical_melee(
+        campaign["id"],
+        {"attacker_unit_id": attacker_unit["id"], "target_unit_id": target_unit["id"], "attack_type": "kick"},
+    )
+    assert result is not None
+    assert result["hit"] is True
+    assert "target_psr" in result
+
+
+def test_run_melee_attack_charge_grouped_damage_never_pauses(campaign):
+    # Documented scope limit (see melee.py's own MELEE_STEP_ORDER comment)
+    # — charge/DFA's own grouped damage (charge_dfa_resolution) never
+    # pauses regardless of dice_mode, even though the SHARED to_hit roll
+    # right before it still can. The only purpose a pause should ever ask
+    # for here is "to_hit" — never anything from the grouped-damage
+    # sequence.
+    from app import dice_resolution
+    from app.systems.battletech import movement
+
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_adjacent_units(campaign, attacker_tonnage=65)
+    units.move_unit(attacker_unit["id"], 3, 0)
+    movement.execute_move(campaign["id"], attacker_unit["id"], 0, 0, "walk")
+
+    ctx = committed = collected = None
+    result = None
+    purposes_seen = []
+    for _ in range(30):
+        try:
+            result = (
+                melee.run_melee_attack(campaign["id"], attacker_unit["id"], target_unit["id"], "charge") if ctx is None
+                else melee.run_melee_attack(campaign["id"], ctx=ctx, committed=committed, collected=collected)
+            )
+            break
+        except dice_resolution.PendingRoll as exc:
+            purposes_seen.append(exc.purpose)
+            pending = dice_resolution.get_pending(exc.pending_roll_id)
+            dice_resolution.delete_pending(exc.pending_roll_id)
+            ctx, committed = pending["ctx"], pending["committed"]
+            collected = pending["collected"] + [(pending["next_purpose"], [6, 6])]
+
+    assert result is not None
+    assert purposes_seen == ["to_hit"] or purposes_seen == []

@@ -57,13 +57,33 @@ export function activeTurnPilotIds(round: RoundState, pilots: Pilot[]): Set<numb
  * board (TableView) and the GM's own map, not just the ones the GM
  * happens to roll for (enemies) — a player forgetting to roll is just
  * as worth flagging as an enemy the GM hasn't gotten to yet. */
-export function pilotsNeedingInitiative(round: RoundState | null, units: Unit[]): Set<number> {
+export function pilotsNeedingInitiative(
+  round: RoundState | null, units: Unit[], destroyedPilotIds?: Set<number>,
+): Set<number> {
   if (!round || round.round_number === 0) return new Set()
   if (round.rolls.some((r) => r.kind === 'faction')) return new Set()
   const rolled = new Set(round.rolls.filter((r) => r.pilot_id != null).map((r) => r.pilot_id))
+  // Real user report: a pilot/mech added mid-round got the red "needs
+  // initiative" tile even though it correctly never asked them to roll
+  // — turns.py's own movement_order already excludes anyone who wasn't a
+  // participant when THIS round's start_round ran (see
+  // participant_pilot_ids' own doc comment in api.ts), so the tile
+  // highlight needs the exact same exclusion, not just rolled/destroyed.
+  const participantIds = new Set(round.participant_pilot_ids)
   const ids = new Set<number>()
   for (const u of units) {
-    if (u.pilot_id != null && !rolled.has(u.pilot_id)) ids.add(u.pilot_id)
+    // Fase D real user request: "los muertos no deberían tirar
+    // iniciativas" — a pilot whose mech is already destroyed has nothing
+    // left to roll for (turns.py's own movement_order/target lists
+    // already exclude them the same way), so the "needs to roll" prompt
+    // shouldn't keep asking for them round after round either.
+    if (
+      u.pilot_id != null && !rolled.has(u.pilot_id)
+      && !(destroyedPilotIds?.has(u.pilot_id) ?? false)
+      && participantIds.has(u.pilot_id)
+    ) {
+      ids.add(u.pilot_id)
+    }
   }
   return ids
 }
@@ -187,6 +207,37 @@ export const PHASE_LABELS: Record<RoundPhase, string> = {
   melee: 'Combate a melee',
   heat: 'Heat',
   other: 'Fin de ronda',
+}
+
+/** Holds the amber "your turn to move" highlight/gating on the pilot
+ * whose mech is CURRENTLY WALKING on this view's own board, instead of
+ * jumping to the server's next mover the instant moved_pilot_ids
+ * advances (real user request: "el turno de movimiento debe durar hasta
+ * que la animación de movimiento termine" — a longer route's animation
+ * can easily still be running well after the server has already
+ * confirmed the move and picked the next pilot).
+ *
+ * Deliberately driven by this view's OWN walk lifecycle (onUnitWalkStart/
+ * onUnitWalkDone, wired to HexMap's onUnitWalkDone and to wherever this
+ * view populates its own walkPaths — self-submitted moves and the
+ * unit_walked broadcast alike) rather than by diffing round-state
+ * snapshots: `displayedMoverPilotId` is computed fresh from `walking` +
+ * `raw` on every render, never cached in its own state, so there's no
+ * window where it could get stuck holding an animation that already
+ * finished (e.g. a short hop whose animation completes before a slow
+ * network round-trip confirms it server-side) — it just falls straight
+ * back to `raw` the moment nothing is walking. */
+export function useHeldActiveMover(raw: number | null): {
+  displayedMoverPilotId: number | null
+  onUnitWalkStart: (unitId: number, pilotId: number | null) => void
+  onUnitWalkDone: (unitId: number) => void
+} {
+  const [walking, setWalking] = useState<{ unitId: number; pilotId: number | null } | null>(null)
+  return {
+    displayedMoverPilotId: walking ? walking.pilotId : raw,
+    onUnitWalkStart: (unitId, pilotId) => setWalking({ unitId, pilotId }),
+    onUnitWalkDone: (unitId) => setWalking((w) => (w && w.unitId === unitId ? null : w)),
+  }
 }
 
 /** Same phase currentPhase() computes, but held on screen for at least

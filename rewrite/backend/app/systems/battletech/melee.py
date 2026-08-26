@@ -26,6 +26,8 @@ Deliberately out of scope, documented:
 
 import math
 
+from ... import dice_resolution
+from ...dice_source import DiceSource
 from ...hexgrid import Hex
 from ...hexgrid import distance as hex_distance
 from ...hexgrid import has_los
@@ -150,17 +152,22 @@ def _arm_actuator_hit(mech: dict, arm_loc: str, item_name: str) -> bool:
     return any(c["item_name"] == item_name and c["hit"] for c in mech["criticals"].get(arm_loc, []))
 
 
-def resolve_melee_attack(
+def _prepare_melee_attack(
     campaign_id: int, attacker_unit_id: int, target_unit_id: int,
     attack_type: str, arm: str | None = None,
 ) -> dict:
-    """Validates adjacency/LOS/incapacitation, computes the Target Number
-    and damage for `attack_type` (see module docstring for exactly which
-    of the seven official physical attacks this covers), rolls to hit
-    (combat.roll_2d6, same dice as weapon fire), applies damage/criticals/
-    falls on a hit, and returns a result dict shaped like combat.py's own
-    resolve_attack (hit/location/damage/mech_destroyed) plus melee-
-    specific fields (self_damage_results for charge/DFA, fall)."""
+    """All the one-time setup work a melee attack always needed —
+    validation, adjacency/LOS, Target Number/damage per attack_type, the
+    undo snapshot (Fase A). Runs EXACTLY ONCE per attack, on the very
+    first call only — see combat.py's own _prepare_attack docstring for
+    why that's safe despite not being "pure" (nothing here is gated on a
+    dice roll). Returns `ctx`, a plain-dict, JSON-serializable snapshot
+    of everything the step functions below need — deliberately does NOT
+    embed any of the roll-keyed location tables (PUNCH_LOCATION_TABLES
+    etc — their keys are ints, and a JSON round-trip through a paused/
+    resumed physical roll would silently turn those into strings); the
+    step functions re-derive the right table from ctx["attack_type"]
+    instead (see _location_table_for)."""
     if attack_type not in MELEE_ATTACK_TYPES:
         raise UnknownMeleeAttackType(f"Unknown melee attack_type {attack_type!r}, expected one of {MELEE_ATTACK_TYPES}")
 
@@ -176,6 +183,28 @@ def resolve_melee_attack(
         raise ValueError("Unknown mech")
     if attacker_mech["is_shutdown"] or attacker_mech["is_prone"]:
         raise MechIncapacitated(f"Unit {attacker_unit_id}'s mech is shut down or prone and can't attack")
+    if attacker_mech["destroyed_reason"] is not None:
+        raise MechIncapacitated(f"Unit {attacker_unit_id}'s mech is destroyed and can't attack")
+    # Real user report: "tampoco se tiene que poder atacar a un muerto".
+    if target_mech["destroyed_reason"] is not None:
+        raise combat.TargetAlreadyDestroyed(f"Unit {target_unit_id}'s mech is already destroyed")
+
+    # Real user report: melee attacks logged NO undo event at all before
+    # this (confirmed by direct inspection — zero `events.log_event`
+    # calls anywhere in this file). Snapshot BOTH mechs (charge/DFA can
+    # damage the attacker too) + both pilots' wounds here, before
+    # anything below mutates — same shape/reasoning as combat.py's own
+    # resolve_attack, see its comment for why a full snapshot beats a
+    # narrow before/after patch.
+    attacker_mech_snapshot = mechs.snapshot_full_state(attacker["mech_id"])
+    target_mech_snapshot = mechs.snapshot_full_state(target["mech_id"])
+    attacker_pilot_before_undo = pilots.get_pilot(attacker["pilot_id"]) if attacker["pilot_id"] is not None else None
+    target_pilot_before_undo = pilots.get_pilot(target["pilot_id"]) if target["pilot_id"] is not None else None
+    attacker_pilot_hits_before = attacker_pilot_before_undo["hits"] if attacker_pilot_before_undo else None
+    target_pilot_hits_before = target_pilot_before_undo["hits"] if target_pilot_before_undo else None
+    # Fase D: captured alongside hits so undo reverts a Cockpit-crit kill too.
+    attacker_pilot_is_dead_before = attacker_pilot_before_undo["is_dead"] if attacker_pilot_before_undo else None
+    target_pilot_is_dead_before = target_pilot_before_undo["is_dead"] if target_pilot_before_undo else None
 
     m = get_map(attacker["map_id"])
     grid_type = m["grid_type"] if m else "hex"
@@ -251,58 +280,327 @@ def resolve_melee_attack(
         dice = "1d6"
         hit_side = side
 
-    d1, d2, roll = combat.roll_2d6()
-    hit = roll >= target_number or roll == 12
-    if roll == 2:
-        hit = False
+    from . import turns  # local import — see events.py's own module docstring on why
 
-    result: dict = {
-        "attack_type": attack_type, "attacker_unit_id": attacker_unit_id, "target_unit_id": target_unit_id,
-        "attacker_mech_id": attacker["mech_id"], "target_mech_id": target["mech_id"],
-        "target_number": target_number, "roll": roll, "roll_dice": [d1, d2], "hit": hit,
-        "damage": None, "hit_results": [], "self_damage_results": [], "mech_destroyed": False, "fall": None, "self_fall": None,
+    melee_payload = {
+        "attacker_pilot_id": attacker["pilot_id"],
+        "target_pilot_id": target["pilot_id"],
+        "attacker_mech_id": attacker["mech_id"],
+        "target_mech_id": target["mech_id"],
+        "attacker_mech_snapshot": attacker_mech_snapshot,
+        "target_mech_snapshot": target_mech_snapshot,
+        "attacker_pilot_hits_before": attacker_pilot_hits_before,
+        "target_pilot_hits_before": target_pilot_hits_before,
+        "attacker_pilot_is_dead_before": attacker_pilot_is_dead_before,
+        "target_pilot_is_dead_before": target_pilot_is_dead_before,
+        "round_number": turns.current_round_number(campaign_id),
     }
 
-    if hit:
-        result["damage"] = damage
-        rear = hit_side == "rear"
-        if attack_type in ("charge", "dfa"):
-            hit_results = _apply_grouped_damage(target["mech_id"], damage, location_table, hit_side, rear, dice)
+    return {
+        "campaign_id": campaign_id,
+        "attack_type": attack_type,
+        "attacker_unit_id": attacker_unit_id,
+        "target_unit_id": target_unit_id,
+        "attacker_mech_id": attacker["mech_id"],
+        "target_mech_id": target["mech_id"],
+        "attacker_pilot_id": attacker["pilot_id"],
+        "target_pilot_id": target["pilot_id"],
+        "target_number": target_number,
+        "damage": damage,
+        "self_damage": self_damage,
+        "hit_side": hit_side,
+        "dice_spec": dice,  # "1d6"/"2d6" — grouped-damage die size for charge/DFA's own instant resolution
+        "attack_payload": melee_payload,
+    }
+
+
+# ---- roll-dependent steps (Fase B: each may pause for a physical die) ---
+#
+# Real scope decision, documented here rather than hidden: Charge/DFA's
+# own damage (target AND self, each potentially spread across several
+# 5-point groups — see _apply_grouped_damage) stays fully INSTANT
+# regardless of dice_mode, for now. Each group needs its own hit-location
+# roll AND its own criticals decision, and an EARLIER group's criticals
+# can change what's still standing for a LATER one (same "later rolls
+# depend on earlier ones' applied state" reasoning combat.py's own step
+# split exists for) — making that physical-dice-aware needs a
+# dynamically-sized step list (one step per damage group, only knowable
+# once `damage` is computed), not the fixed small list every other melee
+# attack type uses here. Punch/Kick (a single hit, no grouping) and the
+# shared to-hit/kicked-PSR/missed-kick-fall rolls ARE physical-dice-aware
+# — same "smaller scope now, real user can ask for the rest later"
+# precedent this module's own docstring already sets for Club attacks.
+
+MELEE_STEP_ORDER = [
+    "to_hit",
+    "charge_dfa_resolution",
+    "target_location",
+    "target_criticals",
+    "target_fall",
+    "kicked_psr",
+    "kicked_fall",
+    "missed_kick_fall",
+]
+
+
+def _location_table_for(attack_type: str) -> dict:
+    if attack_type == "punch":
+        return PUNCH_LOCATION_TABLES
+    if attack_type == "kick":
+        return KICK_LOCATION_TABLES
+    if attack_type == "charge":
+        return NORMAL_LOCATION_TABLES
+    return PUNCH_LOCATION_TABLES  # dfa
+
+
+def _step_to_hit(ctx: dict, dice: DiceSource) -> dict:
+    d1, d2, roll = dice.next_2d6("to_hit", ctx["attacker_pilot_id"])
+    hit = roll >= ctx["target_number"] or roll == 12
+    if roll == 2:
+        hit = False
+    return {"roll": roll, "roll_dice": [d1, d2], "hit": hit}
+
+
+def _step_charge_dfa_resolution(ctx: dict, dice: DiceSource) -> dict:
+    """See the module-level scope comment above — deliberately instant,
+    `dice` unused. Identical logic to what resolve_melee_attack always
+    did for these two attack types, just relocated into its own step."""
+    attack_type = ctx["attack_type"]
+    damage = ctx["damage"]
+    hit_side = ctx["hit_side"]
+    rear = hit_side == "rear"
+    hit_results = _apply_grouped_damage(
+        ctx["target_mech_id"], damage, _location_table_for(attack_type), hit_side, rear, ctx["dice_spec"]
+    )
+    mech_destroyed = _mech_destroyed(hit_results)
+    fall = None
+    if not mech_destroyed and _fell(hit_results):
+        fall = psr.apply_fall(ctx["target_mech_id"])
+
+    self_damage = ctx["self_damage"]
+    self_damage_results: list[dict] = []
+    attacker_mech_destroyed = False
+    self_fall = None
+    if self_damage:
+        if attack_type == "dfa":
+            # Attacker's own damage from a successful DFA is rolled on
+            # the Kick Location Table's Front column specifically.
+            self_damage_results = _apply_grouped_damage(
+                ctx["attacker_mech_id"], self_damage, KICK_LOCATION_TABLES, "front", rear=False, dice="1d6"
+            )
         else:
-            table = location_table[hit_side]
-            location = table[_roll_1d6()]
-            hit_results = [_apply_single_hit(target["mech_id"], location, rear, damage)]
-        result["hit_results"] = hit_results
-        result["mech_destroyed"] = _mech_destroyed(hit_results)
-        if not result["mech_destroyed"] and _fell(hit_results):
-            result["fall"] = psr.apply_fall(target["mech_id"])
+            self_damage_results = _apply_grouped_damage(
+                ctx["attacker_mech_id"], self_damage, NORMAL_LOCATION_TABLES, "front", rear=False, dice="2d6"
+            )
+        attacker_mech_destroyed = _mech_destroyed(self_damage_results)
+        if (
+            not attacker_mech_destroyed and _fell(self_damage_results)
+            and not (fall and fall.get("mech_id") == ctx["attacker_mech_id"])
+        ):
+            self_fall = psr.apply_fall(ctx["attacker_mech_id"])
 
-        if self_damage:
-            if attack_type == "dfa":
-                # Attacker's own damage from a successful DFA is rolled on
-                # the Kick Location Table's Front column specifically.
-                self_results = _apply_grouped_damage(attacker["mech_id"], self_damage, KICK_LOCATION_TABLES, "front", rear=False, dice="1d6")
-            else:
-                self_results = _apply_grouped_damage(attacker["mech_id"], self_damage, NORMAL_LOCATION_TABLES, "front", rear=False, dice="2d6")
-            result["self_damage_results"] = self_results
-            if _fell(self_results) and not (result["fall"] and result["fall"].get("mech_id") == attacker["mech_id"]):
-                result["self_fall"] = psr.apply_fall(attacker["mech_id"])
+    return {
+        "hit_results": hit_results, "mech_destroyed": mech_destroyed, "fall": fall,
+        "self_damage_results": self_damage_results,
+        "attacker_mech_destroyed": attacker_mech_destroyed, "self_fall": self_fall,
+    }
 
-        if attack_type == "kick":
-            # Kicked target must PSR (own consequence, not the attacker's).
-            psr_result = psr.roll_psr(target["mech_id"], 0, "kicked")
-            result["target_psr"] = psr_result
-            if not psr_result["success"] and not result["fall"]:
-                result["fall"] = psr.apply_fall(target["mech_id"])
-    elif attack_type == "kick":
-        # A missed kick always fells the attacker (rulebook: automatic
-        # fall, 2-level fall damage, rear hit location — captured by
-        # psr.apply_fall's own Front-only simplification, see its
-        # docstring; using "front" here for the attacker's own tumble is
-        # an accepted simplification of the real rule's "always rear").
-        result["self_fall"] = psr.apply_fall(attacker["mech_id"], levels=2)
+
+def _step_target_location(ctx: dict, dice: DiceSource) -> dict:
+    table = _location_table_for(ctx["attack_type"])[ctx["hit_side"]]
+    roll = dice.next_1d6("target_location", ctx["attacker_pilot_id"])
+    location = table[roll]
+    rear = ctx["hit_side"] == "rear"
+    from ... import db
+
+    with db.connect() as conn:
+        damage_result = mechs.apply_damage(conn, ctx["target_mech_id"], location, rear=rear, amount=ctx["damage"])
+    return {"location": location, "amount": ctx["damage"], "damage": damage_result}
+
+
+def _step_target_criticals(ctx: dict, target_location: dict, dice: DiceSource) -> dict:
+    dr = target_location["damage"]
+    if dr["destroyed"] or not dr["penetrated"]:
+        return {"hits": [], "effects": None}
+    mech = mechs.get_mech(ctx["target_mech_id"])
+    hits = criticals.decide_criticals(mech, target_location["location"], dice, ctx["attacker_pilot_id"])
+    if not hits:
+        return {"hits": [], "effects": None}
+    effects = criticals.apply_criticals(ctx["target_mech_id"], hits)
+    return {"hits": hits, "effects": effects}
+
+
+def _step_target_fall(ctx: dict, dice: DiceSource) -> dict:
+    mech = mechs.get_mech(ctx["target_mech_id"])
+    decision = psr.decide_fall(mech, 0, dice, ctx["target_pilot_id"])
+    return psr.apply_fall_decision(decision)
+
+
+def _step_kicked_psr(ctx: dict, dice: DiceSource) -> dict:
+    mech = mechs.get_mech(ctx["target_mech_id"])
+    return psr.decide_psr(mech, 0, "kicked", dice, ctx["target_pilot_id"])
+
+
+def _step_kicked_fall(ctx: dict, dice: DiceSource) -> dict:
+    mech = mechs.get_mech(ctx["target_mech_id"])
+    decision = psr.decide_fall(mech, 0, dice, ctx["target_pilot_id"])
+    return psr.apply_fall_decision(decision)
+
+
+def _step_missed_kick_fall(ctx: dict, dice: DiceSource) -> dict:
+    # A missed kick always fells the attacker (rulebook: automatic fall,
+    # 2-level fall damage, rear hit location — captured by psr.apply_
+    # fall's own Front-only simplification, see its docstring; using
+    # "front" here for the attacker's own tumble is an accepted
+    # simplification of the real rule's "always rear").
+    mech = mechs.get_mech(ctx["attacker_mech_id"])
+    decision = psr.decide_fall(mech, 2, dice, ctx["attacker_pilot_id"])
+    return psr.apply_fall_decision(decision)
+
+
+def _needs_step(step: str, ctx: dict, committed: dict) -> bool:
+    attack_type = ctx["attack_type"]
+    if step == "to_hit":
+        return True
+    hit = committed["to_hit"]["hit"]
+    if step == "charge_dfa_resolution":
+        return attack_type in ("charge", "dfa") and hit
+    if step == "target_location":
+        return attack_type in ("punch", "kick") and hit
+    if step == "target_criticals":
+        return attack_type in ("punch", "kick") and hit
+    if step == "target_fall":
+        if attack_type not in ("punch", "kick") or not hit:
+            return False
+        crit = committed.get("target_criticals")
+        return bool(crit) and crit["effects"] is not None and crit["effects"]["fell"]
+    if step == "kicked_psr":
+        return attack_type == "kick" and hit
+    if step == "kicked_fall":
+        if attack_type != "kick" or not hit:
+            return False
+        kicked = committed.get("kicked_psr")
+        return bool(kicked) and not kicked["success"] and "target_fall" not in committed
+    if step == "missed_kick_fall":
+        return attack_type == "kick" and not hit
+    raise ValueError(step)
+
+
+def _run_step_fn(step: str, ctx: dict, committed: dict, dice: DiceSource):
+    if step == "to_hit":
+        return _step_to_hit(ctx, dice)
+    if step == "charge_dfa_resolution":
+        return _step_charge_dfa_resolution(ctx, dice)
+    if step == "target_location":
+        return _step_target_location(ctx, dice)
+    if step == "target_criticals":
+        return _step_target_criticals(ctx, committed["target_location"], dice)
+    if step == "target_fall":
+        return _step_target_fall(ctx, dice)
+    if step == "kicked_psr":
+        return _step_kicked_psr(ctx, dice)
+    if step == "kicked_fall":
+        return _step_kicked_fall(ctx, dice)
+    if step == "missed_kick_fall":
+        return _step_missed_kick_fall(ctx, dice)
+    raise ValueError(step)
+
+
+def _finalize_melee_attack(ctx: dict, committed: dict) -> dict:
+    to_hit = committed["to_hit"]
+    result: dict = {
+        "attack_type": ctx["attack_type"], "attacker_unit_id": ctx["attacker_unit_id"], "target_unit_id": ctx["target_unit_id"],
+        "attacker_mech_id": ctx["attacker_mech_id"], "target_mech_id": ctx["target_mech_id"],
+        "target_number": ctx["target_number"], "roll": to_hit["roll"], "roll_dice": to_hit["roll_dice"], "hit": to_hit["hit"],
+        "damage": None, "hit_results": [], "self_damage_results": [], "mech_destroyed": False,
+        "attacker_mech_destroyed": False, "fall": None, "self_fall": None,
+    }
+
+    if to_hit["hit"]:
+        result["damage"] = ctx["damage"]
+        if ctx["attack_type"] in ("charge", "dfa"):
+            cdr = committed["charge_dfa_resolution"]
+            result["hit_results"] = cdr["hit_results"]
+            result["mech_destroyed"] = cdr["mech_destroyed"]
+            result["fall"] = cdr["fall"]
+            result["self_damage_results"] = cdr["self_damage_results"]
+            result["attacker_mech_destroyed"] = cdr["attacker_mech_destroyed"]
+            result["self_fall"] = cdr["self_fall"]
+        else:
+            tl = committed["target_location"]
+            tc = committed.get("target_criticals")
+            result["hit_results"] = [{
+                "location": tl["location"], "amount": tl["amount"], "damage": tl["damage"],
+                "critical_hits": tc["effects"] if tc else None,
+            }]
+            result["mech_destroyed"] = _mech_destroyed(result["hit_results"])
+            if "target_fall" in committed:
+                result["fall"] = committed["target_fall"]
+            if ctx["attack_type"] == "kick" and "kicked_psr" in committed:
+                result["target_psr"] = committed["kicked_psr"]
+                if "kicked_fall" in committed:
+                    result["fall"] = committed["kicked_fall"]
+    elif ctx["attack_type"] == "kick" and "missed_kick_fall" in committed:
+        result["self_fall"] = committed["missed_kick_fall"]
+
+    outcome = "impacto" if to_hit["hit"] else "fallo"
+    summary = f"{ctx['attack_type'].capitalize()} → {outcome} (tirada {to_hit['roll']})"
+    if result["mech_destroyed"] or result["attacker_mech_destroyed"]:
+        summary += " — ¡MECH DESTRUIDO!"
+
+    melee_payload = dict(ctx["attack_payload"])
+    melee_payload["result"] = result
+    from ... import db, events
+
+    with db.connect() as conn:
+        events.log_event(conn, ctx["campaign_id"], "melee", summary, melee_payload)
 
     return result
+
+
+def run_melee_attack(
+    campaign_id: int, attacker_unit_id: int | None = None, target_unit_id: int | None = None,
+    attack_type: str | None = None, arm: str | None = None, *,
+    ctx: dict | None = None, committed: dict | None = None, collected: list | None = None,
+    force_auto: bool = False,
+) -> dict:
+    """The Fase B driver — same shape as combat.py's run_attack. On the
+    INITIAL call (ctx/committed both None), runs _prepare_melee_attack
+    once, then walks MELEE_STEP_ORDER running whichever steps _needs_step
+    says apply for this attack_type/outcome. Raises dice_resolution.
+    PendingRoll if a step needs a real physical die; otherwise returns
+    the same result shape resolve_melee_attack always has."""
+    if ctx is None:
+        ctx = _prepare_melee_attack(campaign_id, attacker_unit_id, target_unit_id, attack_type, arm)
+        committed = {}
+        collected = []
+
+    first = True
+    for step in MELEE_STEP_ORDER:
+        if step in committed:
+            continue
+        if not _needs_step(step, ctx, committed):
+            continue
+        this_step_collected = collected if first else []
+        first = False
+        result = dice_resolution.run_step(
+            lambda dice, _step=step: _run_step_fn(_step, ctx, committed, dice), this_step_collected,
+            campaign_id=campaign_id, kind="melee", step=step, ctx=ctx, committed=committed, force_auto=force_auto,
+        )
+        committed[step] = result
+
+    return _finalize_melee_attack(ctx, committed)
+
+
+def resolve_melee_attack(
+    campaign_id: int, attacker_unit_id: int, target_unit_id: int,
+    attack_type: str, arm: str | None = None,
+) -> dict:
+    """Old, fully synchronous entrypoint — ALWAYS instant (force_auto,
+    ignoring any pilot's real dice_mode), kept 100% behavior-identical to
+    before Fase B for every existing caller. See run_melee_attack for the
+    physical-dice-aware entrypoint."""
+    return run_melee_attack(campaign_id, attacker_unit_id, target_unit_id, attack_type, arm, force_auto=True)
 
 
 def _leg_actuator_state(mech: dict) -> tuple[bool, int, tuple[int, int]]:

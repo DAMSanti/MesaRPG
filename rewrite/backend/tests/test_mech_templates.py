@@ -62,7 +62,7 @@ def test_list_chassis_is_distinct_and_sorted():
     mech_templates.upsert_template("Atlas AS7-D.mtf", "Atlas", "AS7-D", 100, ATLAS_PAYLOAD)
     mech_templates.upsert_template("Atlas AS7-K.mtf", "Atlas", "AS7-K", 100, ATLAS_PAYLOAD)
     mech_templates.upsert_template("Banshee BNC-3E.mtf", "Banshee", "BNC-3E", 95, ATLAS_PAYLOAD)
-    assert mech_templates.list_chassis() == ["Atlas", "Banshee"]
+    assert mech_templates.list_chassis() == [{"chassis": "Atlas", "tonnage": 100}, {"chassis": "Banshee", "tonnage": 95}]
 
 
 def test_list_models_for_a_chassis():

@@ -16,6 +16,12 @@
   margin: -20px -24px 20px;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
+  /* Real user request: unify with GMView's own nav (NavBar.css's
+     .nav-bar.bar) — that one stays pinned to the top on scroll, this one
+     didn't. */
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
 
 .player-tabs button {
@@ -41,10 +47,16 @@
   color: var(--accent);
 }
 
+/* Same treatment as NavBar.css's own .nav-campaign ("↺ campaña" link) —
+   real user request: unify with GMView's nav design, same position
+   (far right), same underline/size/padding, just plain text instead of
+   a link (a player has nowhere else to navigate to). */
 .player-tabs-campaign {
   margin-left: auto;
   color: var(--accent-2);
-  font-size: 12px;
+  font-size: 11px;
+  text-decoration: underline;
+  padding: 6px 8px;
 }
 
 /* Same treatment as GMView.css's .nav-gear-btn — duplicated rather than
@@ -115,36 +127,61 @@
   font-style: italic;
 }
 
-/* Round + phase, and every possible action below it, always visible and
-   individually dimmed when it's not this phase's turn to do it — real
-   user request ("visor claro de fases... acciones desactivadas si no se
-   pueden hacer en esta fase"), replacing what used to be a single line
-   of text that changed shape depending on state. */
+/* Same card treatment as GMView.css's own .round-bar/.round-bar-label —
+   duplicated rather than shared, same precedent as .nav-gear-btn above
+   (real user request: "unificar diseño de barra superior en GMview y
+   playerview", GMView's own bar being the reference design). Stacked
+   here (name+eye row, then a smaller gunnery/piloting line below) since
+   this card holds pilot info GMView's own bar has no equivalent for —
+   see .round-bar-main/.round-bar-stats below. */
+.round-bar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.round-bar-stacked {
+  flex-direction: column;
+  gap: 4px;
+}
+
+.round-bar-main {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.round-bar-label {
+  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
+  font-size: 14px;
+  color: var(--accent);
+  letter-spacing: 0.03em;
+}
+
+.round-bar-stats {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* Every possible action, individually dimmed when it's not this phase's
+   turn to do it — real user request ("visor claro de fases... acciones
+   desactivadas si no se pueden hacer en esta fase"). The round/phase
+   indicator itself now lives in its own .round-bar above (see the JSX),
+   always visible regardless of tab — this panel is just the Acciones-
+   tab-only action checklist beneath it. */
 .phase-panel {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 14px 16px;
-}
-
-.phase-header {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.phase-round {
-  font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
-  font-size: 15px;
-  color: var(--accent);
-}
-
-.phase-name {
-  color: var(--text-secondary);
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
 }
 
 .phase-actions {

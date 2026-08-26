@@ -1,7 +1,7 @@
 import pytest
 
 from app import events
-from app.systems.battletech import combat, mechs
+from app.systems.battletech import combat, mechs, turns
 
 
 def test_target_movement_mod_brackets():
@@ -127,6 +127,31 @@ def test_resolve_attack_ct_or_head_destroyed_flags_mech_destroyed(campaign, atla
             destroyed = True
             break
     assert destroyed, "expected the mech to eventually die under 200 guaranteed-hit attacks"
+    # Fase D: persisted, not just this attack's own ephemeral result field.
+    assert mechs.get_mech(atlas["id"])["destroyed_reason"] == "structural"
+
+
+def test_destroyed_attacker_mech_cannot_attack(campaign):
+    from app.systems.battletech import mechs as mechs_module
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_two_units(campaign)
+    mechs_module.mark_destroyed(attacker_mech["id"], "structural")
+    with pytest.raises(combat.MechIncapacitated):
+        combat.resolve_attack(
+            campaign_id=campaign["id"], gunnery=4, damage=5,
+            attacker_unit_id=attacker_unit["id"], target_unit_id=target_unit["id"],
+        )
+
+
+def test_cannot_attack_an_already_destroyed_target(campaign):
+    # Real user report: "tampoco se tiene que poder atacar a un muerto".
+    from app.systems.battletech import mechs as mechs_module
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_two_units(campaign)
+    mechs_module.mark_destroyed(target_mech["id"], "structural")
+    with pytest.raises(combat.TargetAlreadyDestroyed):
+        combat.resolve_attack(
+            campaign_id=campaign["id"], gunnery=4, damage=5,
+            attacker_unit_id=attacker_unit["id"], target_unit_id=target_unit["id"],
+        )
 
 
 def test_resolve_attack_rear_side_uses_rear_armor_when_available(campaign, atlas):
@@ -240,6 +265,142 @@ def test_undo_restores_exact_prior_state(campaign, atlas):
     after = next(l for l in mechs.get_mech(atlas["id"])["locations"] if l["location"] == "CT")
     assert after["armor_current"] == before["armor_current"]
     assert after["structure_current"] == before["structure_current"]
+
+
+def test_undo_reverts_a_mech_destroyed_by_the_undone_attack(campaign, atlas):
+    # Fase D: destroyed_reason is part of mechs.snapshot_full_state/
+    # restore_full_state now (same mechanism Fase A's undo already used
+    # for everything else) — an attack that destroys a mech should be
+    # just as undoable as one that merely dents it.
+    destroyed = False
+    for _ in range(200):
+        result = combat.resolve_attack(
+            campaign_id=campaign["id"], target_mech_id=atlas["id"], damage=60, gunnery=0
+        )
+        if result["hit"] and result["mech_destroyed"]:
+            destroyed = True
+            break
+    assert destroyed
+    assert mechs.get_mech(atlas["id"])["destroyed_reason"] is not None
+    undone = events.undo_last_event(campaign["id"])
+    assert undone is not None
+    assert mechs.get_mech(atlas["id"])["destroyed_reason"] is None
+
+
+def test_run_attack_never_pauses_for_an_auto_mode_pilot(campaign):
+    # Fase B: run_attack (unlike resolve_attack, which always force_autos)
+    # actually consults the real pilot dice_mode — 'auto' (the explicit
+    # non-default) must still resolve instantly in one call, zero pauses.
+    from app.systems.battletech import pilots as pilots_module
+
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_two_units(campaign)
+    pilots_module.update_pilot(attacker_unit["pilot_id"], dice_mode="auto")
+    result = combat.run_attack(
+        campaign["id"],
+        {"gunnery": 4, "damage": 10, "attacker_unit_id": attacker_unit["id"], "target_unit_id": target_unit["id"]},
+    )
+    assert result["hit"] in (True, False)  # just proves it fully resolved, no PendingRoll raised
+
+
+def test_run_attack_pauses_for_a_physical_pilot_and_resumes_to_a_full_result(campaign):
+    # Fase B core mechanism: a pilot in dice_mode='physical' (the default)
+    # pauses run_attack at its first needed roll instead of resolving
+    # instantly — and reporting a value back through dice_resolution's
+    # pending-row shape resumes EXACTLY where it left off, however many
+    # more rolls the resolution ends up needing (impact -> location ->
+    # possibly criticals/fall, all chained), until it finally returns the
+    # same complete result shape resolve_attack always has.
+    from app import dice_resolution
+    from app.systems.battletech import pilots as pilots_module
+
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_two_units(campaign)
+    pilots_module.update_pilot(attacker_unit["pilot_id"], dice_mode="physical")
+    params = {"gunnery": 4, "damage": 10, "attacker_unit_id": attacker_unit["id"], "target_unit_id": target_unit["id"]}
+
+    ctx = committed = collected = None
+    result = None
+    for _ in range(20):  # generous cap — a real attack needs at most ~4-6 rolls
+        try:
+            result = (
+                combat.run_attack(campaign["id"], params) if ctx is None
+                else combat.run_attack(campaign["id"], ctx=ctx, committed=committed, collected=collected)
+            )
+            break
+        except dice_resolution.PendingRoll as exc:
+            pending = dice_resolution.get_pending(exc.pending_roll_id)
+            assert pending["pilot_id"] == attacker_unit["pilot_id"]
+            dice_resolution.delete_pending(exc.pending_roll_id)
+            ctx, committed = pending["ctx"], pending["committed"]
+            supplied = [6, 6] if pending["next_dice_spec"] == "2d6" else [6]
+            collected = pending["collected"] + [(pending["next_purpose"], supplied)]
+
+    assert result is not None
+    assert result["hit"] is True
+    assert result["roll"] == 12  # every to_hit roll this test supplies is 6+6
+
+
+def test_undo_turn_acted_reverts_every_shot_and_the_turn_state(campaign):
+    # Real user report: "ataqué con todas las armas, un click de deshacer
+    # debería revertir TODO... y debería volver al momento en el que le
+    # tocaba atacar a ese mech" — fire a volley of 3 weapons, mark the
+    # pilot acted (same as GMView's submitWeaponVolley does after its own
+    # loop), then confirm ONE undo restores everything: every weapon's
+    # ammo, the attacker's heat, the target's armor/structure/criticals,
+    # AND the turn state (the pilot is eligible to act again).
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_two_units(campaign)
+    weapon_ids = []
+    for _ in range(3):
+        loaded = mechs.add_weapon(attacker_mech["id"], "Medium Laser", "RA")
+        weapon_ids.append(loaded["weapons"][-1]["id"])
+
+    before_attacker = mechs.get_mech(attacker_mech["id"])
+    before_target = mechs.get_mech(target_mech["id"])
+
+    for weapon_id in weapon_ids:
+        combat.resolve_attack(
+            campaign_id=campaign["id"], gunnery=4, weapon_id=weapon_id,
+            attacker_unit_id=attacker_unit["id"], target_unit_id=target_unit["id"],
+        )
+    turns.mark_acted(campaign["id"], attacker_unit["pilot_id"])
+    assert attacker_unit["pilot_id"] in turns.get_round(campaign["id"])["acted_pilot_ids"]
+
+    undone = events.undo_last_event(campaign["id"])
+    assert undone is not None
+    assert undone["event_type"] == "turn_acted"
+
+    after_attacker = mechs.get_mech(attacker_mech["id"])
+    after_target = mechs.get_mech(target_mech["id"])
+    assert after_attacker["heat_current"] == before_attacker["heat_current"]
+    assert after_attacker["weapons"] == before_attacker["weapons"]
+    assert after_target["locations"] == before_target["locations"]
+    assert after_target["criticals"] == before_target["criticals"]
+    assert attacker_unit["pilot_id"] not in turns.get_round(campaign["id"])["acted_pilot_ids"]
+
+
+def test_undo_mid_volley_before_mark_acted_reverts_only_the_last_shot(campaign):
+    # Undoing WHILE still mid-volley (no mark_acted yet) is a narrower,
+    # more intuitive click — just the last shot, not the whole (still
+    # incomplete) turn. Free consequence of turn_acted being its own
+    # separate event rather than folded into each attack event.
+    m, attacker_mech, target_mech, attacker_unit, target_unit = _place_two_units(campaign)
+    w1 = mechs.add_weapon(attacker_mech["id"], "Medium Laser", "RA")["weapons"][-1]["id"]
+    w2 = mechs.add_weapon(attacker_mech["id"], "Medium Laser", "LA")["weapons"][-1]["id"]
+
+    combat.resolve_attack(
+        campaign_id=campaign["id"], gunnery=4, weapon_id=w1,
+        attacker_unit_id=attacker_unit["id"], target_unit_id=target_unit["id"],
+    )
+    after_first_shot = mechs.get_mech(attacker_mech["id"])
+    combat.resolve_attack(
+        campaign_id=campaign["id"], gunnery=4, weapon_id=w2,
+        attacker_unit_id=attacker_unit["id"], target_unit_id=target_unit["id"],
+    )
+
+    undone = events.undo_last_event(campaign["id"])
+    assert undone["event_type"] == "attack"
+    after_undo = mechs.get_mech(attacker_mech["id"])
+    assert after_undo["weapons"] == after_first_shot["weapons"]  # w2's ammo restored, w1's still spent
+    assert after_undo["heat_current"] == after_first_shot["heat_current"]
 
 
 def test_undo_with_nothing_to_undo_returns_none(campaign):

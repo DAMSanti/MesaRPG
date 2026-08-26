@@ -16,6 +16,7 @@ import {
   addMechEquipment,
   addMechWeapon,
   ApiError,
+  claimPilot,
   createMech,
   createPilot,
   deleteMech,
@@ -40,6 +41,7 @@ import {
   type Campaign,
   type CampaignEvent,
   type Mech,
+  type MechChassisResult,
   type MechImportData,
   type MechModelResult,
   type MovementType,
@@ -47,10 +49,11 @@ import {
   type Unit,
   type WeaponStats,
 } from '../api'
-import { activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS } from '../rounds'
+import { activeAttackPilotIds, activeMoverPilotId } from '../rounds'
 import { suggestPilotColor } from '../pilotColors'
 import { DIE_STYLES, buildHeldByMap } from '../dieStyles'
 import { MECH_CHASSIS_ASSETS } from '../mechAssets'
+import { groupChassisByWeightClass } from '../weightClass'
 import './PlayerView.css'
 
 function usePilotId() {
@@ -65,7 +68,7 @@ function usePilotId() {
 export function PlayerView() {
   const campaignId = useCampaignId({ allowPicker: false })
   const { pilotId, choose } = usePilotId()
-  const { lastAttack, activeMapId, roundState, visibility, rosterVersion, unitWalked, heatPhaseResult } = useTableSocket(campaignId)
+  const { lastAttack, lastMelee, activeMapId, roundState, visibility, rosterVersion, unitWalked, heatPhaseResult } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
 
   const [campaign, setCampaign] = useState<Campaign | null>(null)
@@ -95,7 +98,7 @@ export function PlayerView() {
   // view") — tonnage/movement/armor/structure all come from the picked
   // model file, never typed by hand here.
   const [joinChassis, setJoinChassis] = useState('')
-  const [chassisOptions, setChassisOptions] = useState<string[]>([])
+  const [chassisOptions, setChassisOptions] = useState<MechChassisResult[]>([])
   const [joinModel, setJoinModel] = useState('')
   const [joinModelOptions, setJoinModelOptions] = useState<MechModelResult[]>([])
   const [joinSelectedModelFile, setJoinSelectedModelFile] = useState('')
@@ -205,7 +208,21 @@ export function PlayerView() {
     refetch()
     getWeaponCatalog().then(setWeaponCatalog).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaignId, mapId, lastAttack, visibility, rosterVersion, heatPhaseResult])
+  }, [campaignId, mapId, lastAttack, lastMelee, visibility, rosterVersion, heatPhaseResult])
+
+  // Fase D real user request: a player watching their own mech get
+  // destroyed from inside the cockpit (FirstPersonView) should be kicked
+  // back out to their own sheet automatically, not left staring at a
+  // frozen HUD for a mech that can't act anymore. mechs/pilotId are both
+  // already refreshed by the effect above (attack/melee/roster broadcasts
+  // all trigger refetch()) — this just watches the result for OUR OWN
+  // mech specifically. No prior "forced exit" pattern existed in this app
+  // before this — closing the FPV modal is enough, PlayerView is already
+  // the pilot's own sheet screen underneath it.
+  useEffect(() => {
+    const myMech = mechs.find((m) => m.pilot_id === pilotId)
+    if (myMech?.destroyed_reason != null) setShowFirstPerson(false)
+  }, [mechs, pilotId])
 
   const importJoinMech = (data: MechImportData) => {
     setJoinChassis(data.chassis)
@@ -294,17 +311,38 @@ export function PlayerView() {
     // puede ver ni "robar" el borrador pendiente/rechazado de otro. Y
     // solo de facción 'player' — los mechs enemigos/NPC son del GM, no
     // seleccionables como propios (real user request).
+    // Real user request: "no pudiera escoger un JUGADOR que ya estuviese
+    // en la partida" — a pilot another device already claimed (is_claimed
+    // && !is_own) is hidden entirely, same as a pending/rejected draft
+    // that isn't this device's own.
     const visiblePilots = pilots.filter(
-      (p) => (p.status === 'approved' || p.is_own) && p.faction === 'player',
+      (p) => (p.status === 'approved' || p.is_own) && p.faction === 'player' && !(p.is_claimed && !p.is_own),
     )
     // Cada jugador (cada dispositivo) solo puede tener un piloto propio
     // — el backend ya lo impide (pilots.py's DuplicateOwnerPilot), esto
     // solo evita ofrecer el botón cuando ya no tiene sentido.
     const hasOwnPilot = pilots.some((p) => p.is_own)
 
+    // Claims the pilot for this device before finalizing the pick — a
+    // 409 means another device claimed it in the tiny window between
+    // the list rendering and this click (real race, not hypothetical:
+    // two players sitting at the table tapping at the same time), so we
+    // refuse to proceed as if it had worked.
+    const claimAndChoose = (pilotId: number) => {
+      claimPilot(pilotId, getDeviceToken())
+        .then(() => choose(pilotId))
+        .catch((err) => {
+          setError(
+            err instanceof ApiError && err.status === 409
+              ? 'Ese piloto ya lo ha elegido otro jugador.'
+              : 'No se pudo seleccionar ese piloto.',
+          )
+        })
+    }
+
     const pickPilot = (p: Pilot) => {
       if (p.has_pin) setPendingPilot(p)
-      else choose(p.id)
+      else claimAndChoose(p.id)
     }
 
     return (
@@ -318,7 +356,7 @@ export function PlayerView() {
             pilotId={pendingPilot.id}
             pilotName={pendingPilot.name}
             onSuccess={() => {
-              choose(pendingPilot.id)
+              claimAndChoose(pendingPilot.id)
               setPendingPilot(null)
             }}
             onCancel={() => setPendingPilot(null)}
@@ -359,8 +397,12 @@ export function PlayerView() {
             <div className="row">
               <select value={joinChassis} onChange={(e) => setJoinChassis(e.target.value)}>
                 <option value="">chasis…</option>
-                {chassisOptions.map((c) => (
-                  <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
+                {groupChassisByWeightClass(chassisOptions).map(({ weightClass, entries }) => (
+                  <optgroup key={weightClass} label={weightClass}>
+                    {entries.map(({ chassis: c }) => (
+                      <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
+                    ))}
+                  </optgroup>
                 ))}
               </select>
               <select
@@ -615,27 +657,44 @@ export function PlayerView() {
             <span className="nav-icon">⚔️</span><span className="nav-label">Acciones</span>
           </button>
         )}
-        <span className="player-tabs-campaign">{campaign?.name ?? ''}</span>
         {/* Dice styles are BattleTech-only (pilots.die_style has no D&D
             equivalent, no D&D roll ever reads it) — hidden for a D&D
             table rather than showing a control that can never pay off. */}
         {campaign?.system !== 'dnd5e' && (
           <button className="nav-gear-btn" onClick={() => setShowSettingsModal(true)} title="Ajustes">⚙️</button>
         )}
+        {/* Real user request: unificar con el diseño de GMview — mismo
+            orden (enlaces, luego el engranaje, y el nombre de campaña al
+            extremo derecho como su propio "↺ campaña"), no el engranaje
+            al final. */}
+        <span className="player-tabs-campaign">{campaign?.name ?? ''}</span>
       </nav>
       {error && <div className="error-banner">{error} <button onClick={() => setError(null)}>×</button></div>}
-      <h1>
-        {pilot?.name} {pilot?.callsign && `"${pilot.callsign}"`}
-        <button
-          className="icon-button eye-button"
-          onClick={() => setShowFirstPerson(true)}
-          disabled={!myUnit}
-          title={myUnit ? 'Vista en 1ª persona' : 'Tu mech aún no está colocado en el mapa'}
-        >
-          👁️
-        </button>
-      </h1>
-      <p className="sub">Gunnery {pilot?.gunnery} · Piloting {pilot?.piloting}</p>
+      {/* Real user request: "unificar diseño de barra superior en GMview
+          y playerview" — misma tarjeta/tipografía que el round-bar de
+          GMView (GMView.css's .round-bar/.round-bar-label, duplicadas
+          aquí — mismo precedente que .nav-gear-btn ya duplicado entre
+          las dos hojas de estilo), en vez del <h1> suelto de antes. */}
+      <div className="round-bar round-bar-stacked">
+        <div className="round-bar-main">
+          <span className="round-bar-label">
+            {pilot?.name} {pilot?.callsign && `"${pilot.callsign}"`}
+          </span>
+          <button
+            className="icon-button eye-button"
+            onClick={() => setShowFirstPerson(true)}
+            disabled={!myUnit || myMech?.destroyed_reason != null}
+            title={
+              myMech?.destroyed_reason != null ? 'Tu mech ha sido destruido'
+                : myUnit ? 'Vista en 1ª persona'
+                  : 'Tu mech aún no está colocado en el mapa'
+            }
+          >
+            👁️
+          </button>
+        </div>
+        {pilot && <div className="round-bar-stats">Gunnery {pilot.gunnery} · Piloting {pilot.piloting}</div>}
+      </div>
 
       {pilot && pilot.status === 'pending' && (
         <p className="sub status-banner status-pending">Tu ficha de piloto está pendiente de aprobación del GM.</p>
@@ -683,24 +742,21 @@ export function PlayerView() {
 
       {tab === 'acciones' && canAct && (
         <>
-      {/* Visor de fase — real user request: ronda + fase claras arriba,
-          y debajo cada acción posible con su propio control, atenuada
-          cuando no toca ahora mismo en vez de aparecer/desaparecer sin
-          más contexto. roundState.mode (not campaign.initiative_mode) —
-          roundState already refreshes live over WS on every round event,
-          while `campaign` here is only fetched once on mount, so it can
-          go stale if the GM switches modes after this page already loaded. */}
+      {/* Cada acción posible con su propio control, atenuada cuando no
+          toca ahora mismo en vez de aparecer/desaparecer sin más
+          contexto (real user request). roundState.mode (not campaign.
+          initiative_mode) — roundState already refreshes live over WS on
+          every round event, while `campaign` here is only fetched once
+          on mount, so it can go stale if the GM switches modes after
+          this page already loaded. */}
       <section className="phase-panel">
-        <div className="phase-header">
-          <span className="phase-round">
-            Ronda {roundState && roundState.round_number > 0 ? roundState.round_number : '—'}
-          </span>
-          <span className="phase-name">{PHASE_LABELS[roundState ? currentPhase(roundState) : 'none']}</span>
-        </div>
         <ul className="phase-actions">
           {roundState && roundState.mode === 'individual' && (() => {
             const hasRolled = pilot ? roundState.rolls.some((r) => r.pilot_id === pilot.id) : false
-            const canRoll = roundState.round_number > 0 && !hasRolled
+            // Fase D real user request: "los muertos no deberían tirar
+            // iniciativas" — a pilot whose own mech is already destroyed
+            // has nothing left to roll for.
+            const canRoll = roundState.round_number > 0 && !hasRolled && myMech?.destroyed_reason == null
             return (
               <li className={canRoll ? '' : 'phase-action-disabled'}>
                 <span className="phase-action-label">{hasRolled ? '✓ Iniciativa tirada' : 'Tirar iniciativa'}</span>
@@ -730,7 +786,12 @@ export function PlayerView() {
             return (
               <li className={canAttackNow ? '' : 'phase-action-disabled'}>
                 <span className="phase-action-label">Atacar</span>
-                <button onClick={() => setShowFirstPerson(true)} disabled={!canAttackNow || !myUnit}>🎯 Ver y atacar</button>
+                <button
+                  onClick={() => setShowFirstPerson(true)}
+                  disabled={!canAttackNow || !myUnit || myMech?.destroyed_reason != null}
+                >
+                  🎯 Ver y atacar
+                </button>
               </li>
             )
           })()}
@@ -769,6 +830,7 @@ export function PlayerView() {
           roundState={roundState}
           visibility={visibility}
           lastAttack={lastAttack}
+          lastMelee={lastMelee}
           unitWalked={unitWalked}
           onClose={() => setShowFirstPerson(false)}
         />
@@ -835,8 +897,12 @@ export function PlayerView() {
           <div className="row">
             <select value={editMechChassis} onChange={(e) => setEditMechChassis(e.target.value)}>
               <option value="">chasis…</option>
-              {chassisOptions.map((c) => (
-                <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
+              {groupChassisByWeightClass(chassisOptions).map(({ weightClass, entries }) => (
+                <optgroup key={weightClass} label={weightClass}>
+                  {entries.map(({ chassis: c }) => (
+                    <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
             <select

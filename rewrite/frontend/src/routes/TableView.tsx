@@ -2,9 +2,8 @@ import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Physics } from '@react-three/rapier'
 import { OrbitControls } from '@react-three/drei'
-import { Die } from '../components/Die'
+import { PhysicalDiceThrow, THROW_ORIGIN_X } from '../components/PhysicalDiceThrow'
 import { HexMap, useAttackVfxQueue } from '../components/HexMap'
-import { KillReplay } from '../components/KillReplay'
 import { TableBackground } from '../components/TableBackground'
 import { BoardWalls } from '../components/BoardWalls'
 import { EnemyRevealCinematic } from '../components/EnemyRevealCinematic'
@@ -12,12 +11,12 @@ import { useTableSocket } from '../ws'
 import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import {
-  getVisibility, listCampaigns, listMechs, moveUnitWithMp, reportInitiative, resolveHeatPhase,
+  getVisibility, listCampaigns, listMechs, moveUnitWithMp, reportInitiative, reportPendingRoll, resolveHeatPhase,
   type Campaign, type Mech, type MovementType, type ReachableHex,
 } from '../api'
 import { useMapState } from '../useMapState'
 import {
-  activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative, useDisplayedPhase,
+  activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative, useDisplayedPhase, useHeldActiveMover,
 } from '../rounds'
 import { FACTION_COLORS } from '../factions'
 import { SquareMap } from '../components/SquareMap'
@@ -39,84 +38,28 @@ import './TableView.css'
 // (Die's onSettled), and once both have, the sum is the real roll,
 // reported back to the server (TableView's reportSettledInitiative).
 //
-// Just off the board's edge (the board itself is centered on world
-// origin — see mapCenter/hexToWorld) — close enough that a modest toss
-// speed still comfortably reaches and settles within a typical map
-// instead of sailing across and off the far side.
-const THROW_ORIGIN_X = -5
-
-// How long the dice sit still showing their result before vanishing.
-const DICE_VISIBLE_MS = 5000
-
-// Concurrent throws (everyone rolling at once — requested directly, one
-// pilot's throw must not get cut off by another's) land in their own
-// lateral lane instead of overlapping — a fixed, deterministic offset
-// per lane index, not the old hash-based jitter (which only spread out
-// *consecutive* single throws, never designed to keep several truly
-// simultaneous ones apart).
-const LANE_SPACING = 2.2
-
+/** Thin dieCount=2 wrapper around the shared PhysicalDiceThrow (Fase B
+ * extracted it out of this component — see its own doc comment) —
+ * deliberately kept as its own named component/signature rather than
+ * inlining PhysicalDiceThrow at every call site below, since initiative
+ * still goes through its own dedicated request/report pair (untouched,
+ * lower risk than folding it into the new generic physical-roll flow). */
 function InitiativeDice({
   rollId, color, dieStyle, lane, onSettled, onDone,
 }: {
   rollId: number | string
   color: string
-  /** The rolling pilot's own die-style pick (../dieStyles.ts), if any —
-   * real user request. */
   dieStyle: string | null
-  /** Which concurrent throw this is (0, 1, 2…) — see TableView's
-   * activeThrows — purely for spatial separation, not gameplay. */
   lane: number
   onSettled: (total: number, dice: [number, number]) => void
-  /** Fires once the dice have fully vanished — the caller's cue to stop
-   * rendering this <InitiativeDice> at all. */
   onDone: () => void
 }) {
-  const seed = typeof rollId === 'number' ? rollId : 0
-  // One ref per mounted roll (a fresh InitiativeDice instance per
-  // request — see its `key` at the call site) so two dice from the same
-  // throw can each report in independently and the total only fires
-  // once both are in.
-  const valuesRef = useRef<{ a: number | null; b: number | null }>({ a: null, b: null })
-  const reportedRef = useRef(false)
-  const [vanishing, setVanishing] = useState(false)
-  const settle = (which: 'a' | 'b') => (value: number) => {
-    valuesRef.current[which] = value
-    const { a, b } = valuesRef.current
-    if (a != null && b != null && !reportedRef.current) {
-      reportedRef.current = true
-      onSettled(a + b, [a, b])
-      setTimeout(() => {
-        setVanishing(true)
-      }, DICE_VISIBLE_MS)
-    }
-  }
-
-  // Thrown in from just off the board's edge, low and at a real-toss
-  // (not runaway) speed — small per-roll jitter (on top of the lane
-  // offset) so two dice from the SAME throw don't land in the exact
-  // same spot either.
-  const laneZ = (lane - 1) * LANE_SPACING
-  const jitterZ = ((seed % 5) - 2) * 0.5
-  const speed = 3 + (seed % 3) * 0.4
   return (
-    <>
-      <Die
-        rollId={seed} color={color} style={dieStyle}
-        spawn={[THROW_ORIGIN_X, 1.1, laneZ + jitterZ - 0.4]}
-        throwVelocity={[speed, 1.4, (seed % 3) * 0.4 - 0.4]}
-        onSettled={settle('a')}
-        vanishing={vanishing}
-        onVanished={onDone}
-      />
-      <Die
-        rollId={seed} color={color} style={dieStyle}
-        spawn={[THROW_ORIGIN_X, 1.3, laneZ + jitterZ + 0.4]}
-        throwVelocity={[speed - 0.4, 1.7, (seed % 3) * 0.4 - 0.6]}
-        onSettled={settle('b')}
-        vanishing={vanishing}
-      />
-    </>
+    <PhysicalDiceThrow
+      rollId={rollId} dieCount={2} color={color} dieStyle={dieStyle} lane={lane}
+      onSettled={(total, dice) => onSettled(total, [dice[0], dice[1]])}
+      onDone={onDone}
+    />
   )
 }
 
@@ -126,8 +69,8 @@ function InitiativeDice({
 function TableViewBattletech() {
   const campaignId = useCampaignId()
   const {
-    connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState, initiativeRollRequest,
-    movementStarted, heatPhaseResult, rosterVersion,
+    connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, lastMelee, activeMapId, roundState, initiativeRollRequest,
+    physicalRollRequest, movementStarted, heatPhaseResult, rosterVersion, unitWalked,
   } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   // NOT lastRevealedUnitId ?? visibility — a `??` chain here would make
@@ -139,7 +82,6 @@ function TableViewBattletech() {
   // (every unit_revealed is preceded by a visibility_update in the same
   // broadcast), same as GMView's own useMapState call.
   const { map, units } = useMapState(mapId, visibility ?? lastAttack)
-  const [replay, setReplay] = useState<string | null>(null)
 
   // Real user request: "cuando un enemigo entra en el LoS del equipo,
   // en el tableview se abre un modal... a modo de cinemática de
@@ -155,14 +97,36 @@ function TableViewBattletech() {
   }, [campaignId, rosterVersion])
 
   const [revealCinematicUnitId, setRevealCinematicUnitId] = useState<number | null>(null)
+  // Real user report: the cinematic re-appeared on every later move of
+  // ANY unit, not just the very first reveal — because this effect's own
+  // dependency array included `units`/`campaign`, it re-ran (and
+  // re-showed the SAME cinematic) whenever either changed for any
+  // unrelated reason, as long as `lastRevealedUnitId` still held the
+  // value from an EARLIER broadcast (it's never reset to null between
+  // broadcasts). handledRevealIdRef tracks which lastRevealedUnitId this
+  // effect has already made a real decision for, so a later units/
+  // campaign change alone can't re-trigger it — only a genuinely NEW
+  // unit_revealed broadcast (a different id) can. units/campaign stay in
+  // the dependency array on purpose (not just the closure) — the very
+  // first time this fires, `units` may not have caught up with the
+  // just-revealed unit yet (real race between the WS broadcast and the
+  // REST refetch), so this needs to keep retrying, unmarked, until the
+  // unit's own data is actually there to check its faction against.
+  const handledRevealIdRef = useRef<number | null>(null)
   useEffect(() => {
     if (lastRevealedUnitId == null) return
-    if (campaign && !campaign.enemy_reveal_cinematic) return
+    if (handledRevealIdRef.current === lastRevealedUnitId) return
+    if (campaign && !campaign.enemy_reveal_cinematic) {
+      handledRevealIdRef.current = lastRevealedUnitId
+      return
+    }
     const revealed = units.find((u) => u.id === lastRevealedUnitId)
+    if (!revealed) return // units hasn't caught up yet — retry on the next units update, don't mark handled
+    handledRevealIdRef.current = lastRevealedUnitId
     // Only a genuine hostile contact gets the cinematic — a revealed
     // ally/npc ghost (rare, but the mechanic doesn't discriminate) isn't
     // the "surprise enemy contact" moment this was built for.
-    if (revealed?.pilot_faction !== 'enemy') return
+    if (revealed.pilot_faction !== 'enemy') return
     setRevealCinematicUnitId(lastRevealedUnitId)
   }, [lastRevealedUnitId, campaign, units])
   const revealCinematicUnit = units.find((u) => u.id === revealCinematicUnitId) ?? null
@@ -177,15 +141,18 @@ function TableViewBattletech() {
   useEffect(() => {
     if (campaignId == null) return
     listMechs(campaignId).then(setMechs).catch(() => {})
-  }, [campaignId, visibility, lastAttack, rosterVersion])
+  }, [campaignId, visibility, lastAttack, lastMelee, rosterVersion])
   // heat_phase_resolved carries the new heat_current directly — patched
   // in immediately rather than waiting on a full mechs refetch, so the
-  // steam reacts the instant the Heat Phase resolves.
+  // steam reacts the instant the Heat Phase resolves. is_shutdown too
+  // (real user report: the overheat tint used to stay stale until some
+  // later, unrelated refetch caught up — see HeatPhaseResolved's own doc
+  // comment in ws.ts).
   useEffect(() => {
     if (!heatPhaseResult) return
     setMechs((prev) => prev.map((m) => {
       const r = heatPhaseResult.results.find((res) => res.mech_id === m.id)
-      return r ? { ...m, heat_current: r.heat_current } : m
+      return r ? { ...m, heat_current: r.heat_current, is_shutdown: r.is_shutdown, destroyed_reason: r.destroyed_reason } : m
     }))
   }, [heatPhaseResult])
   // Held phase (rounds.ts's useDisplayedPhase) — real user report: an
@@ -204,6 +171,15 @@ function TableViewBattletech() {
     : new Map<number, number>()
   const proneUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
   const shutdownUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
+  const destroyedReasonByUnitId = new Map(
+    units
+      .map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.destroyed_reason ?? null] as const)
+      .filter((entry): entry is [number, 'structural' | 'pilot_killed'] => entry[1] != null),
+  )
+  // Fase D real user request: "los muertos no deberían tirar iniciativas".
+  const destroyedPilotIds = new Set(
+    mechs.filter((m) => m.destroyed_reason != null && m.pilot_id != null).map((m) => m.pilot_id!),
+  )
 
   // Real user report: the Heat Phase never resolved (a mech's steam kept
   // showing forever) whenever GMView — the only screen that used to
@@ -243,12 +219,6 @@ function TableViewBattletech() {
     setTeamVisibleHexes(new Set(visibility.visible_hexes.map((h) => `${h.q},${h.r}`)))
   }, [visibility])
 
-  useEffect(() => {
-    if (lastAttack?.mech_destroyed) {
-      setReplay(`MECH #${lastAttack.target_mech_id} DESTRUIDO`)
-    }
-  }, [lastAttack])
-
   // Attack VFX — shared-table view gets the same laser/tracer/missile
   // animation as GMView, derived the same way, queued (see
   // useAttackVfxQueue's own doc comment) so a fast attack resolving
@@ -268,7 +238,37 @@ function TableViewBattletech() {
   // entry's own `key` gives it a stable <InitiativeDice> identity, and
   // its index in the array becomes its lane (see LANE_SPACING) so
   // concurrent throws land apart instead of on top of each other.
-  const [activeThrows, setActiveThrows] = useState<{ key: number; pilotId: number; color: string; dieStyle: string | null }[]>([])
+  // Real user report: dice would keep "teleporting" the more of them were
+  // in play, NEVER the first ones thrown, and only once something else
+  // vanished — the actual mechanism: `lane` used to be each entry's
+  // ARRAY INDEX, so removing an earlier (already-vanished) entry shifted
+  // every LATER entry's index down by one. @react-three/rapier's own
+  // RigidBody reacts to a `position` prop value change (even on an
+  // already-settled body) by re-syncing its physics transform to match —
+  // so a shifted lane → a recomputed `spawn` → the die's real rigid body
+  // got yanked to the new coordinate, even mid-vanish or long after
+  // resting. Each throw now gets a lane ONCE, at creation, that never
+  // changes again regardless of what else is removed from this array
+  // later.
+  //
+  // Real follow-up report: an ever-INCREASING counter (this used to be a
+  // single nextLaneRef.current++, never decremented) fixed that bug but
+  // introduced another — every throw for the rest of the whole session
+  // got a strictly higher lane than the last, so laneZ (lane * spacing)
+  // marched steadily further from the board the longer a session ran,
+  // eventually spawning/landing dice way off the table. allocateLane
+  // instead reuses the SMALLEST lane number not currently held by any
+  // in-flight throw across BOTH lists below — bounded by how many throws
+  // are actually concurrent right now, never by how many have EVER
+  // happened this session.
+  const allocateLane = () => {
+    const used = new Set([...activeThrows, ...activePhysicalThrows].map((t) => t.lane))
+    let lane = 0
+    while (used.has(lane)) lane++
+    return lane
+  }
+
+  const [activeThrows, setActiveThrows] = useState<{ pilotId: number; color: string; dieStyle: string | null; lane: number }[]>([])
   useEffect(() => {
     if (!initiativeRollRequest) return
     setActiveThrows((prev) => {
@@ -279,15 +279,52 @@ function TableViewBattletech() {
       // adds a new entry.
       if (prev.some((t) => t.pilotId === initiativeRollRequest.pilot_id)) return prev
       return [...prev, {
-        key: Date.now(), pilotId: initiativeRollRequest.pilot_id,
+        pilotId: initiativeRollRequest.pilot_id,
         color: initiativeRollRequest.color, dieStyle: initiativeRollRequest.die_style,
+        lane: allocateLane(),
       }]
     })
+    // allocateLane deliberately omitted — a fresh closure every render
+    // (reads current activeThrows/activePhysicalThrows), and this effect
+    // must only fire on a genuinely new initiativeRollRequest, not on
+    // every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initiativeRollRequest])
 
   const reportSettledInitiative = (pilotId: number) => (total: number, dice: [number, number]) => {
     if (campaignId == null) return
     reportInitiative(campaignId, pilotId, total, dice).catch(() => {})
+  }
+
+  // Fase B — the generic "any other roll" counterpart to activeThrows
+  // above. Keyed by pending_roll_id (not pilot_id): a single attack can
+  // chain several physical rolls back to back (impact -> location ->
+  // criticals...), each one a NEW pending_roll_id/broadcast once the
+  // previous is reported, so — unlike initiative, which is one throw per
+  // pilot per round — the same pilot can legitimately have a fresh entry
+  // appear here moments after the last one finished.
+  const [activePhysicalThrows, setActivePhysicalThrows] = useState<
+    { pendingRollId: number; dieCount: 1 | 2; color: string; dieStyle: string | null; lane: number }[]
+  >([])
+  useEffect(() => {
+    if (!physicalRollRequest) return
+    setActivePhysicalThrows((prev) => {
+      if (prev.some((t) => t.pendingRollId === physicalRollRequest.pending_roll_id)) return prev
+      return [...prev, {
+        pendingRollId: physicalRollRequest.pending_roll_id,
+        dieCount: physicalRollRequest.dice_spec === '2d6' ? 2 : 1,
+        color: physicalRollRequest.color ?? '#c8c8c8', dieStyle: physicalRollRequest.die_style,
+        lane: allocateLane(),
+      }]
+    })
+    // Same allocateLane-omitted-from-deps reasoning as activeThrows' own
+    // effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [physicalRollRequest])
+
+  const reportSettledPhysicalRoll = (pendingRollId: number) => (_total: number, dice: number[]) => {
+    if (campaignId == null) return
+    reportPendingRoll(campaignId, pendingRollId, dice).catch(() => {})
   }
 
   // PlayerView has no map of its own (see api.ts's requestMovement) — a
@@ -313,19 +350,32 @@ function TableViewBattletech() {
   // resolves a valid destination, so once the server-driven `units` prop
   // eventually reflects the new q/r (via broadcast + refetch), HexMap
   // walks the actual calculated path instead of a straight line.
-  //
-  // DELIBERATELY does NOT also listen for the `unit_walked` broadcast the
-  // way GMView/FirstPersonView now do (see their own matching comments) —
-  // this is the one view rendered with `physics` (below), and a real
-  // live crash traced to here (an uncaught @react-three/rapier panic,
-  // "recursive use of an object detected... unsafe aliasing", repeating
-  // every frame and freezing the whole tab) landed right after that
-  // extra WS-driven re-render was added on top of this screen's own
-  // physics/dice activity. Reverted rather than risk it again blind — a
-  // move THIS screen didn't itself capture the destination click for
-  // (GM's own map, PlayerView's Acciones, a cockpit HUD) still falls
-  // back to a straight line here specifically, unlike the other views.
   const [walkPaths, setWalkPaths] = useState<Map<number, { q: number; r: number }[]>>(new Map())
+
+  // Real user report (investigated 2026-08): a move whose destination
+  // click THIS screen didn't itself capture (GM's own map, PlayerView's
+  // Acciones, a cockpit HUD) always slid in a straight line here,
+  // unlike GMView/FirstPersonView, which both already walk the real
+  // path via this same unit_walked broadcast. This used to be
+  // DELIBERATELY skipped specifically on this screen — a prior physics
+  // crash (an uncaught @react-three/rapier panic, "recursive use of an
+  // object detected... unsafe aliasing", freezing the tab) was traced to
+  // adding it here, the one view rendered with `physics` (dice rolling
+  // across the board). Re-added now: nothing here differs from what
+  // GMView/FirstPersonView already do safely (same Map-replace pattern,
+  // no component remounts — UnitMarker keeps its stable `key={unit.id}`
+  // either way), and this app's rapier/@react-three/rapier versions have
+  // moved on since that crash was first hit. Test carefully alongside
+  // an active dice throw specifically (the original crash's other
+  // ingredient) — revert this one effect if the tab freezes again.
+  const heldMover = useHeldActiveMover(roundState ? activeMoverPilotId(roundState) : null)
+  useEffect(() => {
+    if (!unitWalked || unitWalked.path.length === 0) return
+    setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+    const walkedUnit = units.find((u) => u.id === unitWalked.unit_id)
+    heldMover.onUnitWalkStart(unitWalked.unit_id, walkedUnit?.pilot_id ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [unitWalked])
 
   // The move itself can also complete somewhere that never clicks a tile
   // HERE — GMView's own embedded map resolves its own moves directly
@@ -401,39 +451,78 @@ function TableViewBattletech() {
           shadow-camera-top={30} shadow-camera-bottom={-30}
           shadow-camera-far={60}
         />
-        <TableBackground />
         <Physics gravity={[0, -9.81, 0]}>
+          {/* Real user report: a die that rolled off a tile into a gap
+              fell straight through — this used to render OUTSIDE
+              <Physics> entirely (a plain visual mesh, no collider at
+              all). Moved inside and given `physics` so it can add its
+              own backstop floor collider well below the tiles — see its
+              own doc comment. */}
+          <TableBackground physics />
           {map && <BoardWalls map={map} clearLeftOf={THROW_ORIGIN_X} />}
           <Suspense fallback={null}>
             {map && (
               <HexMap
                 map={map}
                 units={units}
-                needsInitiativePilotIds={pilotsNeedingInitiative(roundState, units)}
-                activeMoverPilotId={roundState ? activeMoverPilotId(roundState) : null}
+                needsInitiativePilotIds={pilotsNeedingInitiative(roundState, units, destroyedPilotIds)}
+                activeMoverPilotId={heldMover.displayedMoverPilotId}
                 activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}
                 moveHighlightHexes={activeMovement ? new Set(activeMovement.hexes.keys()) : undefined}
                 walkPaths={walkPaths}
                 heatByUnitId={heatByUnitId}
                 proneUnitIds={proneUnitIds}
                 shutdownUnitIds={shutdownUnitIds}
+                destroyedReasonByUnitId={destroyedReasonByUnitId}
                 teamVisibleHexes={teamVisibleHexes ?? undefined}
                 activeAttack={activeAttackVfx}
                 onAttackEffectDone={onAttackEffectDone}
+                onUnitWalkDone={heldMover.onUnitWalkDone}
                 onTileClick={onTableTileClick}
                 physics
               />
             )}
           </Suspense>
-          {activeThrows.map((t, i) => (
+          {/* Real user report, two compounding bugs behind the same
+              "teleporting die" symptom:
+              1) key={t.key} used to be Date.now() — only millisecond
+                 resolution, and Fase B can fire several roll requests
+                 within the same millisecond, so two throws' keys could
+                 collide; React would then reuse the FIRST's still-
+                 mounted RigidBody for the SECOND throw instead of
+                 mounting a new one. Fixed by keying on the naturally
+                 unique pilotId/pendingRollId instead.
+              2) `lane` used to be each entry's ARRAY INDEX — removing an
+                 earlier (already-vanished) entry shifted every LATER
+                 entry's index down by one, recomputing its `spawn`;
+                 @react-three/rapier reacts to a changed `position` prop
+                 by re-syncing the physics body's real transform to
+                 match, even on an already-settled/fixed body — so a
+                 shifted lane silently yanked an unrelated die to a new
+                 spot. Fixed by handing out `lane` ONCE per throw, at
+                 creation (nextLaneRef above), never recomputed from the
+                 array afterward. */}
+          {activeThrows.map((t) => (
             <InitiativeDice
-              key={t.key}
-              rollId={t.key}
+              key={t.pilotId}
+              rollId={t.pilotId}
               color={t.color}
               dieStyle={t.dieStyle}
-              lane={i}
+              lane={t.lane}
               onSettled={reportSettledInitiative(t.pilotId)}
-              onDone={() => setActiveThrows((prev) => prev.filter((x) => x.key !== t.key))}
+              onDone={() => setActiveThrows((prev) => prev.filter((x) => x.pilotId !== t.pilotId))}
+            />
+          ))}
+          {activePhysicalThrows.map((t) => (
+            <PhysicalDiceThrow
+              key={t.pendingRollId}
+              rollId={t.pendingRollId}
+              dieCount={t.dieCount}
+              color={t.color}
+              dieStyle={t.dieStyle}
+              lane={t.lane}
+              onSettled={reportSettledPhysicalRoll(t.pendingRollId)}
+              onDone={() => setActivePhysicalThrows((prev) => prev.filter((x) => x.pendingRollId !== t.pendingRollId))}
             />
           ))}
         </Physics>
@@ -445,8 +534,6 @@ function TableViewBattletech() {
             without the endless slow spin. */}
         <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
       </Canvas>
-
-      {replay && <KillReplay label={replay} onDone={() => setReplay(null)} />}
 
       {revealCinematicUnit && (
         <EnemyRevealCinematic

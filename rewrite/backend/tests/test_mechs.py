@@ -1,6 +1,6 @@
 import pytest
 
-from app.systems.battletech import mechs
+from app.systems.battletech import mechs, pilots
 from tests.conftest import ATLAS_LOCATIONS
 
 
@@ -418,6 +418,39 @@ def test_update_mech_with_no_fields_is_a_no_op(campaign):
         campaign_id=campaign["id"], chassis="Same", tonnage=50, walk_mp=4, run_mp=6, locations=ATLAS_LOCATIONS,
     )
     assert mechs.update_mech(m["id"]) == mechs.get_mech(m["id"])
+
+
+def test_claim_mech_assigns_an_unassigned_mech(campaign, pilot):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Loose", tonnage=50, walk_mp=4, run_mp=6, locations=ATLAS_LOCATIONS,
+    )
+    assert m["pilot_id"] is None
+    claimed = mechs.claim_mech(m["id"], pilot["id"])
+    assert claimed["pilot_id"] == pilot["id"]
+
+
+def test_claim_mech_rejects_a_mech_already_taken_by_a_different_pilot(campaign, pilot):
+    other_pilot = pilots.create_pilot(campaign["id"], "Rival")
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="Taken", tonnage=50, walk_mp=4, run_mp=6,
+        pilot_id=other_pilot["id"], locations=ATLAS_LOCATIONS,
+    )
+    with pytest.raises(mechs.MechAlreadyClaimed):
+        mechs.claim_mech(m["id"], pilot["id"])
+    assert mechs.get_mech(m["id"])["pilot_id"] == other_pilot["id"], "the original claim survives the rejected one"
+
+
+def test_claim_mech_by_the_same_pilot_twice_is_a_no_op(campaign, pilot):
+    m = mechs.create_mech(
+        campaign_id=campaign["id"], chassis="MineAlready", tonnage=50, walk_mp=4, run_mp=6,
+        pilot_id=pilot["id"], locations=ATLAS_LOCATIONS,
+    )
+    claimed = mechs.claim_mech(m["id"], pilot["id"])
+    assert claimed["pilot_id"] == pilot["id"]
+
+
+def test_claim_mech_unknown_mech_returns_none(campaign, pilot):
+    assert mechs.claim_mech(999999, pilot["id"]) is None
 
 
 def test_create_mech_without_criticals_gets_the_default_fixed_layout(campaign):

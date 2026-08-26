@@ -171,6 +171,11 @@ def test_attack_with_real_units_derives_gunnery_from_the_attackers_pilot():
         m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 10, "height": 6}).json()
         c.post(f"/api/campaigns/{camp['id']}/active-map", json={"map_id": m["id"]})
         pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Ace", "gunnery": 1}).json()
+        # Fase B: dice_mode defaults to 'physical', which would pause this
+        # attack at the /attack endpoint waiting for a real physical die
+        # instead of returning a complete result — this test is about
+        # gunnery derivation, not physical dice, so force 'auto'.
+        c.patch(f"/api/pilots/{pilot['id']}", json={"dice_mode": "auto"})
         attacker_mech = c.post(
             f"/api/campaigns/{camp['id']}/mechs",
             json={"chassis": "Attacker", "tonnage": 50, "walk_mp": 4, "run_mp": 6, "locations": locations},
@@ -193,6 +198,122 @@ def test_attack_with_real_units_derives_gunnery_from_the_attackers_pilot():
         # gunnery 1 (from the pilot, not passed explicitly), stationary,
         # no target movement, short range (distance 2) -> target_number 1.
         assert result["target_number"] == 1
+
+
+def test_attack_pauses_for_a_physical_pilot_and_resolves_after_reporting_dice():
+    # Fase B end-to-end: a pilot in dice_mode='physical' (the default)
+    # makes /attack return {"pending": true, ...} and broadcast
+    # physical_roll_requested instead of resolving instantly — reporting
+    # the settled die/dice via /pending-rolls/{id}/report (looping for
+    # however many rolls the attack ends up needing) eventually produces
+    # the same attack_result broadcast a non-physical pilot gets in one
+    # shot.
+    with client() as c:
+        camp, m, attacker_mech, target_mech, attacker_unit, target_unit = _place_two_units_via_api(c)
+        pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Physical Pilot"}).json()
+        assert pilot["dice_mode"] == "physical"
+        # _place_two_units_via_api's own units have no pilot attached —
+        # place a fresh attacker unit with one instead of reusing that one.
+        attacker_unit = c.post(
+            f"/api/maps/{m['id']}/units",
+            json={"q": 0, "r": 0, "mech_id": attacker_mech["id"], "pilot_id": pilot["id"]},
+        ).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(
+                f"/api/campaigns/{camp['id']}/attack",
+                json={"gunnery": 4, "damage": 10, "attacker_unit_id": attacker_unit["id"], "target_unit_id": target_unit["id"]},
+            )
+            assert res.status_code == 200
+            body = res.json()
+            assert body["pending"] is True
+            broadcast = ws.receive_json()
+            assert broadcast["type"] == "physical_roll_requested"
+            assert broadcast["pilot_id"] == pilot["id"]
+            assert broadcast["dice_spec"] == "2d6"
+            assert broadcast["purpose"] == "to_hit"
+
+            pending_roll_id = body["pending_roll_id"]
+            dice_spec = broadcast["dice_spec"]
+            result = None
+            for _ in range(20):  # supply a guaranteed hit (12) for to_hit, a real face for anything after
+                dice = [6, 6] if dice_spec == "2d6" else [6]
+                report = c.post(
+                    f"/api/campaigns/{camp['id']}/pending-rolls/{pending_roll_id}/report", json={"dice": dice},
+                )
+                assert report.status_code == 200
+                report_body = report.json()
+                if report_body.get("pending"):
+                    pending_roll_id = report_body["pending_roll_id"]
+                    broadcast = ws.receive_json()
+                    assert broadcast["type"] == "physical_roll_requested"
+                    dice_spec = broadcast["dice_spec"]
+                    continue
+                result = report_body
+                break
+
+            assert result is not None
+            assert result["hit"] is True
+            assert result["roll"] == 12
+            types = {ws.receive_json()["type"] for _ in range(3)}
+            assert types == {"attack_result", "visibility_update", "round_updated"}
+
+
+def test_melee_pauses_for_a_physical_pilot_and_resolves_after_reporting_dice():
+    # Fase B end-to-end for melee (punch/kick only — see melee.py's own
+    # documented scope limit on charge/DFA's grouped damage staying
+    # instant) — same pending/report mechanism as /attack, exercised
+    # through the real /api/units/{id}/melee endpoint this time.
+    with client() as c:
+        camp, m, attacker_mech, target_mech, attacker_unit, target_unit = _place_two_units_via_api(c)
+        pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Physical Melee Pilot", "piloting": 0}).json()
+        assert pilot["dice_mode"] == "physical"
+        attacker_unit = c.post(
+            f"/api/maps/{m['id']}/units",
+            json={"q": 0, "r": 0, "mech_id": attacker_mech["id"], "pilot_id": pilot["id"]},
+        ).json()
+        target_unit = c.post(
+            f"/api/maps/{m['id']}/units",
+            json={"q": 1, "r": 0, "mech_id": target_mech["id"], "facing_deg": 180},
+        ).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(
+                f"/api/units/{attacker_unit['id']}/melee",
+                json={"target_unit_id": target_unit["id"], "attack_type": "punch", "arm": "right"},
+            )
+            assert res.status_code == 200
+            body = res.json()
+            assert body["pending"] is True
+            broadcast = ws.receive_json()
+            assert broadcast["type"] == "physical_roll_requested"
+            assert broadcast["pilot_id"] == pilot["id"]
+            assert broadcast["purpose"] == "to_hit"
+
+            pending_roll_id = body["pending_roll_id"]
+            dice_spec = broadcast["dice_spec"]
+            result = None
+            for _ in range(20):  # supply a guaranteed hit (12) for to_hit, a real face for anything after
+                dice = [6, 6] if dice_spec == "2d6" else [6]
+                report = c.post(
+                    f"/api/campaigns/{camp['id']}/pending-rolls/{pending_roll_id}/report", json={"dice": dice},
+                )
+                assert report.status_code == 200
+                report_body = report.json()
+                if report_body.get("pending"):
+                    pending_roll_id = report_body["pending_roll_id"]
+                    broadcast = ws.receive_json()
+                    assert broadcast["type"] == "physical_roll_requested"
+                    dice_spec = broadcast["dice_spec"]
+                    continue
+                result = report_body
+                break
+
+            assert result is not None
+            assert result["hit"] is True
+            assert result["roll"] == 12
+            types = {ws.receive_json()["type"] for _ in range(3)}
+            assert types == {"melee_result", "visibility_update", "round_updated"}
 
 
 def test_attack_broadcasts_visibility_update_and_round_updated():
@@ -569,7 +690,7 @@ def test_list_mech_chassis_endpoint():
     with client() as c:
         res = c.get("/api/mech-catalog/chassis")
         assert res.status_code == 200
-        assert res.json() == ["Atlas", "Banshee"]
+        assert res.json() == [{"chassis": "Atlas", "tonnage": 100}, {"chassis": "Banshee", "tonnage": 95}]
 
 
 def test_list_mech_models_endpoint_is_not_shadowed_by_the_filename_route():
@@ -680,6 +801,7 @@ def test_round_endpoints_start_act_and_broadcast():
             "movement_order": [], "moved_pilot_ids": [], "moves": [],
             "ranged_target_pilot_ids": [], "melee_target_pilot_ids": [],
             "ranged_passed_pilot_ids": [], "melee_passed_pilot_ids": [], "heat_resolved": False,
+            "participant_pilot_ids": [],
         }
 
         with c.websocket_connect(f"/ws/{camp['id']}") as ws:
@@ -703,6 +825,127 @@ def test_round_endpoints_start_act_and_broadcast():
                 f"/api/campaigns/{camp['id']}/round/pass", json={"pilot_id": pilot["id"], "phase": "movement"},
             )
             assert bad.status_code == 422
+
+
+def test_undo_endpoint_broadcasts_round_updated():
+    # Real user report: undoing a completed turn reverted the mech's own
+    # state (armor/heat/criticals, via roster_updated) but the "whose
+    # turn" overlay stayed stale — this endpoint broadcast roster_updated
+    # + visibility on undo but never round_updated, unlike every other
+    # round-mutating endpoint (round/act, round/pass, attack, melee,
+    # stand-up, ...), so no connected client ever refetched round state.
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Test Pilot"}).json()
+        c.post(f"/api/campaigns/{camp['id']}/round/start")
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            acted = c.post(f"/api/campaigns/{camp['id']}/round/act", json={"pilot_id": pilot["id"]}).json()
+            assert acted["acted_pilot_ids"] == [pilot["id"]]
+            assert ws.receive_json()["type"] == "round_updated"
+
+            undo_res = c.post(f"/api/campaigns/{camp['id']}/undo")
+            assert undo_res.status_code == 200
+            types = {ws.receive_json()["type"] for _ in range(3)}
+            assert types == {"action_undone", "roster_updated", "round_updated"}
+
+        state = c.get(f"/api/campaigns/{camp['id']}/round").json()
+        assert state["acted_pilot_ids"] == []
+
+
+def test_stand_up_endpoint_broadcasts_roster_updated_and_uses_the_movement_phase():
+    # Real user reports: (1) TableView/FirstPersonView never noticed a
+    # mech had stood up — they only refetch their own local mech state
+    # off broadcasts, and this endpoint only sent round_updated (round/
+    # phase data, not mech state); (2) standing up let the same pilot
+    # ALSO walk/run/jump the same round — the real rule is that standing
+    # up uses the WHOLE Movement Phase, success or fail.
+    from app import campaigns as campaigns_module, maps, units as units_module
+    from app.systems.battletech import mechs as mechs_module, pilots as pilots_module, psr, turns
+
+    camp = campaigns_module.create_campaign("API Test")
+    campaigns_module.set_initiative_mode(camp["id"], "individual")
+    pilot = pilots_module.create_pilot(camp["id"], "Faller", faction="player")
+    mech = mechs_module.create_mech(
+        campaign_id=camp["id"], chassis="Faller", tonnage=50, walk_mp=4, run_mp=6,
+        pilot_id=pilot["id"], locations=_ATLAS_LOCATIONS,
+    )
+    m = maps.create_map(camp["id"], "Stand Up Test", width=6, height=6)
+    campaigns_module.set_active_map(camp["id"], m["id"])
+    unit = units_module.create_unit(camp["id"], m["id"], q=0, r=0, mech_id=mech["id"], pilot_id=pilot["id"])
+
+    # Fase B: dice_mode defaults to 'physical', which would pause this
+    # stand-up at the endpoint waiting for a real physical die instead of
+    # resolving — this test is about the broadcast/movement-phase
+    # behavior, not physical dice, so force 'auto'.
+    pilots_module.update_pilot(pilot["id"], dice_mode="auto")
+    turns.start_round(camp["id"])
+    turns.report_pilot_initiative(camp["id"], pilot["id"], 7)
+    psr.apply_fall(mech["id"])
+    assert mechs_module.get_mech(mech["id"])["is_prone"] is True
+
+    with client() as c:
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/stand-up")
+            assert res.status_code == 200
+            types = {ws.receive_json()["type"] for _ in range(2)}
+            assert types == {"round_updated", "roster_updated"}
+
+    state = turns.get_round(camp["id"])
+    assert pilot["id"] in state["moved_pilot_ids"]
+
+
+def test_stand_up_pauses_for_a_physical_pilot_and_resolves_after_reporting_dice():
+    # Fase B end-to-end for stand-up — a pilot in dice_mode='physical'
+    # (the default, unlike the test above which forces 'auto') makes
+    # /stand-up return {"pending": true, ...} instead of resolving
+    # instantly, and does NOT yet consume the Movement Phase (record_
+    # free_move) until the real roll comes back via /pending-rolls report.
+    from app import campaigns as campaigns_module, maps, units as units_module
+    from app.systems.battletech import mechs as mechs_module, pilots as pilots_module, psr, turns
+
+    camp = campaigns_module.create_campaign("API Test")
+    campaigns_module.set_initiative_mode(camp["id"], "individual")
+    pilot = pilots_module.create_pilot(camp["id"], "Physical Faller", faction="player", piloting=0)
+    assert pilot["dice_mode"] == "physical"
+    mech = mechs_module.create_mech(
+        campaign_id=camp["id"], chassis="Faller", tonnage=50, walk_mp=4, run_mp=6,
+        pilot_id=pilot["id"], locations=_ATLAS_LOCATIONS,
+    )
+    m = maps.create_map(camp["id"], "Stand Up Test", width=6, height=6)
+    campaigns_module.set_active_map(camp["id"], m["id"])
+    unit = units_module.create_unit(camp["id"], m["id"], q=0, r=0, mech_id=mech["id"], pilot_id=pilot["id"])
+
+    turns.start_round(camp["id"])
+    turns.report_pilot_initiative(camp["id"], pilot["id"], 7)
+    psr.apply_fall(mech["id"])
+    assert mechs_module.get_mech(mech["id"])["is_prone"] is True
+
+    with client() as c:
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/stand-up")
+            assert res.status_code == 200
+            body = res.json()
+            assert body["pending"] is True
+            broadcast = ws.receive_json()
+            assert broadcast["type"] == "physical_roll_requested"
+            assert broadcast["pilot_id"] == pilot["id"]
+            assert broadcast["purpose"] == "psr_stand_up"  # decide_psr's own f"psr_{event}" purpose naming
+
+            # Not yet consumed — still pending the real roll.
+            assert pilot["id"] not in turns.get_round(camp["id"])["moved_pilot_ids"]
+
+            report = c.post(
+                f"/api/campaigns/{camp['id']}/pending-rolls/{body['pending_roll_id']}/report", json={"dice": [6, 6]},
+            )
+            assert report.status_code == 200
+            result = report.json()
+            assert result["stood_up"] is True
+            types = {ws.receive_json()["type"] for _ in range(2)}
+            assert types == {"round_updated", "roster_updated"}
+
+    assert mechs_module.get_mech(mech["id"])["is_prone"] is False
+    assert pilot["id"] in turns.get_round(camp["id"])["moved_pilot_ids"]
 
 
 def test_set_initiative_mode_to_individual_via_api():
@@ -1108,6 +1351,34 @@ def test_delete_unit_endpoint_404s_for_unknown_unit():
         assert res.status_code == 404
 
 
+def test_delete_unit_endpoint_unblocks_movement_order_for_the_removed_pilots_turn():
+    # Real user report: "se queda la ronda bloqueada esperando
+    # iniciativas de mechs que he quitado de la partida 'quitar de la
+    # mesa'" — removing a pilot's unit mid-round left them stuck in that
+    # round's own participant snapshot forever.
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        c.post(f"/api/campaigns/{camp['id']}/initiative-mode", json={"mode": "individual"})
+        a = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "A", "faction": "player"}).json()
+        b = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "B", "faction": "enemy"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 4, "height": 4}).json()
+        c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "pilot_id": a["id"]})
+        unit_b = c.post(f"/api/maps/{m['id']}/units", json={"q": 1, "r": 0, "pilot_id": b["id"]}).json()
+
+        c.post(f"/api/campaigns/{camp['id']}/round/start")
+        c.post(f"/api/campaigns/{camp['id']}/round/report-initiative", json={"pilot_id": a["id"], "roll": 9})
+        state = c.post(
+            f"/api/campaigns/{camp['id']}/round/report-initiative", json={"pilot_id": b["id"], "roll": 3},
+        ).json()
+        assert state["movement_order"] == [b["id"], a["id"]]
+
+        res = c.delete(f"/api/units/{unit_b['id']}")
+        assert res.status_code == 200
+
+        after = c.get(f"/api/campaigns/{camp['id']}/round").json()
+        assert after["movement_order"] == [a["id"]]
+
+
 def test_placing_a_mech_on_a_new_map_removes_it_from_the_old_map_via_api():
     with client() as c:
         camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
@@ -1342,3 +1613,45 @@ def test_delete_map_endpoint_removes_it_and_404s_after():
 def test_delete_map_endpoint_404s_for_unknown_map():
     with client() as c:
         assert c.delete("/api/maps/999999").status_code == 404
+
+
+def test_resolve_heat_endpoint_pauses_for_a_physical_pilot_and_resolves_after_reporting_dice():
+    # Fase B end-to-end for the heat phase — a pilot in dice_mode=
+    # 'physical' (the default) makes /round/resolve-heat return
+    # {"pending": true, ...} instead of resolving instantly, same
+    # pending/report mechanism as every other roll.
+    from app import campaigns as campaigns_module
+    from app.systems.battletech import mechs as mechs_module, pilots as pilots_module, turns
+
+    camp = campaigns_module.create_campaign("API Test")
+    pilot = pilots_module.create_pilot(camp["id"], "Hot Pilot", faction="player")
+    assert pilot["dice_mode"] == "physical"
+    mech = mechs_module.create_mech(
+        campaign_id=camp["id"], chassis="Hot", tonnage=50, walk_mp=4, run_mp=6,
+        locations=_ATLAS_LOCATIONS, pilot_id=pilot["id"], heat_sinks=0,
+    )
+    turns.start_round(camp["id"])
+    mechs_module.add_heat(mech["id"], 18)  # in the shutdown-avoid bracket (TN 6)
+
+    with client() as c:
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/campaigns/{camp['id']}/round/resolve-heat")
+            assert res.status_code == 200
+            body = res.json()
+            assert body["pending"] is True
+            broadcast = ws.receive_json()
+            assert broadcast["type"] == "physical_roll_requested"
+            assert broadcast["pilot_id"] == pilot["id"]
+            assert broadcast["purpose"] == "heat_shutdown"
+
+            report = c.post(
+                f"/api/campaigns/{camp['id']}/pending-rolls/{body['pending_roll_id']}/report", json={"dice": [1, 1]},
+            )
+            assert report.status_code == 200
+            result = report.json()
+            mech_result = next(r for r in result["results"] if r["mech_id"] == mech["id"])
+            assert mech_result["shutdown"] is True  # rolled 2, well below TN 6
+            types = {ws.receive_json()["type"] for _ in range(2)}
+            assert types == {"heat_phase_resolved", "round_updated"}
+
+    assert mechs_module.get_mech(mech["id"])["is_shutdown"] is True

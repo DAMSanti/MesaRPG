@@ -23,11 +23,12 @@ import { Tooltip } from '../components/Tooltip'
 import { CameraBridge } from '../components/CameraBridge'
 import { DieStylePicker } from '../components/DieStylePicker'
 import { MECH_CHASSIS_ASSETS } from '../mechAssets'
+import { groupChassisByWeightClass } from '../weightClass'
 import { FACTION_COLORS, FACTION_LABELS, NEUTRAL_UNIT_COLOR, type Faction } from '../factions'
 import { suggestPilotColor } from '../pilotColors'
 import { DIE_STYLES, buildHeldByMap } from '../dieStyles'
 import {
-  activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative, useDisplayedPhase,
+  activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative, useDisplayedPhase, useHeldActiveMover,
 } from '../rounds'
 import { mapCenter, worldToHex } from '../hexMath'
 import {
@@ -38,6 +39,7 @@ import {
   addMechWeapon,
   ApiError,
   attack,
+  isPendingRollResult,
   createMech,
   createPilot,
   createUnit,
@@ -78,6 +80,7 @@ import {
   type InitiativeMode,
   type Mech,
   type MechImportData,
+  type MechChassisResult,
   type MechModelResult,
   type MeleeAttackType,
   type MovementType,
@@ -95,7 +98,7 @@ import './GMView.css'
  * whether to mount this or GMViewDnd based on the campaign's system. */
 function GMViewBattletech() {
   const campaignId = useCampaignId()
-  const { activeMapId, roundState, visibility, lastAttack, rosterVersion, unitWalked, heatPhaseResult } = useTableSocket(campaignId)
+  const { activeMapId, roundState, visibility, lastAttack, lastMelee, rosterVersion, unitWalked, heatPhaseResult } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   const { map, units, setUnits } = useMapState(mapId, visibility ?? lastAttack)
   const [pilots, setPilots] = useState<Pilot[]>([])
@@ -161,9 +164,9 @@ function GMViewBattletech() {
   // PlayerView's own equivalent effect already includes both — this
   // brings GMView in line with it.
   useEffect(() => {
-    if (visibility || lastAttack) refetch()
+    if (visibility || lastAttack || lastMelee) refetch()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibility, lastAttack])
+  }, [visibility, lastAttack, lastMelee])
 
   // "roster_updated" (app/main.py) — a pilot/mech was created, reviewed,
   // resubmitted, edited or deleted, by anyone (GM or any player). Without
@@ -186,7 +189,11 @@ function GMViewBattletech() {
     if (!heatPhaseResult) return
     setMechs((prev) => prev.map((m) => {
       const r = heatPhaseResult.results.find((res) => res.mech_id === m.id)
-      return r ? { ...m, heat_current: r.heat_current } : m
+      // is_shutdown patched too (real user report: the overheat tint
+      // used to stay stale until some later, unrelated refetch) — see
+      // HeatPhaseResolved's own doc comment on why heat_current alone
+      // wasn't enough.
+      return r ? { ...m, heat_current: r.heat_current, is_shutdown: r.is_shutdown, destroyed_reason: r.destroyed_reason } : m
     }))
   }, [heatPhaseResult])
   // Held phase (rounds.ts's useDisplayedPhase) — real user report: an
@@ -204,6 +211,18 @@ function GMViewBattletech() {
     : new Map<number, number>()
   const proneUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
   const shutdownUnitIds = new Set(units.filter((u) => mechs.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
+  const destroyedReasonByUnitId = new Map(
+    units
+      .map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.destroyed_reason ?? null] as const)
+      .filter((entry): entry is [number, 'structural' | 'pilot_killed'] => entry[1] != null),
+  )
+  // Fase D real user request: "los muertos no deberían tirar iniciativas"
+  // — a pilot whose mech is already destroyed has nothing left to roll
+  // for, same reasoning turns.py's own movement_order/target-list
+  // exclusion already uses server-side.
+  const destroyedPilotIds = new Set(
+    mechs.filter((m) => m.destroyed_reason != null && m.pilot_id != null).map((m) => m.pilot_id!),
+  )
 
   // Attack VFX (laser/PPC/tracer/missile/flamer) — only real board shots
   // carry attacker_unit_id/target_unit_id (see combat.py's
@@ -211,7 +230,7 @@ function GMViewBattletech() {
   // just plays no animation. Queued (see useAttackVfxQueue's own doc
   // comment) so a fast attack resolving while a slower one is still
   // animating doesn't cut the first one's VFX off mid-flight.
-  const { activeAttack: activeAttackVfx, onAttackEffectDone } = useAttackVfxQueue(lastAttack, units)
+  const { activeAttack: activeAttackVfx, onAttackEffectDone, waitForDrain: waitForAttackVfxDrain } = useAttackVfxQueue(lastAttack, units)
 
   // ---- pilot form (now lives inside a modal opened from the sidebar's
   // "+" button, not an always-visible inline section) ----
@@ -277,7 +296,7 @@ function GMViewBattletech() {
   const [pendingEquipment, setPendingEquipment] = useState<{ equipment_name: string; location: string }[]>([])
   const [pendingCriticals, setPendingCriticals] = useState<Record<string, string[]>>({})
 
-  const [chassisOptions, setChassisOptions] = useState<string[]>([])
+  const [chassisOptions, setChassisOptions] = useState<MechChassisResult[]>([])
   const [selectedChassis, setSelectedChassis] = useState('')
   const [modelOptions, setModelOptions] = useState<MechModelResult[]>([])
   const [selectedModelFile, setSelectedModelFile] = useState('')
@@ -323,7 +342,7 @@ function GMViewBattletech() {
   const submittingMechRef = useRef(false)
 
   const submitMech = async () => {
-    if (!campaignId || !chassis || mechPilotId === '' || submittingMechRef.current) return
+    if (!campaignId || !chassis || submittingMechRef.current) return
     submittingMechRef.current = true
     setSubmittingMech(true)
     try {
@@ -335,7 +354,12 @@ function GMViewBattletech() {
         walk_mp: walkMp,
         run_mp: runMp,
         heat_sinks: heatSinks,
-        pilot_id: mechPilotId,
+        // Optional (real user request: "Necesito un boton de... añadir
+        // mech... aunque haya mechs que seleccionar" — the GM needs to
+        // be able to pre-build an unassigned roster for players to
+        // later claim from PlayerView's own "elegir un mech existente",
+        // not only ever pair a mech with a pilot at creation time).
+        pilot_id: mechPilotId === '' ? undefined : mechPilotId,
         locations: locs,
         criticals: Object.keys(pendingCriticals).length > 0 ? pendingCriticals : undefined,
       })
@@ -495,11 +519,19 @@ function GMViewBattletech() {
     && (roundState?.round_number ?? 0) > 0
     && pilotId != null
     && !rolledPilotIds.has(pilotId)
+    // Fase D real user request: "los muertos no deberían tirar
+    // iniciativas" — see destroyedPilotIds' own doc comment above.
+    && !destroyedPilotIds.has(pilotId)
+    // Real user report: a pilot/mech added mid-round shouldn't be
+    // promptable to roll either — they're not in this round's own
+    // participant snapshot (turns.py's bt_round_participants) and
+    // couldn't get a turn from it even if they did roll.
+    && (roundState?.participant_pilot_ids?.includes(pilotId) ?? false)
   // Tile highlight — every pilot still waiting to roll, not just the
   // enemies the GM personally rolls for (needsInitiative above stays
   // enemy-scoped, that's still only about which "Tirar iniciativa"
   // button is enabled).
-  const needsInitiativePilotIds = pilotsNeedingInitiative(roundState, units)
+  const needsInitiativePilotIds = pilotsNeedingInitiative(roundState, units, destroyedPilotIds)
   // Doesn't roll anything here — asks the shared table (TableView) to
   // physically throw dice for this pilot; the real value comes back
   // later over WS (round_updated), landing in roundState.rolls the same
@@ -610,7 +642,11 @@ function GMViewBattletech() {
   useEffect(() => {
     if (!unitWalked) return
     if (selfResolvedMoveRef.current.delete(unitWalked.unit_id)) return
-    if (unitWalked.path.length > 0) setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+    if (unitWalked.path.length > 0) {
+      setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+      const walkedUnit = units.find((u) => u.id === unitWalked.unit_id)
+      heldMover.onUnitWalkStart(unitWalked.unit_id, walkedUnit?.pilot_id ?? null)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unitWalked])
 
@@ -636,6 +672,7 @@ function GMViewBattletech() {
     if (path && path.length > 0) {
       setWalkPaths((prev) => new Map(prev).set(unit.id, path))
       selfResolvedMoveRef.current.add(unit.id)
+      heldMover.onUnitWalkStart(unit.id, unit.pilot_id ?? null)
     }
     setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, q, r, ...(facingDeg != null ? { facing_deg: facingDeg } : {}) } : u)))
     try {
@@ -855,6 +892,18 @@ function GMViewBattletech() {
     if (pickingTargetFor != null && pickingTargetFor !== unit.id) {
       const attacker = units.find((u) => u.id === pickingTargetFor)
       setPickingTargetFor(null)
+      // Real user report: picking an already-destroyed mech as a target
+      // opened the attack panel/weapon list same as any live target, but
+      // the backend now silently rejects the shot (combat.py's own
+      // TargetAlreadyDestroyed) — the volley loop swallows a rejected
+      // shot per-weapon on purpose (so one out-of-range weapon doesn't
+      // block the rest of a multi-weapon volley), so nothing visibly
+      // happened when clicked. Reject the pick itself instead, with a
+      // real explanation, so the panel never opens on a wreck at all.
+      if (attacker && mechForUnit(unit)?.destroyed_reason != null) {
+        setError('Ese mech ya está destruido — no se le puede atacar.')
+        return
+      }
       if (attacker) setAttackPanel({ attacker, target: unit })
       return
     }
@@ -897,7 +946,9 @@ function GMViewBattletech() {
   const [movementHighlight, setMovementHighlight] = useState<
     { unitId: number; movementType: MovementType; hexes: Map<string, ReachableHex> } | null
   >(null)
-  const activeMover = roundState ? activeMoverPilotId(roundState) : null
+  const rawActiveMover = roundState ? activeMoverPilotId(roundState) : null
+  const heldMover = useHeldActiveMover(rawActiveMover)
+  const activeMover = heldMover.displayedMoverPilotId
   const startPhaseMovement = async (unit: Unit, movementType: MovementType) => {
     try {
       // requestMovement (not the plain getReachableHexes fetch) so this
@@ -924,20 +975,49 @@ function GMViewBattletech() {
   // volley, just get skipped — every hit/miss (and a rejected shot) is
   // already reflected in the persisted campaign event log server-side.
   const [firingVolley, setFiringVolley] = useState(false)
+  // Fase B: a pilot with dice_mode='physical' makes attack() return
+  // {pending: true, ...} instead of a finished result — TableView is the
+  // one that actually throws the physical dice and reports them back
+  // (over its own connection), so THIS screen's only way to know "that
+  // shot is actually done now" is to wait for the eventual attack_result
+  // broadcast to arrive on its own socket. Without this, the volley loop
+  // below would fire every weapon's HTTP call almost instantly (each one
+  // individually still pending its own dice) and call submitMarkActed
+  // before a single physical die had even been thrown.
+  const pendingAttackResolversRef = useRef<(() => void)[]>([])
+  useEffect(() => {
+    if (!lastAttack) return
+    pendingAttackResolversRef.current.forEach((resolve) => resolve())
+    pendingAttackResolversRef.current = []
+  }, [lastAttack])
+  const waitForNextAttackResult = () =>
+    new Promise<void>((resolve) => {
+      pendingAttackResolversRef.current.push(resolve)
+    })
+
   const submitWeaponVolley = async (weaponIds: number[]) => {
     if (!campaignId || !attackPanel) return
     setFiringVolley(true)
     for (const weaponId of weaponIds) {
       try {
-        await attack(campaignId, {
+        const outcome = await attack(campaignId, {
           attacker_unit_id: attackPanel.attacker.id,
           target_unit_id: attackPanel.target.id,
           weapon_id: weaponId,
         })
+        if (isPendingRollResult(outcome)) await waitForNextAttackResult()
       } catch {
         // rejected (out of range/no ammo/no LOS) — skip, volley continues
       }
     }
+    // Real user request: "el turno de ataque debe durar hasta que TODAS
+    // las animaciones de ataque terminen" — the volley loop above only
+    // waits for each shot's real RESULT (server resolution, plus a
+    // physical dice pause), which can land well before this queue has
+    // finished actually PLAYING the last one or two shots' beam/tracer/
+    // missile VFX in order (see useAttackVfxQueue's own doc comment on
+    // why the queue itself outlives the last broadcast).
+    await waitForAttackVfxDrain()
     if (attackPanel.attacker.pilot_id != null) await submitMarkActed(attackPanel.attacker.pilot_id)
     setFiringVolley(false)
     setAttackPanel(null)
@@ -947,11 +1027,28 @@ function GMViewBattletech() {
   // Melee phase's equivalent — a single physical attack instead of a
   // volley, same fixed attackPanel pair, same submitMarkActed-then-
   // refetch tail as the ranged path above.
+  // Fase B: same "wait for the real result" gap punch/kick can now hit —
+  // a physical-mode pilot's melee attack can pause (see melee.py's own
+  // scope note — charge/DFA never pauses, punch/kick can), same
+  // reasoning as submitWeaponVolley's own waitForNextAttackResult above,
+  // just watching lastMelee instead of lastAttack.
+  const pendingMeleeResolversRef = useRef<(() => void)[]>([])
+  useEffect(() => {
+    if (!lastMelee) return
+    pendingMeleeResolversRef.current.forEach((resolve) => resolve())
+    pendingMeleeResolversRef.current = []
+  }, [lastMelee])
+  const waitForNextMeleeResult = () =>
+    new Promise<void>((resolve) => {
+      pendingMeleeResolversRef.current.push(resolve)
+    })
+
   const submitMeleeAttackFromPanel = async (attackType: MeleeAttackType, arm?: 'left' | 'right') => {
     if (!attackPanel) return
     setFiringVolley(true)
     try {
-      await submitMeleeAttack(attackPanel.attacker.id, attackPanel.target.id, attackType, arm)
+      const outcome = await submitMeleeAttack(attackPanel.attacker.id, attackPanel.target.id, attackType, arm)
+      if (isPendingRollResult(outcome)) await waitForNextMeleeResult()
     } catch {
       // rejected (not adjacent/no LOS/incapacitated/movement doesn't
       // qualify for Carga-DFA) — surfaced to the GM via the failed
@@ -1107,8 +1204,10 @@ function GMViewBattletech() {
                   heatByUnitId={heatByUnitId}
                   proneUnitIds={proneUnitIds}
                   shutdownUnitIds={shutdownUnitIds}
+                  destroyedReasonByUnitId={destroyedReasonByUnitId}
                   activeAttack={activeAttackVfx}
                   onAttackEffectDone={onAttackEffectDone}
+                  onUnitWalkDone={heldMover.onUnitWalkDone}
                   onUnitClick={onUnitClick}
                   onTileClick={onTileClick}
                   onUnitDragEnd={onUnitDragEnd}
@@ -1231,8 +1330,12 @@ function GMViewBattletech() {
           <div className="row">
             <select value={selectedChassis} onChange={(e) => setSelectedChassis(e.target.value)}>
               <option value="">chasis…</option>
-              {chassisOptions.map((c) => (
-                <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
+              {groupChassisByWeightClass(chassisOptions).map(({ weightClass, entries }) => (
+                <optgroup key={weightClass} label={weightClass}>
+                  {entries.map(({ chassis: c }) => (
+                    <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
+                  ))}
+                </optgroup>
               ))}
             </select>
             <select
@@ -1248,12 +1351,12 @@ function GMViewBattletech() {
               ))}
             </select>
             <select value={mechPilotId} onChange={(e) => setMechPilotId(e.target.value ? Number(e.target.value) : '')}>
-              <option value="">piloto… (obligatorio)</option>
+              <option value="">piloto (opcional)</option>
               {pilots.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
           </div>
 
-          <button onClick={submitMech} disabled={!chassis || mechPilotId === '' || submittingMech}>
+          <button onClick={submitMech} disabled={!chassis || submittingMech}>
             {submittingMech ? 'Guardando…' : 'Guardar'}
           </button>
         </Modal>

@@ -260,6 +260,21 @@ def apply_damage(conn, mech_id: int, location: str, rear: bool, amount: int) -> 
         (armor_after, structure_after, mech_id, location),
     )
 
+    # Official rule: CT or Head structure hit 0 = the whole mech is
+    # destroyed (an arm/leg/side-torso reaching 0 just severs that part —
+    # see this function's own callers, which already gate their own
+    # narrower "mech_destroyed" flag the same way). Fase D: persisted here
+    # (COALESCE-guarded, see mark_destroyed's own docstring) rather than
+    # left for each caller to remember to do — this is the one place that
+    # actually knows structure just hit 0, on the SAME open `conn` this
+    # whole damage application is already using, so it's part of the same
+    # transaction instead of a separate mechs.mark_destroyed connection.
+    if structure_after == 0 and location in ("CT", "HD"):
+        conn.execute(
+            "UPDATE mechs SET destroyed_reason = COALESCE(destroyed_reason, 'structural') WHERE id = ?",
+            (mech_id,),
+        )
+
     return {
         "mech_id": mech_id,
         "location": location,
@@ -289,6 +304,52 @@ def set_critical_hit(mech_id: int, location: str, slot_index: int, hit: bool) ->
         return _get(conn, mech_id)
 
 
+def snapshot_full_state(mech_id: int) -> dict | None:
+    """Everything about a mech that combat/melee/PSR/criticals can
+    mutate, captured in one read — literally get_mech's own shape (it
+    already returns heat/is_shutdown/is_prone/gyro-engine-sensor-life_
+    support hits/heat_sinks/every location's armor+structure/every
+    weapon's ammo/every critical slot's hit flag), given a dedicated name
+    so a call site capturing an undo snapshot reads as what it's doing
+    rather than as an unrelated getter. Pair with restore_full_state."""
+    return get_mech(mech_id)
+
+
+def restore_full_state(conn, mech_id: int, snapshot: dict) -> None:
+    """The other half of snapshot_full_state — restores every field it
+    captured, in one caller-supplied transaction (undo needs attacker +
+    target mech + both pilots + the round's turn-state all reverted
+    atomically, so this takes `conn` rather than opening its own, same as
+    apply_damage already does)."""
+    conn.execute(
+        """
+        UPDATE mechs SET heat_current = ?, is_shutdown = ?, is_prone = ?,
+               gyro_hits = ?, engine_hits = ?, sensor_hits = ?, life_support_hit = ?, heat_sinks = ?,
+               destroyed_reason = ?
+        WHERE id = ?
+        """,
+        (
+            snapshot["heat_current"], int(snapshot["is_shutdown"]), int(snapshot["is_prone"]),
+            snapshot["gyro_hits"], snapshot["engine_hits"], snapshot["sensor_hits"],
+            int(snapshot["life_support_hit"]), snapshot["heat_sinks"], snapshot["destroyed_reason"], mech_id,
+        ),
+    )
+    for loc in snapshot["locations"]:
+        conn.execute(
+            "UPDATE mech_locations SET armor_current = ?, armor_rear_current = ?, structure_current = ? "
+            "WHERE mech_id = ? AND location = ?",
+            (loc["armor_current"], loc["armor_rear_current"], loc["structure_current"], mech_id, loc["location"]),
+        )
+    for weapon in snapshot["weapons"]:
+        conn.execute("UPDATE mech_weapons SET ammo_remaining = ? WHERE id = ?", (weapon["ammo_remaining"], weapon["id"]))
+    for location, slots in snapshot["criticals"].items():
+        for slot in slots:
+            conn.execute(
+                "UPDATE mech_criticals SET hit = ? WHERE mech_id = ? AND location = ? AND slot_index = ?",
+                (int(slot["hit"]), mech_id, location, slot["slot_index"]),
+            )
+
+
 def set_shutdown(mech_id: int, value: bool) -> dict | None:
     """Heat Scale shutdown/restart (systems/battletech/turns.py's
     resolve_heat_phase) — an is_shutdown mech can't move/attack (see
@@ -305,6 +366,27 @@ def set_prone(mech_id: int, value: bool) -> dict | None:
     gate as is_shutdown, until it successfully stands."""
     with db.connect() as conn:
         conn.execute("UPDATE mechs SET is_prone = ? WHERE id = ?", (1 if value else 0, mech_id))
+        return _get(conn, mech_id)
+
+
+def mark_destroyed(mech_id: int, reason: str) -> dict | None:
+    """Persists a mech's destruction (Fase D — until now `mech_destroyed`/
+    `pilot_killed` were ephemeral per-attack result fields nobody wrote
+    down, so an already-"destroyed" mech could keep being shot at and keep
+    acting). `reason` is 'structural' (CT/HD structure hitting 0, or the
+    3rd engine hit) or 'pilot_killed' (a Cockpit critical, mech otherwise
+    structurally intact — falls limp instead of exploding).
+
+    Reason-PRESERVING, not last-write-wins: a Charge/DFA's grouped damage
+    (melee.py's _apply_grouped_damage) can land several 5-point hits in
+    one resolution, each independently able to trigger this (a Cockpit
+    crit from an earlier group, CT structure finally giving out from a
+    later one) — COALESCE keeps whichever reason was decided FIRST rather
+    than letting a later, narratively-redundant call overwrite it (the
+    mech is already a wreck; a subsequent hit doesn't retroactively change
+    why)."""
+    with db.connect() as conn:
+        conn.execute("UPDATE mechs SET destroyed_reason = COALESCE(destroyed_reason, ?) WHERE id = ?", (reason, mech_id))
         return _get(conn, mech_id)
 
 
@@ -347,6 +429,32 @@ def remove_heat_sink(mech_id: int) -> dict | None:
     worth a second counter for."""
     with db.connect() as conn:
         conn.execute("UPDATE mechs SET heat_sinks = MAX(0, heat_sinks - 1) WHERE id = ?", (mech_id,))
+        return _get(conn, mech_id)
+
+
+class MechAlreadyClaimed(ValueError):
+    pass
+
+
+def claim_mech(mech_id: int, pilot_id: int) -> dict | None:
+    """A player claims an already-existing, pilotless mech from the
+    campaign's own roster (real user request: "aunque haya mechs que
+    seleccionar en la partida" — PlayerView's own pilot-creation flow
+    could only ever build a brand-new mech from the catalog before, with
+    no way to pick one the GM had already pre-built). Real user report:
+    "un mismo mech no le pueden usar dos players" — checks and sets
+    pilot_id inside ONE transaction so two players claiming the same
+    mech at nearly the same moment can't both succeed; whichever loses
+    the race gets MechAlreadyClaimed instead of silently stealing the
+    mech out from under the winner. A mech already claimed by THIS SAME
+    pilot is a harmless no-op (repeated click), not an error."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT pilot_id FROM mechs WHERE id = ?", (mech_id,)).fetchone()
+        if row is None:
+            return None
+        if row["pilot_id"] is not None and row["pilot_id"] != pilot_id:
+            raise MechAlreadyClaimed(f"Mech {mech_id} is already assigned to pilot {row['pilot_id']}")
+        conn.execute("UPDATE mechs SET pilot_id = ? WHERE id = ?", (pilot_id, mech_id))
         return _get(conn, mech_id)
 
 
@@ -632,6 +740,7 @@ def _get(conn, mech_id: int) -> dict | None:
         SELECT id, campaign_id, pilot_id, chassis, model, tonnage,
                walk_mp, run_mp, jump_mp, heat_sinks, heat_current,
                is_shutdown, is_prone, gyro_hits, engine_hits, sensor_hits, life_support_hit,
+               destroyed_reason,
                status, owner_token, review_note, created_at
         FROM mechs WHERE id = ?
         """,

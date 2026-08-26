@@ -444,6 +444,8 @@ def execute_move(
         raise UnreachableDestination(f"unit {unit_id} has no mech to move")
     if mech["is_shutdown"] or mech["is_prone"]:
         raise MechIncapacitated(f"unit {unit_id}'s mech is shut down or prone and can't move")
+    if mech["destroyed_reason"] is not None:
+        raise MechIncapacitated(f"unit {unit_id}'s mech is destroyed and can't move")
 
     if movement_type == "jump":
         reachable = {(h["q"], h["r"]): h for h in (reachable_hexes(unit_id, movement_type) or [])}

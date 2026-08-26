@@ -48,6 +48,10 @@ class DuplicateOwnerPilot(ValueError):
     pass
 
 
+class PilotAlreadyClaimed(ValueError):
+    pass
+
+
 def _check_faction(faction: str) -> None:
     if faction not in FACTIONS:
         raise UnknownFaction(f"Unknown faction {faction!r}, expected one of {sorted(FACTIONS)}")
@@ -156,6 +160,27 @@ def create_pilot(
     if pin is not None:
         set_pin(pilot_id, pin)
     with db.connect() as conn:
+        return _get(conn, pilot_id)
+
+
+def claim_pilot(pilot_id: int, owner_token: str) -> dict | None:
+    """PlayerView's "¿Quién eres?" picker calls this before finalizing a
+    choice — real user request: a pilot already claimed by another
+    device must not be selectable by a second one. Mirrors
+    mechs.claim_mech's transaction-safe check-then-set exactly: unclaimed
+    (owner_token IS NULL) -> claim it; already this SAME token -> no-op
+    success (a device re-picking its own pilot, e.g. after a refresh);
+    a DIFFERENT existing owner_token -> reject. Unlike create_pilot's own
+    DuplicateOwnerPilot guard (one device, one FRESH pilot at creation
+    time), this is the reverse direction: protecting an EXISTING pilot
+    from a second device."""
+    with db.connect() as conn:
+        row = conn.execute("SELECT owner_token FROM pilots WHERE id = ?", (pilot_id,)).fetchone()
+        if row is None:
+            return None
+        if row["owner_token"] is not None and row["owner_token"] != owner_token:
+            raise PilotAlreadyClaimed(f"Pilot {pilot_id} is already claimed by another device")
+        conn.execute("UPDATE pilots SET owner_token = ? WHERE id = ?", (owner_token, pilot_id))
         return _get(conn, pilot_id)
 
 
@@ -269,6 +294,20 @@ def add_pilot_hits(pilot_id: int, n: int) -> dict | None:
     return update_pilot(pilot_id, hits=new_hits)
 
 
+def mark_pilot_dead(pilot_id: int) -> dict | None:
+    """A Cockpit critical (criticals.py's apply_critical_effects) kills
+    the pilot outright — distinct from add_pilot_hits' wound track, which
+    a pilot can recover from; this can't (Fase D — until now the only
+    trace of a cockpit kill was add_pilot_hits(pilot_id, 6), indistinguishable
+    from merely being knocked unconscious by ordinary wounds). Programmatic
+    engine state, same reasoning as add_pilot_hits — not routed through
+    update_pilot, which logs a "Piloto editado" event meant for the GM's
+    own edit form."""
+    with db.connect() as conn:
+        conn.execute("UPDATE pilots SET is_dead = 1 WHERE id = ?", (pilot_id,))
+        return _get(conn, pilot_id)
+
+
 def set_pilot_die_style(pilot_id: int, style: str | None) -> dict | None:
     """A dedicated setter (not folded into update_pilot's generic
     `fields` dict) because that dict treats any None it receives as
@@ -314,7 +353,7 @@ def _get(conn, pilot_id: int) -> dict | None:
     row = conn.execute(
         """
         SELECT id, campaign_id, name, callsign, gunnery, piloting, faction,
-               hits, status, owner_token, review_note, color, die_style, dice_mode, created_at,
+               hits, status, owner_token, review_note, color, die_style, dice_mode, is_dead, created_at,
                (pin_hash IS NOT NULL) AS has_pin
         FROM pilots WHERE id = ?
         """,
@@ -322,4 +361,4 @@ def _get(conn, pilot_id: int) -> dict | None:
     ).fetchone()
     if not row:
         return None
-    return {**dict(row), "has_pin": bool(row["has_pin"])}
+    return {**dict(row), "has_pin": bool(row["has_pin"]), "is_dead": bool(row["is_dead"])}

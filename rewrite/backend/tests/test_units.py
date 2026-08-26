@@ -30,6 +30,35 @@ def test_hill_blocks_ghost_visibility(campaign, pilot):
     assert units.get_unit(ghost["id"])["revealed"] is False
 
 
+def test_an_enemy_observer_never_reveals_a_ghost_to_the_player_team(campaign):
+    # Real user report: the reveal cinematic fired even for a ghost
+    # placed somewhere the PLAYER team had no LoS to at all. Root cause —
+    # a non-ghost ENEMY unit (any enemy created before the auto-ghost fix
+    # elsewhere still is one) counted as a valid "observer" the same as a
+    # player one, so it could "spot" a freshly placed enemy ghost and
+    # incorrectly flip it revealed even with zero player LoS involved.
+    from app import db
+
+    m = maps.create_map(campaign["id"], "Open field", width=6, height=3)
+    enemy_a = pilots.create_pilot(campaign["id"], "Enemy A", faction="enemy")
+    enemy_b = pilots.create_pilot(campaign["id"], "Enemy B", faction="enemy")
+    observer_a = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=enemy_a["id"], facing_deg=0)
+    # enemy_a's own unit auto-ghosts too now — forced back to non-ghost/
+    # revealed here to simulate the pre-auto-ghost-fix data this
+    # regression is actually about (an already-existing enemy unit from
+    # before that fix), a real non-ghost observer that can plainly see
+    # enemy_b's own hex.
+    with db.connect() as conn:
+        conn.execute("UPDATE units SET is_ghost = 0, revealed = 1 WHERE id = ?", (observer_a["id"],))
+    ghost = units.create_unit(campaign["id"], m["id"], q=2, r=0, pilot_id=enemy_b["id"])
+    assert ghost["is_ghost"] is True, "enemy_b's own unit auto-ghosts regardless"
+
+    visibility = units.combined_visibility(campaign["id"], m["id"])
+    assert enemy_a["id"] in visibility["visible"][ghost["id"]], "enemy_a genuinely has LoS to it"
+    assert ghost["id"] not in visibility["newly_revealed"], "but a non-player observer must never trigger a reveal"
+    assert units.get_unit(ghost["id"])["revealed"] is False
+
+
 def test_combined_visibility_reports_team_visible_hexes(campaign, pilot):
     # Real user request: "niebla de guerra real en el table view... casillas
     # que el equipo jugador no ve" — combined_visibility's new
@@ -102,6 +131,29 @@ def test_unit_with_an_enemy_pilot_carries_enemy_faction(campaign):
     m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
     unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=enemy_pilot["id"])
     assert unit["pilot_faction"] == "enemy"
+
+
+def test_placing_an_enemy_pilots_unit_is_automatically_a_hidden_contact(campaign):
+    # Real user report: "los enemigos se colocan en el mapa y están
+    # ocultos hasta que el equipo les ve... el GM no tiene que colocarle
+    # como oculto, es algo automático" — nothing in the frontend ever
+    # passed is_ghost=True explicitly (no such UI ever existed), so the
+    # reveal cinematic could never fire in practice. An enemy pilot's
+    # unit is now always a hidden contact from creation, regardless of
+    # whatever is_ghost the caller passed.
+    enemy_pilot = pilots.create_pilot(campaign["id"], "Hostile", faction="enemy")
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=enemy_pilot["id"], is_ghost=False)
+    assert unit["is_ghost"] is True
+    assert unit["revealed"] is False
+
+
+def test_placing_a_player_pilots_unit_is_never_a_hidden_contact(campaign, pilot):
+    # player/npc pilots are unaffected — only "enemy" auto-ghosts.
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"])
+    assert unit["is_ghost"] is False
+    assert unit["revealed"] is True
 
 
 def test_unit_with_no_pilot_has_no_faction(campaign):
@@ -244,6 +296,23 @@ def test_visible_enemies_from_unit_reports_chassis_model_and_distance(campaign, 
     assert enemies[0]["chassis"] == "Atlas"
     assert enemies[0]["model"] == "AS7-D"
     assert enemies[0]["distance"] == 3
+
+
+def test_visible_enemies_from_unit_excludes_an_already_destroyed_mech(campaign, pilot):
+    # Real user report: "no se tiene que poder atacar a un muerto" — a
+    # destroyed wreck kept showing up as a valid target (GMView's own
+    # target-picker red tile wash, and it could keep a ranged/melee phase
+    # artificially alive by counting as "someone to shoot at").
+    from app.systems.battletech import mechs as mechs_module
+
+    enemy_pilot = pilots.create_pilot(campaign["id"], "Hostile Lance Leader", faction="enemy")
+    enemy_mech = _mech(campaign["id"], enemy_pilot["id"], chassis="Atlas", model="AS7-D")
+    mechs_module.mark_destroyed(enemy_mech["id"], "structural")
+    m = maps.create_map(campaign["id"], "Open field", width=8, height=3)
+    observer = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"], facing_deg=0)
+    units.create_unit(campaign["id"], m["id"], q=3, r=0, mech_id=enemy_mech["id"], pilot_id=enemy_pilot["id"])
+
+    assert units.visible_enemies_from_unit(observer["id"]) == []
 
 
 def test_visible_enemies_from_unit_excludes_whats_behind(campaign, pilot):

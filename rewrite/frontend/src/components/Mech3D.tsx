@@ -30,6 +30,16 @@ interface Mech3DProps {
    * one or both clips just don't switch (see the animation effect
    * below), never a crash. */
   isMoving?: boolean
+  /** Overrides FACTION_TINT_STRENGTH below — real user request: a
+   * destroyed/overheated mech's own `color` (HexMap's own UnitMarker)
+   * needs to actually READ as "black/dark grey, chamuscado, por encima
+   * de su textura" instead of the same faint 22% wash every mech gets
+   * from its side color, which diluted it down to barely visible (the
+   * emissive ember glow, applied at full strength regardless, ended up
+   * dominating the look instead — "se ve naranja" was this, not a bug in
+   * the color value itself). Omitted/undefined keeps the normal subtle
+   * faction wash. */
+  tintStrength?: number
 }
 
 const GENERIC_MODEL_URL = '/models/mech-placeholder.glb'
@@ -61,7 +71,7 @@ export const MODEL_CHEST_FRACTION = 0.6
 // faint wash rather than recoloring the mech outright.
 const FACTION_TINT_STRENGTH = 0.22
 
-function Mech3DModel({ color, emissive, emissiveIntensity, chassis, model, isMoving }: Mech3DProps) {
+function Mech3DModel({ color, emissive, emissiveIntensity, chassis, model, isMoving, tintStrength }: Mech3DProps) {
   const url = resolveMechModelUrl(chassis, model)
   const { scene, animations } = useGLTF(url)
   const groupRef = useRef<THREE.Group>(null)
@@ -134,12 +144,12 @@ function Mech3DModel({ color, emissive, emissiveIntensity, chassis, model, isMov
     instance.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         const mat = obj.material as THREE.MeshStandardMaterial
-        mat.color.set(0xffffff).lerp(tint, FACTION_TINT_STRENGTH)
+        mat.color.set(0xffffff).lerp(tint, tintStrength ?? FACTION_TINT_STRENGTH)
         mat.emissive.set(emissive ?? '#000000')
         mat.emissiveIntensity = emissiveIntensity ?? 0
       }
     })
-  }, [instance, color, emissive, emissiveIntensity])
+  }, [instance, color, emissive, emissiveIntensity, tintStrength])
 
   return <primitive ref={groupRef} object={instance} scale={MODEL_SCALE} />
 }

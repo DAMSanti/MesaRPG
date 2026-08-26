@@ -124,6 +124,20 @@ def test_execute_move_rejects_an_unreachable_destination(campaign, pilot):
         pass
 
 
+def test_execute_move_rejects_a_destroyed_mech(campaign, pilot):
+    # Fase D: a destroyed mech is a permanent wreck, not just shut-down/
+    # prone — MechIncapacitated covers both the same way.
+    m = maps.create_map(campaign["id"], "Flat", width=10, height=6)
+    mech = _mech(campaign["id"], pilot["id"])
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=mech["id"], pilot_id=pilot["id"])
+    mechs.mark_destroyed(mech["id"], "structural")
+    try:
+        movement.execute_move(campaign["id"], unit["id"], 1, 0, "walk")
+        assert False, "should have raised"
+    except movement.MechIncapacitated:
+        pass
+
+
 def test_execute_move_faces_the_direction_of_travel(campaign, pilot):
     m = maps.create_map(campaign["id"], "Flat", width=10, height=6)
     # Starts facing 180° (away from +q) — turning around to face 0° costs

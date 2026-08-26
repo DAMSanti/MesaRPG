@@ -205,6 +205,30 @@ CREATE TABLE IF NOT EXISTS bt_round_passed (
     PRIMARY KEY (campaign_id, pilot_id, phase)
 );
 
+-- Fase B (dados físicos reales para todo, real user request — "en el
+-- futuro una cámara leerá dados físicos reales del mundo real"): a
+-- multi-roll resolution (un disparo puede encadenar impacto->localización
+-- ->críticos->caída, cada tirada dependiente de la anterior) se parte en
+-- pasos nombrados (app/dice_resolution.py) — esta fila es "en qué paso
+-- estamos, y qué se lleva tirado hasta ahora en ESE paso" mientras
+-- esperamos que TableView reporte el resultado físico real de una mesa.
+-- `committed_json` guarda el resultado YA decidido (y ya mutado) de los
+-- pasos anteriores, para no repetir ni perder esa mutación al reanudar
+-- desde una llamada HTTP nueva.
+CREATE TABLE IF NOT EXISTS bt_pending_rolls (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    pilot_id INTEGER,
+    step TEXT NOT NULL,
+    original_params_json TEXT NOT NULL,
+    committed_json TEXT NOT NULL,
+    collected_json TEXT NOT NULL,
+    next_dice_spec TEXT NOT NULL,
+    next_purpose TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- One row per initiative roll made this round: either a whole faction
 -- ("team" mode — the real rule) or one pilot ("individual" mode — a
 -- GM-selectable alternative, not from the rulebook, requested directly).
@@ -229,6 +253,23 @@ CREATE TABLE IF NOT EXISTS bt_round_moves (
     hexes_moved INTEGER NOT NULL,
     mp_spent INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (campaign_id, pilot_id)
+);
+
+-- Snapshot of every combat pilot present the moment start_round was
+-- called (real user report: "si se mete un nuevo mech en mitad de un
+-- combate, debe poder tirar iniciativa y empezar a actuar en el
+-- SIGUIENTE turno" — a pilot/mech added mid-round used to become
+-- immediately eligible in team mode, or silently blank out
+-- movement_order for EVERYONE in individual mode until the newcomer also
+-- rolled). turns.py's _movement_order/_combat_pilots_with_targets both
+-- intersect against this instead of re-deriving "who's a combat pilot"
+-- live — a late arrival simply isn't in here yet, so they're excluded
+-- from THIS round the same way an incapacitated pilot is, and the very
+-- next start_round snapshots them in fresh.
+CREATE TABLE IF NOT EXISTS bt_round_participants (
+    campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
+    pilot_id INTEGER NOT NULL REFERENCES pilots(id) ON DELETE CASCADE,
     PRIMARY KEY (campaign_id, pilot_id)
 );
 
@@ -430,6 +471,28 @@ def init_db() -> None:
         # has nothing left to act on, and it must be a safe no-op if
         # called twice (two GM tabs open, a retried request, etc).
         _ensure_column(conn, "bt_rounds", "heat_resolved", "INTEGER NOT NULL DEFAULT 0")
+        # Fase D: a destroyed mech's own persisted death, not just an
+        # ephemeral per-attack result field — until now NOTHING recorded
+        # that a mech had been destroyed, so it could keep being attacked
+        # and keep acting. NULL = still standing; 'structural' = CT/HD
+        # structure or the 3rd engine hit; 'pilot_killed' = a Cockpit
+        # critical with the mech otherwise structurally intact (falls
+        # limp instead of exploding). pilots.is_dead is a SEPARATE flag
+        # (not implied by their mech's destroyed_reason) — a pilot can die
+        # from a Cockpit hit whose mech survives being reassigned to
+        # nobody, and ejecting/being rescued later shouldn't un-destroy
+        # the mech.
+        _ensure_column(conn, "mechs", "destroyed_reason", "TEXT")
+        _ensure_column(conn, "pilots", "is_dead", "INTEGER NOT NULL DEFAULT 0")
+        # Real user report: switching campaigns.initiative_mode (team vs
+        # individual) mid-round changed how THIS round's already-in-
+        # progress rolls were interpreted immediately — every turns.py
+        # function used to read the campaign's LIVE setting fresh on
+        # every call instead of whatever mode the round actually started
+        # under. Snapshotted once, in start_round, and read from here for
+        # the rest of that round; a mode change now only takes effect
+        # starting the NEXT round.
+        _ensure_column(conn, "bt_rounds", "mode", "TEXT NOT NULL DEFAULT 'team'")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

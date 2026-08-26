@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
@@ -173,6 +173,20 @@ export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled,
   const mountTimeRef = useRef(Date.now())
   const vanishStartRef = useRef<number | null>(null)
   const vanishedRef = useRef(false)
+  // Real user report: a settled die would still sometimes visibly
+  // "teleport" to a fixed spot mid-table, even after locking its
+  // translation/rotation directly on the rapier body (settleNow below) —
+  // a locked DYNAMIC body can still apparently get relocated by contact
+  // resolution against a KINEMATIC one (HexMap's UnitMarker re-asserts
+  // its own position via setNextKinematicTranslation every single frame,
+  // moving or not — see its own doc comment). Switching the body's TYPE
+  // to "fixed" once it settles is the actual bulletproof guarantee — a
+  // fixed body is immovable by the solver, period, not just "locked".
+  // Driven through this state (not an imperative rapier call) so
+  // @react-three/rapier's own reactive `type` prop handling — confirmed
+  // in its source to call the real setBodyType on change — does the work,
+  // rather than fighting the wrapper's own prop-driven state tracking.
+  const [settled, setSettled] = useState(false)
 
   // MeshPhysicalMaterial rather than MeshStandardMaterial — a strict
   // superset (same roughness/metalness/map), so the no-style path (both
@@ -200,7 +214,9 @@ export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled,
     if (settledRef.current) return
     settledRef.current = true
     const body = bodyRef.current
-    if (!body || !onSettled) return
+    if (!body) return
+    setSettled(true)
+    if (!onSettled) return
     const r = body.rotation()
     onSettled(valueFromRotation(new THREE.Quaternion(r.x, r.y, r.z, r.w)))
   }
@@ -266,6 +282,7 @@ export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled,
     <RigidBody
       ref={bodyRef}
       position={spawn}
+      type={settled ? 'fixed' : undefined}
       colliders="cuboid"
       restitution={0.3}
       friction={0.6}

@@ -1,8 +1,8 @@
 import {
-  memo, useCallback, useEffect, useMemo, useRef, useState,
+  memo, Suspense, useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
 import { useFrame, type ThreeEvent } from '@react-three/fiber'
-import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
+import { CuboidCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import { Select } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import type {
@@ -15,7 +15,7 @@ import { terrainColor, terrainRotation, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import { hexToWorld, mapCenter } from '../hexMath'
 import { MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
-import { AttackEffect, getGlowTexture } from './AttackEffects'
+import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
 
 // FIXED, not a floor that yields to a taller natural elevation — two
 // earlier versions of this (elevation 2's own 0.74, then elevation
@@ -100,11 +100,36 @@ export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, u
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastAttack])
 
+  // Resolvers waiting on waitForDrain below — settled the instant the
+  // queue AND the currently-playing shot both go empty, whichever of
+  // onAttackEffectDone's calls happens to be the one that empties them.
+  const drainResolversRef = useRef<(() => void)[]>([])
+
   const onAttackEffectDone = () => {
-    setActive(queueRef.current.shift() ?? null)
+    const next = queueRef.current.shift() ?? null
+    setActive(next)
+    if (next === null) {
+      drainResolversRef.current.forEach((resolve) => resolve())
+      drainResolversRef.current = []
+    }
   }
 
-  return { activeAttack, onAttackEffectDone }
+  // Real user request: "el turno de ataque debe durar hasta que TODAS las
+  // animaciones de ataque terminen" — a volley firing several weapons
+  // resolves them all server-side in one go (or one physical-dice pause
+  // per shot), well before this queue has finished actually PLAYING each
+  // one's VFX in order. Callers await this right before whatever closes
+  // the turn (mark_acted) instead of doing so the instant the last HTTP
+  // response/broadcast lands.
+  const waitForDrain = () => new Promise<void>((resolve) => {
+    if (activeRef.current === null && queueRef.current.length === 0) {
+      resolve()
+      return
+    }
+    drainResolversRef.current.push(resolve)
+  })
+
+  return { activeAttack, onAttackEffectDone, waitForDrain }
 }
 
 // World units per second a unit visually walks between hexes at — hex
@@ -275,19 +300,19 @@ const Tile = memo(function Tile({
       {tile.terrain === 'road' && !fogged && (
         <RoadMarkings q={tile.q} r={tile.r} height={height} lookup={lookup} gridType="hex" worldPos={hexToWorld} />
       )}
-      {/* forest/light_forest/building all dropped from the hull-collider
-          set — a hull used to wrap a cheap procedural decoration (a few
-          dozen primitives), fine to compute; TerrainDecor's trees and
-          buildings (standing AND ruined, since ruins now reuse the same
-          real models with a scorch tint rather than a cheap procedural
-          debris box) are real .glb models, tens of thousands to a few
-          hundred thousand triangles each, and Rapier computing a hull
-          from that per tile instance was a real cost on top of the
-          geometry's own render cost, for something dice essentially
-          never land under anyway. The flat ground plane above still
-          gets a (cheap, hex-shaped) collider for every tile regardless,
-          so dice still land on the table correctly either way. */}
-      {!fogged && <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} />}
+      {/* forest/light_forest/building stay OUT of this tile's own hull-
+          collider set — a hull built from TerrainDecor's real .glb
+          trees/buildings (tens of thousands to a few hundred thousand
+          triangles each) was tried and was a real cost, on top of the
+          geometry's own render cost. TerrainDecor now brings its OWN
+          cheap approximate colliders instead (a plain cylinder for a
+          tree trunk, a plain box for a building footprint — real user
+          report: dice used to pass straight through both) — solid
+          enough for dice to bounce off without hulling the actual
+          model. The flat ground plane above still gets a (cheap,
+          hex-shaped) collider for every tile regardless, so dice always
+          land on the table correctly either way. */}
+      {!fogged && <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} physics={physics} />}
       {losHighlighted && <LosDebugOverlay height={height} color="#39ff8f" />}
       {dragHighlighted && <LosDebugOverlay height={height} color="#f5c542" y={height + 0.03} />}
       {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.04} />}
@@ -327,25 +352,45 @@ function LosDebugOverlay({
   )
 }
 
-/** A handful of soft puffs drifting straight up off a mech's chest and
- * fading out, looping continuously — real user request: "los mechs en
- * esta fase desprenderán vapor en todas las vistas de mapa" for any
- * mech at/above the Heat Scale's first real threshold (5 — see
- * movement.py's _HEAT_MP_PENALTY_BRACKETS, the first bracket that
- * isn't 0). More heat = more puffs, capped so it never gets busy enough
- * to obscure the model. Reuses AttackEffects' baked glow texture but
- * with plain alpha blending (not additive) so overlapping puffs read as
- * smoke/vapor instead of brightening toward white-hot like a muzzle
- * flash. */
+// Distinct body-part vent points (local, pre-MODEL_SCALE units — same
+// 0..1-tall convention Mech3D normalizes every model to) — real user
+// follow-up: "que salgan de distintas partes del mech, 3 o 4", the
+// original single-point-with-tiny-jitter version read as one vague haze
+// instead of a mech actually venting from several spots.
+const STEAM_ORIGINS: [number, number, number][] = [
+  [-0.28, 0.78, 0.05], // left shoulder
+  [0.28, 0.78, 0.05], // right shoulder
+  [0, 0.95, -0.12], // head/back
+  [0, 0.55, 0.18], // chest/front
+]
+
+/** A handful of soft puffs drifting straight up off a mech and fading
+ * out, looping continuously — real user request: "los mechs en esta
+ * fase desprenderán vapor en todas las vistas de mapa" for any mech
+ * at/above the Heat Scale's first real threshold (5 — see movement.py's
+ * _HEAT_MP_PENALTY_BRACKETS, the first bracket that isn't 0), and
+ * separately "un mech sobrecalentado suelta pufs de vapor
+ * constantemente" for a shutdown one regardless of phase (see this
+ * component's own caller in UnitMarker). Real user follow-up: the
+ * original version was "demasiado sutil" (a single origin point, faint
+ * opacity) — now guarantees at least 3 puffs cycling through
+ * STEAM_ORIGINS' distinct vent points, at noticeably higher opacity.
+ * Reuses AttackEffects' baked glow texture but with plain alpha blending
+ * (not additive) so overlapping puffs read as smoke/vapor instead of
+ * brightening toward white-hot like a muzzle flash. */
 function SteamPuffs({ heat }: { heat: number }) {
-  const count = Math.min(5, 2 + Math.floor(heat / 10))
+  const count = Math.min(6, Math.max(3, 2 + Math.floor(heat / 8)))
   const particles = useMemo(
-    () => Array.from({ length: count }, () => ({
-      seed: Math.random() * 10,
-      xOff: (Math.random() - 0.5) * 0.3,
-      zOff: (Math.random() - 0.5) * 0.3,
-      size: 0.35 + Math.random() * 0.25,
-    })),
+    () => Array.from({ length: count }, (_, i) => {
+      const [ox, oy, oz] = STEAM_ORIGINS[i % STEAM_ORIGINS.length]
+      return {
+        seed: Math.random() * 10,
+        xOff: ox * MODEL_SCALE + (Math.random() - 0.5) * 0.08,
+        yBase: oy * MODEL_SCALE,
+        zOff: oz * MODEL_SCALE + (Math.random() - 0.5) * 0.08,
+        size: 0.4 + Math.random() * 0.3,
+      }
+    }),
     [count],
   )
   return (
@@ -355,16 +400,18 @@ function SteamPuffs({ heat }: { heat: number }) {
   )
 }
 
-function SteamPuff({ seed, xOff, zOff, size }: { seed: number; xOff: number; zOff: number; size: number }) {
+function SteamPuff({
+  seed, xOff, yBase, zOff, size,
+}: { seed: number; xOff: number; yBase: number; zOff: number; size: number }) {
   const ref = useRef<THREE.Mesh>(null)
   const cycleSeconds = 2.2
   useFrame((state) => {
     const t = ((state.clock.elapsedTime + seed) % cycleSeconds) / cycleSeconds
     if (!ref.current) return
-    ref.current.position.set(xOff, MODEL_SCALE * MODEL_CHEST_FRACTION + t * 0.9, zOff)
+    ref.current.position.set(xOff, yBase + t * 0.9, zOff)
     ref.current.quaternion.copy(state.camera.quaternion)
     const mat = ref.current.material as THREE.MeshBasicMaterial
-    mat.opacity = 0.45 * Math.sin(t * Math.PI)
+    mat.opacity = 0.7 * Math.sin(t * Math.PI)
     const s = size * (0.6 + t * 0.6)
     ref.current.scale.set(s, s, s)
   })
@@ -372,6 +419,74 @@ function SteamPuff({ seed, xOff, zOff, size }: { seed: number; xOff: number; zOf
     <mesh ref={ref}>
       <planeGeometry args={[1, 1]} />
       <meshBasicMaterial map={getGlowTexture()} color="#d8dde0" transparent opacity={0} depthWrite={false} />
+    </mesh>
+  )
+}
+
+// One-shot explosion VFX for a mech's own destroyed_reason turning
+// 'structural' (Fase D — real user request: replace the old picture-in-
+// picture KillReplay inset, which played nowhere near the mech's actual
+// board position, with something anchored in place and visible in every
+// view, not just TableView's own inset). Mounts exactly once (its parent
+// JSX conditional stays true forever once a mech is destroyed, so this
+// never remounts/replays) — a bright flash + an outward burst of fire
+// sprites, done animating within ~1.2s, after which it just sits there
+// rendering nothing (still mounted, near-zero further cost) while the
+// mech itself keeps rendering as a static charred wreck (see UnitMarker's
+// own glowEmissive/color).
+function MechExplosionOnce({ position }: { position: [number, number, number] }) {
+  const [done, setDone] = useState(false)
+  useEffect(() => {
+    const t = setTimeout(() => setDone(true), 1300)
+    return () => clearTimeout(t)
+  }, [])
+  const debris = useMemo(
+    () => Array.from({ length: 12 }, () => ({
+      dir: new THREE.Vector3((Math.random() - 0.5) * 2, Math.random() * 1.4, (Math.random() - 0.5) * 2).normalize(),
+      speed: 0.6 + Math.random() * 0.8,
+      size: 0.3 + Math.random() * 0.35,
+      delay: Math.random() * 0.15,
+    })),
+    [],
+  )
+  if (done) return null
+  return (
+    <group position={position}>
+      <ImpactFlash position={new THREE.Vector3(0, 0, 0)} color="#ffcf6b" />
+      {debris.map((d, i) => <ExplosionDebris key={i} {...d} />)}
+    </group>
+  )
+}
+
+function ExplosionDebris({
+  dir, speed, size, delay,
+}: { dir: THREE.Vector3; speed: number; size: number; delay: number }) {
+  const ref = useRef<THREE.Mesh>(null)
+  const start = useRef<number | null>(null)
+  useFrame((state) => {
+    if (start.current === null) start.current = state.clock.elapsedTime
+    const elapsed = state.clock.elapsedTime - start.current - delay
+    if (elapsed < 0 || !ref.current) {
+      if (ref.current) ref.current.visible = false
+      return
+    }
+    const duration = 1.0
+    const t = Math.min(1, elapsed / duration)
+    ref.current.visible = true
+    ref.current.position.copy(dir).multiplyScalar(speed * t)
+    ref.current.quaternion.copy(state.camera.quaternion)
+    const mat = ref.current.material as THREE.MeshBasicMaterial
+    mat.opacity = 1 - t
+    const s = size * (1 - t * 0.4)
+    ref.current.scale.set(s, s, s)
+  })
+  return (
+    <mesh ref={ref}>
+      <planeGeometry args={[1, 1]} />
+      <meshBasicMaterial
+        map={getGlowTexture()} color="#ff7a2a" transparent opacity={1}
+        blending={THREE.AdditiveBlending} depthWrite={false}
+      />
     </mesh>
   )
 }
@@ -393,6 +508,7 @@ function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<Un
     && prev.heat === next.heat
     && prev.prone === next.prone
     && prev.shutdown === next.shutdown
+    && prev.destroyedReason === next.destroyedReason
     && prev.worldOffset[0] === next.worldOffset[0] && prev.worldOffset[1] === next.worldOffset[1]
     && (prev.dragPosition === next.dragPosition
       || (prev.dragPosition != null && next.dragPosition != null
@@ -463,16 +579,39 @@ type UnitMarkerProps = {
    * a decidir en implementación, no bloqueante"). */
   prone?: boolean
   /** mechs.is_shutdown — turns.py's resolve_heat_phase / a destroyed
-   * gyro. Darkens the model's faction tint instead of a separate icon —
-   * same "keep it simple" scope as `prone` above. */
+   * gyro. Darkens the model's faction tint AND adds an orange overheat
+   * glow (real user request: "deberían tener una apariencia obvia de
+   * sobrecalentamiento... asi naranja [como los muertos]" — reusing the
+   * same emissive language destroyedReason='structural' already uses,
+   * just softer, so a shutdown mech reads as "dangerously hot" without
+   * being confused for an actual wreck). */
   shutdown?: boolean
+  /** mechs.destroyed_reason (Fase D) — a real, permanent kill, distinct
+   * from is_shutdown/is_prone (both recoverable). BOTH reasons tilt the
+   * model onto the ground the same way a failed-PSR prone does (real
+   * user request: "los mechs muertos caen al suelo como si estuviesen en
+   * prone"). 'structural' additionally plays a one-shot explosion the
+   * instant it's first observed and leaves a permanently charred/glowing
+   * wreck tint; 'pilot_killed' just darkens the faction tint further,
+   * no explosion — see this component's own render body for exactly how
+   * each looks. null/undefined = still standing. */
+  destroyedReason?: 'structural' | 'pilot_killed' | null
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void
   onPointerUp?: (e: ThreeEvent<PointerEvent>) => void
+  /** Fires once this unit finishes walking a real leg of movement (the
+   * queue-driven branch of stepToward below reaching its end, not the
+   * drag-interrupt branch) — see HexMap's own onUnitWalkDone doc comment
+   * for what this drives (the movement phase's turn now holds on the
+   * animation, not just the server's moved_pilot_ids). Deliberately left
+   * out of unitMarkerPropsEqual, same as onPointerDown/onPointerUp above —
+   * a fresh closure every render is fine since it's never compared. */
+  onWalkDone?: () => void
 }
 
 const UnitMarker = memo(function UnitMarker({
   unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, heightAt, outlined, heat, prone, shutdown,
-  onPointerDown, onPointerUp,
+  destroyedReason,
+  onPointerDown, onPointerUp, onWalkDone,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
   // 'building' matches Tile's own fixed platform height (BUILDING_MIN_
@@ -490,10 +629,47 @@ const UnitMarker = memo(function UnitMarker({
     : unit.pilot_faction != null
       ? FACTION_COLORS[unit.pilot_faction]
       : NEUTRAL_UNIT_COLOR
-  // Shutdown darkens the faction tint instead of a separate icon —
-  // "powered down" reads as "dim", same visual shorthand a real cockpit
-  // status light uses.
-  const color = shutdown ? new THREE.Color(baseColor).multiplyScalar(0.35).getStyle() : baseColor
+  // A destroyed mech's own charred-wreck color — real user follow-up,
+  // twice now: "cambia el color de los putos muertos", a DEAD mech (both
+  // reasons — a real kill is a real kill regardless of which one) must
+  // read as black/dark grey, period, not orange. Reused for shutdown too
+  // (real user request: "los mechs sobrecalentados deberían tener el
+  // color de los muertos pero con menos opacidad"), just lerped back
+  // toward the faction color instead of applied at full strength.
+  const DEAD_CHAR_COLOR = '#17140f'
+  const color =
+    destroyedReason != null ? DEAD_CHAR_COLOR
+      : shutdown ? new THREE.Color(DEAD_CHAR_COLOR).lerp(new THREE.Color(baseColor), 0.45).getStyle()
+        : baseColor
+  // Real user follow-up: even with the dark `color` above actually
+  // applying (see tintStrength below), a lingering emissive glow on the
+  // model — an ADDITIVE light contribution, rendered at its exact color
+  // regardless of how dark the base material is — kept the whole mech
+  // reading as "mostly orange" anyway. A dead mech doesn't keep glowing
+  // once it's a cold wreck (the one-shot MechExplosionOnce below already
+  // covers the "this just happened" flash for 1.3s); only shutdown
+  // (still hot, still running) keeps a real, modest ember glow.
+  const glowEmissive = shutdown ? '#e35d2a' : undefined
+  const glowEmissiveIntensity = shutdown ? 0.18 : undefined
+  // Real user follow-up: "el color de los muertos... tiene que ser negro
+  // o gris oscuro POR ENCIMA de su textura, como si estuviese
+  // chamuscado" — Mech3D's own faction-tint wash is deliberately faint
+  // (FACTION_TINT_STRENGTH, ~22%, blended back toward white) so a living
+  // mech's own paint job stays legible under its side color; applying
+  // that SAME weak blend to `color` above (already a fully-computed
+  // charred/dimmed value, not a side color) diluted it right back down
+  // toward washed-out — the real reason a "black" wreck kept reading as
+  // "mostly its emissive glow's color" instead. Any of the three special
+  // states below needs its OWN `color` applied at much closer to full
+  // strength; only a plain living mech keeps the normal faint wash.
+  const tintStrength = destroyedReason != null || shutdown ? 0.9 : undefined
+  // Real user request: "los mechs muertos caen al suelo como si
+  // estuviesen en prone" — BOTH destruction reasons tilt over now, not
+  // just pilot_killed (a structural kill still gets its own explosion +
+  // charred wreck look on top of this same tilt, just via `color`/
+  // `glowEmissive` above — the tilt itself is shared, same as it always
+  // was with a failed-PSR prone).
+  const tiltProne = prone || destroyedReason != null
 
   // Mech3D's unrotated model faces +Z (legs/shoulders are wide along X,
   // narrow front-to-back along Z) — rotate it to match facing_deg using
@@ -571,6 +747,7 @@ const UnitMarker = memo(function UnitMarker({
         pathQueueRef.current = queue.slice(1)
       } else if (isMoving) {
         setIsMoving(false)
+        onWalkDone?.()
       }
     } else {
       const step = Math.min(1, (WALK_SPEED * delta) / dist)
@@ -624,13 +801,39 @@ const UnitMarker = memo(function UnitMarker({
     <>
       <Select enabled={!!outlined}>
         {unit.mech_id != null ? (
-          // Prone tilts the whole model over onto its side instead of
-          // standing it upright — pivots around the feet (Mech3D's own
-          // local origin), so it swings down onto the tile rather than
-          // sinking through it.
-          <group rotation={prone ? [0, 0, Math.PI * 0.42] : [0, 0, 0]}>
-            <Mech3D color={color} chassis={unit.mech_chassis} model={unit.mech_model} isMoving={isMoving && !prone} />
+          <>
+          {/* Prone tilts the whole model over onto its side instead of
+              standing it upright — pivots around the feet (Mech3D's own
+              local origin), so it swings down onto the tile rather than
+              sinking through it. */}
+          <group rotation={tiltProne ? [0, 0, Math.PI * 0.42] : [0, 0, 0]}>
+            {/* Real user report: placing a mech whose chassis/model glTF
+                hadn't loaded yet blanked the WHOLE map (every tile,
+                every other unit) for a beat — the single Suspense
+                boundary wrapping all of <HexMap> in TableView/GMView
+                unmounts everything under it while any one thing inside
+                suspends. An already-loaded chassis (drei's useGLTF
+                cache, keyed by URL) never suspends, which is why re-
+                placing a mech that had appeared before looked fine. A
+                boundary scoped to just this one marker's model isolates
+                the blip to itself. */}
+            <Suspense fallback={null}>
+              <Mech3D
+                color={color} chassis={unit.mech_chassis} model={unit.mech_model}
+                isMoving={isMoving && !tiltProne}
+                emissive={glowEmissive} emissiveIntensity={glowEmissiveIntensity}
+                tintStrength={tintStrength}
+              />
+            </Suspense>
           </group>
+          {destroyedReason === 'structural' && (
+            // Local space (this whole subtree already sits inside the
+            // marker's own position-tracking group/RigidBody above) — NOT
+            // animatedPos/animatedY, which are world-space and would
+            // double-offset it.
+            <MechExplosionOnce position={[0, MODEL_SCALE * MODEL_CHEST_FRACTION, 0]} />
+          )}
+          </>
         ) : (
           <mesh position={[0, 0.35, 0]} castShadow>
             <coneGeometry args={[0.35, 0.7, 4]} />
@@ -646,8 +849,14 @@ const UnitMarker = memo(function UnitMarker({
           phase (see heatByUnitId's own doc comment at each of GMView/
           TableView/FirstPersonView) — HexMap itself has no notion of
           round phase, so the gating lives entirely in what's handed to
-          this prop. */}
-      {unit.mech_id != null && heat != null && heat > 0 && <SteamPuffs heat={heat} />}
+          this prop. Shutdown is a SEPARATE, later real user request:
+          "un mech sobrecalentado suelta pufs de vapor constantemente" —
+          an overheated (shutdown) mech steams EVERY phase, not just
+          during Heat, so this OR's in regardless of the `heat` prop
+          (falls back to a fixed intensity — shutdown itself already
+          implies serious heat, whatever phase-gated `heat` happens to
+          be right now). */}
+      {unit.mech_id != null && ((heat != null && heat > 0) || shutdown) && <SteamPuffs heat={heat ?? 20} />}
     </>
   )
 
@@ -656,14 +865,32 @@ const UnitMarker = memo(function UnitMarker({
     // deliberately NOT nested inside the pointer-handling group below
     // (TableView, the only physics caller, never wires up
     // onUnitClick/onUnitDragEnd — the shared board is passive).
+    //
+    // Real user report: dice were passing straight through mechs.
+    // colliders="hull" used to auto-build a collider from this body's
+    // own child geometry — but Mech3D's real model loads inside its OWN
+    // local <Suspense> (mechOrMarker above), so on first mount there's
+    // nothing there yet (fallback={null}) for the hull to wrap; rapier's
+    // own hull-scan only runs once, keyed off the `colliders` prop
+    // STRING itself (never re-fires just because the Suspense content
+    // showed up later), so the mech was left permanently collider-less
+    // once its model finished loading. An explicit box sized off Mech3D's
+    // own documented bounding box (X ±0.374, Y 0..1, Z ±0.310, scaled by
+    // MODEL_SCALE) mounts synchronously, independent of whether the
+    // visual model has loaded yet.
     return (
       <RigidBody
         ref={rigidBodyRef}
         type="kinematicPosition"
-        colliders="hull"
+        colliders={false}
         position={[animatedPos.current[0], animatedY.current, animatedPos.current[1]]}
         rotation={[0, facingRotationY, 0]}
       >
+        {unit.mech_id != null ? (
+          <CuboidCollider args={[0.374 * MODEL_SCALE, 0.5 * MODEL_SCALE, 0.310 * MODEL_SCALE]} position={[0, 0.5 * MODEL_SCALE, 0]} />
+        ) : (
+          <CuboidCollider args={[0.35, 0.35, 0.35]} position={[0, 0.35, 0]} />
+        )}
         {mechOrMarker}
         {unit.is_ghost && (
           <mesh position={[0, 0.02, 0]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -996,7 +1223,8 @@ function FogTile({ x, z, y, seed, edge }: { x: number; z: number; y: number; see
 export function HexMap({
   map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
   moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, outlineUnitIds, heatByUnitId, proneUnitIds, shutdownUnitIds,
-  teamVisibleHexes, physics, activeAttack, onAttackEffectDone,
+  destroyedReasonByUnitId,
+  teamVisibleHexes, physics, activeAttack, onAttackEffectDone, onUnitWalkDone,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
 }: {
   map: MapData
@@ -1062,6 +1290,11 @@ export function HexMap({
    * HexMap just renders" pattern as heatByUnitId above. */
   proneUnitIds?: Set<number>
   shutdownUnitIds?: Set<number>
+  /** Unit ids whose mech.destroyed_reason (Fase D) is set, keyed to
+   * WHICH reason — same per-view "caller resolves its own mechs lookup"
+   * pattern as heatByUnitId/proneUnitIds above. See UnitMarker's own
+   * destroyedReason doc comment for what each value renders as. */
+  destroyedReasonByUnitId?: Map<number, 'structural' | 'pilot_killed'>
   /** Real fog of war — "q,r" keys of every hex the CALLER considers
    * currently known (TableView: the whole player team's union, via
    * app/units.py's _team_visible_hexes; FirstPersonView: just this one
@@ -1089,6 +1322,15 @@ export function HexMap({
    * the same shot's VFX just sits there finished, or never resets in
    * time for the next one to mount cleanly). */
   onAttackEffectDone?: () => void
+  /** Fires once a unit's walk animation genuinely finishes (UnitMarker's
+   * own onWalkDone, per the doc comment there) — real user request: the
+   * movement phase's turn should hold on the mover until their mech
+   * actually finishes sliding across the board, not the instant the
+   * server's moved_pilot_ids updates (which can arrive well before the
+   * animation catches up, especially over a longer route). Callers feed
+   * this into rounds.ts's useAnimationHeldMover-style hold hook instead
+   * of trusting activeMoverPilotId raw. */
+  onUnitWalkDone?: (unitId: number) => void
   /** A unit was clicked/tapped without being dragged to another hex — screen coords come straight off the native pointer event, for positioning an HTML context menu. */
   onUnitClick?: (unit: Unit, clientX: number, clientY: number) => void
   /** A tile was clicked with no drag in progress — the map's own free-standing "pick a hex" gesture (used by both attack-target and move-destination picking; the caller decides what a bare tile click means). clientX/clientY come straight off the native pointer event, same as onUnitClick/onUnitDragEnd, for anchoring a facing picker at the click point. */
@@ -1135,7 +1377,34 @@ export function HexMap({
   // height, not where the old elevation math would have put it.
   const groundYAt = (q: number, r: number) =>
     terrainAt.get(`${q},${r}`) === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + (elevationAt.get(`${q},${r}`) ?? 0) * 0.22
-  const visibleUnits = units.filter((u) => !(u.is_ghost && !u.revealed))
+  // Real user report (GM's own map, ALL CAPS this time): "EN EL MAPA DE
+  // GM SE VEN TODOS LOS MECHS DA IGUAL QUE ESTEN EN LOS O NO... en el
+  // unico sitio donde esos mechs tienen que estar ocultos hasta que les
+  // vean es en tableview" — the is_ghost check below is a fog-of-war
+  // concept, same as the teamVisibleHexes one right after it, and must
+  // be gated the SAME way: only when this caller actually passed
+  // teamVisibleHexes (TableView, FirstPersonView) does hiding apply at
+  // all. Omitting it (GMView/MapEditorView) keeps the GM omniscient —
+  // this used to be true only for the SECOND check below, while the
+  // ghost check fired unconditionally for every caller; harmless before
+  // anything ever actually set is_ghost=true, a real bug the instant it
+  // started mattering (units.py's own new auto-ghost-for-enemies).
+  //
+  // An enemy that had ever been seen once (is_ghost's own `revealed`
+  // flag, which only ever flips on and never back off — see units.py's
+  // own doc comment) stayed rendered forever after, regardless of
+  // whether it was still actually in LoS. teamVisibleHexes is the
+  // CURRENT, moment-to-moment fog (recomputed every visibility_update),
+  // so on top of the one-way ghost-reveal gate, hide an enemy unit
+  // whenever its own current hex isn't in it right now. Only 'enemy'
+  // faction is gated — a team's own units are always visible to
+  // themselves.
+  const visibleUnits = units.filter((u) => {
+    if (!teamVisibleHexes) return true
+    if (u.is_ghost && !u.revealed) return false
+    if (u.pilot_faction === 'enemy' && !teamVisibleHexes.has(`${u.q},${u.r}`)) return false
+    return true
+  })
   const [centerX, centerZ] = mapCenter(map.tiles)
   const needsInitiativeTiles = new Set(
     visibleUnits
@@ -1365,6 +1634,8 @@ export function HexMap({
           heat={heatByUnitId?.get(unit.id)}
           prone={proneUnitIds?.has(unit.id) ?? false}
           shutdown={shutdownUnitIds?.has(unit.id) ?? false}
+          destroyedReason={destroyedReasonByUnitId?.get(unit.id) ?? null}
+          onWalkDone={() => onUnitWalkDone?.(unit.id)}
           onPointerDown={() => {
             dragRef.current = { unit, startQ: unit.q, startR: unit.r }
             setHover({ q: unit.q, r: unit.r })

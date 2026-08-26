@@ -76,9 +76,17 @@ def undo_last_event(campaign_id: int) -> dict | None:
         if not row["undoable"]:
             raise NotUndoable(f"{row['event_type']!r} events can't be undone automatically")
         payload = json.loads(row["payload"])
-        _UNDO_HANDLERS[row["event_type"]](conn, campaign_id, payload)
+        _apply_undo(conn, campaign_id, row["event_type"], payload)
         conn.execute("UPDATE campaign_events SET undone = 1 WHERE id = ?", (row["id"],))
         return {"event_id": row["id"], "event_type": row["event_type"], "summary": row["summary"]}
+
+
+def _apply_undo(conn, campaign_id: int, event_type: str, payload: dict) -> None:
+    """The actual per-event-type dispatch, factored out of undo_last_event
+    so _undo_turn_acted (above) can reuse it to cascade-revert several
+    prior events in one go, not just undo_last_event's own single most-
+    recent row."""
+    _UNDO_HANDLERS[event_type](conn, campaign_id, payload)
 
 
 # ---- undo handlers, one per event_type ------------------------------------
@@ -252,24 +260,91 @@ def _undo_unit_moved(conn, campaign_id: int, payload: dict) -> None:
     )
 
 
+def _restore_combat_snapshot(conn, payload: dict) -> None:
+    """Shared by _undo_attack and _undo_melee (real user report: undo used
+    to only touch a narrow slice — one location's armor/structure, one
+    weapon's ammo/heat — so a hit that also rolled criticals or a fall
+    left those permanently un-undoable, and melee logged no event at all).
+    combat.py's resolve_attack / melee.py's resolve_melee_attack now both
+    snapshot BOTH mechs' full state (mechs.snapshot_full_state) + both
+    pilots' wound count before anything mutates, so restoring is just
+    replaying that snapshot wholesale via mechs.restore_full_state —
+    covers criticals/engine-gyro-sensor-life_support hits/prone/ammo-
+    explosions/falls that cascade from the shot, not just its own direct
+    armor/heat/ammo effects."""
+    from .systems.battletech import mechs
+
+    if payload.get("attacker_mech_id") is not None and payload.get("attacker_mech_snapshot"):
+        mechs.restore_full_state(conn, payload["attacker_mech_id"], payload["attacker_mech_snapshot"])
+    if payload.get("target_mech_id") is not None and payload.get("target_mech_snapshot"):
+        mechs.restore_full_state(conn, payload["target_mech_id"], payload["target_mech_snapshot"])
+    if payload.get("attacker_pilot_id") is not None and payload.get("attacker_pilot_hits_before") is not None:
+        conn.execute(
+            "UPDATE pilots SET hits = ? WHERE id = ?",
+            (payload["attacker_pilot_hits_before"], payload["attacker_pilot_id"]),
+        )
+    if payload.get("target_pilot_id") is not None and payload.get("target_pilot_hits_before") is not None:
+        conn.execute(
+            "UPDATE pilots SET hits = ? WHERE id = ?",
+            (payload["target_pilot_hits_before"], payload["target_pilot_id"]),
+        )
+    # Fase D: a Cockpit crit's pilots.mark_pilot_dead is just as much a
+    # mutation of this same shot as the wound count above — restore it
+    # from the same before-snapshot, not just hits.
+    if payload.get("attacker_pilot_id") is not None and payload.get("attacker_pilot_is_dead_before") is not None:
+        conn.execute(
+            "UPDATE pilots SET is_dead = ? WHERE id = ?",
+            (int(payload["attacker_pilot_is_dead_before"]), payload["attacker_pilot_id"]),
+        )
+    if payload.get("target_pilot_id") is not None and payload.get("target_pilot_is_dead_before") is not None:
+        conn.execute(
+            "UPDATE pilots SET is_dead = ? WHERE id = ?",
+            (int(payload["target_pilot_is_dead_before"]), payload["target_pilot_id"]),
+        )
+
+
 def _undo_attack(conn, campaign_id: int, payload: dict) -> None:
-    before = payload.get("before")
-    if before:
-        conn.execute(
-            f"UPDATE mech_locations SET {before['armor_field']} = ?, structure_current = ? "
-            "WHERE mech_id = ? AND location = ?",
-            (before["armor_before"], before["structure_before"], before["mech_id"], before["location"]),
-        )
-    weapon = payload.get("weapon")
-    if weapon:
-        conn.execute(
-            "UPDATE mech_weapons SET ammo_remaining = ? WHERE id = ?",
-            (weapon["ammo_before"], weapon["mech_weapon_id"]),
-        )
-        conn.execute(
-            "UPDATE mechs SET heat_current = ? WHERE id = ?",
-            (weapon["heat_before"], weapon["attacker_mech_id"]),
-        )
+    _restore_combat_snapshot(conn, payload)
+
+
+def _undo_melee(conn, campaign_id: int, payload: dict) -> None:
+    _restore_combat_snapshot(conn, payload)
+
+
+def _undo_turn_acted(conn, campaign_id: int, payload: dict) -> None:
+    """Real user report: "ataqué con todas las armas, un click de
+    deshacer debería revertir TODO... y debería volver al momento en el
+    que le tocaba atacar a ese mech" — mark_acted (turns.py) logs this
+    event once, right when a pilot's WHOLE activation (every weapon in
+    the volley, or the one melee attack) finishes. Undoing it cascades
+    back through every "attack"/"melee" event THIS pilot logged THIS
+    round that isn't already undone (each carries attacker_pilot_id/
+    round_number for exactly this lookup) — not just the single most
+    recent one — via the same per-event handler _apply_undo already uses
+    for an ordinary undo, then clears the bt_round_acted row so the
+    pilot is immediately eligible to act again (activeAttackPilotIds is a
+    live query, not cached — no extra bookkeeping needed for that part)."""
+    pilot_id = payload["pilot_id"]
+    round_number = payload["round_number"]
+    rows = conn.execute(
+        "SELECT id, event_type, payload FROM campaign_events "
+        "WHERE campaign_id = ? AND event_type IN ('attack', 'melee') AND undone = 0 ORDER BY id DESC",
+        (campaign_id,),
+    ).fetchall()
+    for row in rows:
+        row_payload = json.loads(row["payload"])
+        if row_payload.get("attacker_pilot_id") != pilot_id or row_payload.get("round_number") != round_number:
+            continue
+        _apply_undo(conn, campaign_id, row["event_type"], row_payload)
+        conn.execute("UPDATE campaign_events SET undone = 1 WHERE id = ?", (row["id"],))
+    conn.execute("DELETE FROM bt_round_acted WHERE campaign_id = ? AND pilot_id = ?", (campaign_id, pilot_id))
+
+
+def _undo_phase_passed(conn, campaign_id: int, payload: dict) -> None:
+    conn.execute(
+        "DELETE FROM bt_round_passed WHERE campaign_id = ? AND pilot_id = ? AND phase = ?",
+        (campaign_id, payload["pilot_id"], payload["phase"]),
+    )
 
 
 _UNDO_HANDLERS = {
@@ -293,4 +368,7 @@ _UNDO_HANDLERS = {
     "unit_removed": _undo_unit_removed,
     "unit_moved": _undo_unit_moved,
     "attack": _undo_attack,
+    "melee": _undo_melee,
+    "turn_acted": _undo_turn_acted,
+    "phase_passed": _undo_phase_passed,
 }

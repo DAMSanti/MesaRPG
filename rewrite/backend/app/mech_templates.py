@@ -67,13 +67,29 @@ def template_count() -> int:
         return conn.execute("SELECT COUNT(*) AS n FROM mech_templates").fetchone()["n"]
 
 
-def list_chassis() -> list[str]:
-    """Distinct chassis names — the first of the GM's two cascading
-    dropdowns (ROADMAP.md Fase R3 follow-up, requested directly: pick a
-    real chassis/model instead of typing armor/structure by hand)."""
+def list_chassis() -> list[dict]:
+    """Distinct chassis names (+ tonnage, one variant's worth — real
+    catalog chassis are consistent-tonnage across their own variants) —
+    the first of the GM's/player's two cascading dropdowns (ROADMAP.md
+    Fase R3 follow-up, requested directly: pick a real chassis/model
+    instead of typing armor/structure by hand). tonnage is what the
+    frontend groups this dropdown into Light/Medium/Heavy/Assault by
+    (real user request) — MIN per chassis rather than an arbitrary pick,
+    though in practice every variant of one chassis shares a tonnage."""
     with db.connect() as conn:
-        rows = conn.execute("SELECT DISTINCT chassis FROM mech_templates ORDER BY chassis").fetchall()
-    return [r["chassis"] for r in rows]
+        # A handful of MTF source files failed to parse their own
+        # Chassis:/Model: header line, leaving that raw label as the
+        # chassis name itself (real user report, confirmed against the
+        # live catalog) — excluded here rather than fixed at import time,
+        # since fixing sync_mech_catalog.py's parser is a separate task.
+        rows = conn.execute(
+            """
+            SELECT chassis, MIN(tonnage) AS tonnage FROM mech_templates
+            WHERE chassis NOT LIKE 'chassis:%' AND chassis NOT LIKE 'model:%'
+            GROUP BY chassis ORDER BY chassis
+            """
+        ).fetchall()
+    return [{"chassis": r["chassis"], "tonnage": r["tonnage"]} for r in rows]
 
 
 def list_models(chassis: str) -> list[dict]:

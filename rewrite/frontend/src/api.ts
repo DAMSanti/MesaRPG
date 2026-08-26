@@ -253,6 +253,18 @@ export interface Pilot {
    * default. */
   dice_mode: 'physical' | 'auto'
   is_own: boolean
+  /** True if SOME device (any device, not necessarily this one) has
+   * claimed this pilot — i.e. it has an owner_token set. Combined with
+   * is_own, a pilot claimed by someone else is is_claimed && !is_own:
+   * PlayerView's picker hides those (real user request: a pilot already
+   * in use by another device shouldn't be pickable by a second one). */
+  is_claimed: boolean
+  /** A Cockpit critical (criticals.py's apply_critical_effects) kills the
+   * pilot outright — permanent, unlike the ordinary wound track (`hits`),
+   * which a pilot can recover from. Real user request: mech destruction
+   * needed a distinct "the pilot actually died" signal, not just
+   * "knocked out by wounds". */
+  is_dead: boolean
   /** Whether this pilot has a 4-digit PIN set (never the PIN/hash
    * itself, which never leaves the server) — a pilot without one is
    * freely selectable from PlayerView's shared list, no prompt. */
@@ -301,6 +313,12 @@ export interface Mech {
   /** Fell (psr.py's apply_fall) — can't move/attack except attempting to
    * stand back up (api.ts's standUp). */
   is_prone: boolean
+  /** Fase D — persisted once, never cleared: 'structural' (CT/HD
+   * structure or the 3rd engine hit — explodes) or 'pilot_killed' (a
+   * Cockpit critical, mech otherwise structurally intact — falls limp
+   * instead). null means still standing. Distinct from is_shutdown/
+   * is_prone, which are both recoverable; this never is. */
+  destroyed_reason: 'structural' | 'pilot_killed' | null
   gyro_hits: number
   engine_hits: number
   sensor_hits: number
@@ -356,6 +374,13 @@ export async function verifyPilotPin(pilotId: number, pin: string): Promise<bool
   if (!res.ok) throw new Error(`POST /api/pilots/${pilotId}/verify-pin → ${res.status}`)
   return true
 }
+
+/** Claims a pilot for this device before PlayerView finalizes picking
+ * it — throws (with a 409) if another device already claimed it, which
+ * callers should handle as "someone beat you to it, pick again" rather
+ * than silently proceeding as if it succeeded. */
+export const claimPilot = (pilotId: number, token: string) =>
+  request<Pilot>(`/api/pilots/${pilotId}/claim`, { method: 'POST', headers: tokenHeaders(token) })
 
 export const reviewPilot = (pilotId: number, decision: 'approved' | 'rejected', note?: string) =>
   request<Pilot>(`/api/pilots/${pilotId}/review`, {
@@ -428,10 +453,18 @@ export const searchMechImport = (q: string) =>
 export const getMechImport = (filename: string) =>
   request<MechImportData>(`/api/mech-import/${encodeURIComponent(filename)}`)
 
-// The GM's two cascading dropdowns (chassis, then model) over the same
-// local catalog searchMechImport reads — pick a real mech instead of
-// typing tonnage/armor/structure by hand.
-export const listMechChassis = () => request<string[]>('/api/mech-catalog/chassis')
+// The GM's/player's two cascading dropdowns (chassis, then model) over
+// the same local catalog searchMechImport reads — pick a real mech
+// instead of typing tonnage/armor/structure by hand. tonnage rides
+// along per chassis (real user request: group this dropdown by
+// Light/Medium/Heavy/Assault — see weightClass.ts) instead of a second
+// round trip to look it up.
+export interface MechChassisResult {
+  chassis: string
+  tonnage: number
+}
+
+export const listMechChassis = () => request<MechChassisResult[]>('/api/mech-catalog/chassis')
 
 export interface MechModelResult {
   name: string
@@ -650,8 +683,46 @@ export interface AttackResult {
   mech_destroyed: boolean
 }
 
+// Fase B: a pilot with dice_mode='physical' makes the server pause
+// mid-resolution instead of returning a finished AttackResult — attack()
+// (and reportPendingRoll below) can return either shape, and every
+// caller (GMView's weapon volley, FirstPersonView's own fire flow) needs
+// to branch on isPendingRollResult before treating the response as a
+// finished shot. TableView is the one that actually drives the physical-
+// dice loop (see its own physical_roll_requested handling) — a caller
+// submitting an attack just needs to know to WAIT rather than assume it
+// already has a result.
+export interface PendingRollResult {
+  pending: true
+  pending_roll_id: number
+}
+
+export type AttackOutcome = AttackResult | PendingRollResult
+
+// Generic over T so this accepts any *Outcome union (AttackOutcome,
+// MeleeAttackOutcome, ...) rather than just AttackOutcome specifically —
+// every one of those unions is "some real result shape, or
+// PendingRollResult". A plain `{ pending?: boolean }` parameter type
+// looked simpler but TS treats an all-optional-properties type as
+// "weak" and refuses to match it structurally against a real result
+// shape with no properties in common at all.
+export function isPendingRollResult<T>(x: T | PendingRollResult): x is PendingRollResult {
+  return typeof x === 'object' && x !== null && 'pending' in x && (x as PendingRollResult).pending === true
+}
+
 export const attack = (campaignId: number, body: AttackIn) =>
-  request<AttackResult>(`/api/campaigns/${campaignId}/attack`, { method: 'POST', body: JSON.stringify(body) })
+  request<AttackOutcome>(`/api/campaigns/${campaignId}/attack`, { method: 'POST', body: JSON.stringify(body) })
+
+// TableView calls this once the real physical die/dice it spawned for a
+// physical_roll_requested broadcast have settled — `dice` is each die's
+// own face, in the order dice_spec asked for (length 1 or 2). May itself
+// return ANOTHER pending result if the resolution needs yet another
+// roll (e.g. impact hit, now waiting on the hit-location roll) — the
+// caller loops the same way until it gets a real AttackResult back.
+export const reportPendingRoll = (campaignId: number, pendingRollId: number, dice: number[]) =>
+  request<AttackOutcome>(`/api/campaigns/${campaignId}/pending-rolls/${pendingRollId}/report`, {
+    method: 'POST', body: JSON.stringify({ dice }),
+  })
 
 export const undoLastAction = (campaignId: number) =>
   request(`/api/campaigns/${campaignId}/undo`, { method: 'POST' })
@@ -735,6 +806,15 @@ export interface RoundState {
    * when GMView calls resolveHeatPhase itself (rounds.ts's currentPhase
    * reaching 'other'), no GM button needed. */
   heat_resolved: boolean
+  /** Every combat pilot present when THIS round's start_round ran
+   * (turns.py's bt_round_participants snapshot) — a pilot/mech added
+   * mid-round isn't in here, and can't move/attack/roll meaningfully
+   * until the NEXT round (real user request: "si se mete un nuevo mech
+   * en mitad de un combate... debe empezar a actuar en el siguiente
+   * turno"). rounds.ts's pilotsNeedingInitiative uses this to stop
+   * flagging a just-joined pilot as "missing a roll" they were never
+   * going to get a turn from anyway this round. */
+  participant_pilot_ids: number[]
 }
 
 export const getRound = (campaignId: number) => request<RoundState>(`/api/campaigns/${campaignId}/round`)
@@ -768,13 +848,25 @@ export interface MeleeAttackResult {
   hit_results: { location: string; amount: number }[]
   self_damage_results: { location: string; amount: number }[]
   mech_destroyed: boolean
+  /** Charge/DFA's own recoil damage can destroy the ATTACKER's mech too
+   * (Fase A gap fix — see melee.py's own _mech_destroyed on self_damage_
+   * results) — a separate flag from mech_destroyed (which always means
+   * "the target died") since a real attack can trigger both at once. */
+  attacker_mech_destroyed: boolean
   fall: Record<string, unknown> | null
   self_fall: Record<string, unknown> | null
   target_psr?: { success: boolean }
 }
 
+// Fase B: same pending/report shape as attack()/PendingRollResult above —
+// punch/kick can pause for a physical-mode pilot (charge/DFA's own
+// grouped damage stays instant, see melee.py's own documented scope
+// limit). Callers must branch on isPendingRollResult the same way they
+// already do for attack().
+export type MeleeAttackOutcome = MeleeAttackResult | PendingRollResult
+
 export const submitMeleeAttack = (unitId: number, targetUnitId: number, attackType: MeleeAttackType, arm?: 'left' | 'right') =>
-  request<MeleeAttackResult>(`/api/units/${unitId}/melee`, {
+  request<MeleeAttackOutcome>(`/api/units/${unitId}/melee`, {
     method: 'POST',
     body: JSON.stringify({ target_unit_id: targetUnitId, attack_type: attackType, arm }),
   })

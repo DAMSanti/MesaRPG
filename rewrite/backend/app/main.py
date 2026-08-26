@@ -15,7 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import campaigns, db, dice_styles, equipment, events, mapgen, maps, mech_templates, rolls, systems, table_session, units
+from . import campaigns, db, dice_resolution, dice_styles, equipment, events, mapgen, maps, mech_templates, rolls, systems, table_session, units
 from .systems.battletech import combat, mechs, melee, movement, pilots, psr, turns, weapons
 from .systems.dnd5e import characters as dnd_characters
 from .systems.dnd5e import combat as dnd_combat
@@ -166,6 +166,13 @@ def _sanitize_pilot(pilot: dict, token: str | None) -> dict:
     sanitized = dict(pilot)
     owner_token = sanitized.pop("owner_token", None)
     sanitized["is_own"] = owner_token is not None and owner_token == token
+    # Real user request/report: PlayerView's own pilot picker must not
+    # offer a pilot someone else already claimed as theirs — the raw
+    # owner_token itself never leaves the server (same as before), but
+    # "is somebody's" now does, so the picker can filter those out
+    # instead of letting a second device silently start acting as the
+    # same character.
+    sanitized["is_claimed"] = owner_token is not None
     return sanitized
 
 
@@ -340,6 +347,27 @@ def verify_pilot_pin(pilot_id: int, body: VerifyPinIn) -> dict:
     return {"ok": True}
 
 
+@app.post("/api/pilots/{pilot_id}/claim")
+async def claim_pilot(
+    pilot_id: int, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
+) -> dict:
+    """PlayerView's "¿Quién eres?" picker calls this before finalizing a
+    choice — real user request: a pilot already claimed by another
+    device must not be selectable by a second one. Requires a device
+    token (an anonymous device can't claim anything); a same-device
+    re-claim of its own pilot is a no-op, a different device claiming an
+    already-owned pilot is rejected."""
+    _require_pilot(pilot_id)
+    if not x_device_token:
+        raise HTTPException(400, "X-Device-Token header is required to claim a pilot")
+    try:
+        updated = pilots.claim_pilot(pilot_id, x_device_token)
+    except pilots.PilotAlreadyClaimed as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
+    return _sanitize_pilot(updated, x_device_token)
+
+
 class ReviewIn(BaseModel):
     decision: str
     note: str | None = None
@@ -483,6 +511,28 @@ async def patch_mech(
     return _sanitize_mech(updated, x_device_token)
 
 
+class ClaimMechIn(BaseModel):
+    pilot_id: int
+
+
+@app.post("/api/mechs/{mech_id}/claim")
+async def claim_mech(mech_id: int, body: ClaimMechIn) -> dict:
+    """A player claims an unassigned mech from the campaign's own roster
+    (PlayerView's "elegir un mech existente", real user request) —
+    deliberately a separate endpoint from the generic PATCH above, which
+    stays unrestricted for the GM's own "Editar mech" reassignment
+    (a trusted admin action). This one refuses to hand a mech to a
+    second pilot once it already has a different one (real user report:
+    "un mismo mech no le pueden usar dos players")."""
+    _require_mech(mech_id)
+    try:
+        updated = mechs.claim_mech(mech_id, body.pilot_id)
+    except mechs.MechAlreadyClaimed as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
+    return updated
+
+
 @app.post("/api/mechs/{mech_id}/review")
 async def review_mech(
     mech_id: int, body: ReviewIn, x_device_token: str | None = Header(default=None, alias="X-Device-Token")
@@ -578,10 +628,12 @@ def search_mech_import(q: str) -> list[dict]:
 
 
 @app.get("/api/mech-catalog/chassis")
-def list_mech_chassis() -> list[str]:
-    """The GM's chassis dropdown (ROADMAP.md Fase R3 follow-up) — a
-    distinct path from /api/mech-import/{filename} below on purpose, so
-    "chassis" is never ambiguous with a real .mtf filename."""
+def list_mech_chassis() -> list[dict]:
+    """The GM's/player's chassis dropdown (ROADMAP.md Fase R3 follow-up)
+    — a distinct path from /api/mech-import/{filename} below on purpose,
+    so "chassis" is never ambiguous with a real .mtf filename. Each
+    entry's own tonnage (real user request: group this dropdown by
+    Light/Medium/Heavy/Assault) lives here, not a second round trip."""
     return mech_templates.list_chassis()
 
 
@@ -811,7 +863,13 @@ async def delete_unit(unit_id: int) -> dict:
     if not unit:
         raise HTTPException(404, f"Unit {unit_id} not found")
     units.delete_unit(unit_id)
+    # Real user report: a pilot removed from the map mid-round stayed
+    # stuck in that round's own participant snapshot forever, blocking
+    # movement_order on a turn with no unit left to give it to.
+    if unit["pilot_id"] is not None:
+        turns.remove_participant(unit["campaign_id"], unit["pilot_id"])
     await _broadcast_visibility(unit["campaign_id"], unit["map_id"])
+    await manager.broadcast(unit["campaign_id"], {"type": "round_updated", **turns.get_round(unit["campaign_id"])})
     return {"deleted": True}
 
 
@@ -983,13 +1041,52 @@ class AttackIn(BaseModel):
     other_modifiers: int = 0
 
 
+async def _broadcast_physical_roll_requested(campaign_id: int, exc: dice_resolution.PendingRoll) -> None:
+    """Fase B — a step needed a real physical die and a pilot in dice_mode
+    'physical' owns it (dice_resolution.run_step already checked this
+    before raising). Same die_style-fallback logic as turns.py's own
+    request_pilot_initiative (a GM-controlled enemy/npc pilot with no
+    style of its own borrows the GM's pick), duplicated rather than
+    shared since that function's own docstring is specific to initiative
+    and this is a different, newer broadcast type."""
+    die_style = None
+    pilot_name = None
+    color = None
+    if exc.pilot_id is not None:
+        pilot = pilots.get_pilot(exc.pilot_id)
+        if pilot:
+            pilot_name = pilot["name"]
+            color = pilot["color"]
+            die_style = pilot["die_style"]
+            if die_style is None and pilot["faction"] in ("enemy", "npc"):
+                campaign = campaigns.get_campaign(campaign_id)
+                die_style = campaign["gm_die_style"] if campaign else None
+    await manager.broadcast(campaign_id, {
+        "type": "physical_roll_requested",
+        "pending_roll_id": exc.pending_roll_id,
+        "pilot_id": exc.pilot_id,
+        "pilot_name": pilot_name,
+        "color": color,
+        "die_style": die_style,
+        "dice_spec": exc.dice_spec,
+        "purpose": exc.purpose,
+    })
+
+
 @app.post("/api/campaigns/{campaign_id}/attack")
 async def attack(campaign_id: int, body: AttackIn) -> dict:
     campaign = _require_campaign(campaign_id)
     try:
-        result = combat.resolve_attack(campaign_id=campaign_id, **body.model_dump())
+        result = combat.run_attack(campaign_id, body.model_dump())
     except ValueError as exc:
         raise HTTPException(422, str(exc)) from exc
+    except dice_resolution.PendingRoll as exc:
+        # Fase B: this pilot rolls physical dice — TableView needs to
+        # actually throw them and report back (see the endpoint below)
+        # before this attack can finish. No attack_result/round_updated
+        # broadcast yet; those only fire once the whole thing resolves.
+        await _broadcast_physical_roll_requested(campaign_id, exc)
+        return {"pending": True, "pending_roll_id": exc.pending_roll_id}
     await manager.broadcast(campaign_id, {"type": "attack_result", **result})
     # A shot changes heat/ammo (always) and armor/structure (on a hit) —
     # every connected client needs to see that on the mech sheet, not just
@@ -997,6 +1094,70 @@ async def attack(campaign_id: int, body: AttackIn) -> dict:
     # submitAttackFromPanel already refetches locally after this returns,
     # which is why this bug was easy to miss). Same visibility_update +
     # round_updated pairing app/main.py's move-with-mp already broadcasts.
+    if campaign["active_map_id"] is not None:
+        await _broadcast_visibility(campaign_id, campaign["active_map_id"])
+    await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
+    return result
+
+
+class PendingRollReportIn(BaseModel):
+    dice: list[int]
+
+
+@app.post("/api/campaigns/{campaign_id}/pending-rolls/{pending_roll_id}/report")
+async def report_pending_roll(campaign_id: int, pending_roll_id: int, body: PendingRollReportIn) -> dict:
+    """TableView calls this once the real physical die/dice it spawned for
+    a physical_roll_requested broadcast have actually settled — reads the
+    real face(s) off the die same as initiative's own report-initiative
+    endpoint does, no server-side correction. "attack"/"melee"/"stand_up"/
+    "heat_phase" are the `kind`s that exist today (Fase B — every roll
+    this app makes is now physical-dice-aware, initiative's own separate
+    request/report pair aside, see main.py's own note on that)."""
+    campaign = _require_campaign(campaign_id)
+    pending = dice_resolution.get_pending(pending_roll_id)
+    if pending is None or pending["campaign_id"] != campaign_id:
+        raise HTTPException(404, "No such pending roll")
+    expected = 2 if pending["next_dice_spec"] == "2d6" else 1
+    if len(body.dice) != expected:
+        raise HTTPException(422, f"Expected {expected} dice for a {pending['next_dice_spec']} roll, got {len(body.dice)}")
+    dice_resolution.delete_pending(pending_roll_id)
+    collected = pending["collected"] + [(pending["next_purpose"], body.dice)]
+
+    if pending["kind"] not in ("attack", "melee", "stand_up", "heat_phase"):
+        raise HTTPException(404, f"Unknown pending-roll kind {pending['kind']!r}")
+
+    try:
+        if pending["kind"] == "attack":
+            result = combat.run_attack(campaign_id, ctx=pending["ctx"], committed=pending["committed"], collected=collected)
+        elif pending["kind"] == "melee":
+            result = melee.run_melee_attack(campaign_id, ctx=pending["ctx"], committed=pending["committed"], collected=collected)
+        elif pending["kind"] == "stand_up":
+            result = psr.run_stand_up(ctx=pending["ctx"], committed=pending["committed"], collected=collected)
+        else:
+            result = turns.run_heat_phase(campaign_id, ctx=pending["ctx"], committed=pending["committed"], collected=collected)
+    except dice_resolution.PendingRoll as exc:
+        await _broadcast_physical_roll_requested(campaign_id, exc)
+        return {"pending": True, "pending_roll_id": exc.pending_roll_id}
+
+    if pending["kind"] == "stand_up":
+        # Same shape as stand_up_unit's own non-pending path — the whole
+        # Movement Phase is only consumed once the real roll (and any
+        # resulting fall) has actually resolved.
+        unit_id = pending["ctx"]["unit_id"]
+        unit = units.get_unit(unit_id) if unit_id is not None else None
+        if unit is not None:
+            movement.record_free_move(campaign_id, unit, unit["q"], unit["r"])
+        await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
+        await manager.broadcast(campaign_id, {"type": "roster_updated"})
+        return result
+
+    if pending["kind"] == "heat_phase":
+        await manager.broadcast(campaign_id, {"type": "heat_phase_resolved", **result})
+        await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
+        return result
+
+    broadcast_type = "attack_result" if pending["kind"] == "attack" else "melee_result"
+    await manager.broadcast(campaign_id, {"type": broadcast_type, **result})
     if campaign["active_map_id"] is not None:
         await _broadcast_visibility(campaign_id, campaign["active_map_id"])
     await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
@@ -1023,13 +1184,18 @@ async def melee_attack(unit_id: int, body: MeleeAttackIn) -> dict:
         raise HTTPException(404, f"Unit {unit_id} not found")
     campaign = _require_campaign(attacker["campaign_id"])
     try:
-        result = melee.resolve_melee_attack(attacker["campaign_id"], unit_id, body.target_unit_id, body.attack_type, body.arm)
+        result = melee.run_melee_attack(attacker["campaign_id"], unit_id, body.target_unit_id, body.attack_type, body.arm)
     except melee.UnknownMeleeAttackType as exc:
         raise HTTPException(422, str(exc)) from exc
     except (melee.NotAdjacent, melee.InvalidMeleeAttack, combat.NoLineOfSight) as exc:
         raise HTTPException(422, str(exc)) from exc
-    except melee.MechIncapacitated as exc:
+    except (melee.MechIncapacitated, combat.TargetAlreadyDestroyed) as exc:
         raise HTTPException(409, str(exc)) from exc
+    except dice_resolution.PendingRoll as exc:
+        # Fase B: same physical-dice pause as /attack — see its own
+        # comment above.
+        await _broadcast_physical_roll_requested(attacker["campaign_id"], exc)
+        return {"pending": True, "pending_roll_id": exc.pending_roll_id}
     await manager.broadcast(attacker["campaign_id"], {"type": "melee_result", **result})
     if campaign["active_map_id"] is not None:
         await _broadcast_visibility(attacker["campaign_id"], campaign["active_map_id"])
@@ -1041,12 +1207,35 @@ async def melee_attack(unit_id: int, body: MeleeAttackIn) -> dict:
 async def stand_up_unit(unit_id: int) -> dict:
     """A prone mech's only "movement" option — a Piloting Skill Roll to
     get back up (psr.py's stand_up), separate from normal move-with-mp
-    since it doesn't spend hexes/facing the same way."""
+    since it doesn't spend hexes/facing the same way. Real rule (real
+    user report: "se levanta y permite mover en la misma ronda... eso
+    deberia ser asi? me parece que no" — correct, it shouldn't): standing
+    up uses the WHOLE Movement Phase, success or fail — a mech can't
+    also walk/run/jump afterward the same round. Recorded the same
+    "0-hex move" way onSkipMovement/onRotate already do, so
+    activeMoverPilotId/moved_pilot_ids treat this pilot as done moving."""
     unit = units.get_unit(unit_id)
     if not unit or unit["mech_id"] is None:
         raise HTTPException(404, f"Unit {unit_id} not found")
-    result = psr.stand_up(unit["mech_id"])
+    try:
+        result = psr.run_stand_up(unit["mech_id"], unit_id)
+    except dice_resolution.PendingRoll as exc:
+        # Fase B: same physical-dice pause as /attack — deliberately does
+        # NOT call record_free_move yet (below) — the whole Movement
+        # Phase only gets consumed once the real roll (and any resulting
+        # fall) has actually resolved, not while it's still pending.
+        await _broadcast_physical_roll_requested(unit["campaign_id"], exc)
+        return {"pending": True, "pending_roll_id": exc.pending_roll_id}
+    movement.record_free_move(unit["campaign_id"], unit, unit["q"], unit["r"])
     await manager.broadcast(unit["campaign_id"], {"type": "round_updated", **turns.get_round(unit["campaign_id"])})
+    # Real user report: standing up correctly cleared is_prone (GMView
+    # showed it fine — it refetches itself right after the call), but
+    # TableView/FirstPersonView never noticed, since they only refresh
+    # their own local `mechs` state off broadcasts, and this endpoint
+    # wasn't sending one that means "a mech changed" — round_updated only
+    # carries round/phase data, not mech state. A failed attempt also
+    # applies real fall damage (psr.apply_fall), so this covers that too.
+    await manager.broadcast(unit["campaign_id"], {"type": "roster_updated"})
     return result
 
 
@@ -1068,6 +1257,13 @@ async def undo(campaign_id: int) -> dict:
     await manager.broadcast(campaign_id, {"type": "roster_updated"})
     if campaign["active_map_id"] is not None:
         await _broadcast_visibility(campaign_id, campaign["active_map_id"])
+    # Real user report: everything reverted (armor/heat/criticals/etc via
+    # roster_updated above) except the "whose turn" overlay — undoing a
+    # turn_acted/attack/melee/round_started event changes bt_round_acted/
+    # bt_round_moves/bt_rounds, but nothing told any connected client to
+    # refetch round state (every OTHER round-mutating endpoint already
+    # broadcasts this same round_updated pairing; this was the one gap).
+    await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
     return result
 
 
@@ -1102,7 +1298,17 @@ async def resolve_heat(campaign_id: int) -> dict:
     nothing left to act on (no GM button needed), and a second call from
     another open tab is a harmless no-op."""
     _require_campaign(campaign_id)
-    result = turns.resolve_heat_phase(campaign_id)
+    try:
+        result = turns.run_heat_phase(campaign_id)
+    except dice_resolution.PendingRoll as exc:
+        # Fase B: same physical-dice pause as /attack — each mech's own
+        # pilot governs whether THEIR shutdown/ammo rolls pause,
+        # independent of every other mech's (see turns.run_heat_phase's
+        # own docstring). Whichever caller triggered this (every screen
+        # calls it the instant it sees nothing left to act on) just needs
+        # to know to wait — TableView is what actually throws the dice.
+        await _broadcast_physical_roll_requested(campaign_id, exc)
+        return {"pending": True, "pending_roll_id": exc.pending_roll_id}
     await manager.broadcast(campaign_id, {"type": "heat_phase_resolved", **result})
     await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
     return result
@@ -1158,7 +1364,7 @@ async def request_round_initiative(campaign_id: int, body: RollInitiativeIn) -> 
     _require_campaign(campaign_id)
     try:
         result = turns.request_pilot_initiative(campaign_id, body.pilot_id)
-    except (turns.WrongInitiativeMode, turns.RoundNotStarted, turns.UnknownCombatPilot) as exc:
+    except (turns.WrongInitiativeMode, turns.RoundNotStarted, turns.UnknownCombatPilot, turns.PilotIsDestroyed) as exc:
         raise HTTPException(422, str(exc)) from exc
 
     pilot = pilots.get_pilot(body.pilot_id)
@@ -1166,7 +1372,7 @@ async def request_round_initiative(campaign_id: int, body: RollInitiativeIn) -> 
         _, _, total = combat.roll_2d6()
         try:
             round_state = turns.report_pilot_initiative(campaign_id, body.pilot_id, total)
-        except (turns.WrongInitiativeMode, turns.RoundNotStarted, turns.UnknownCombatPilot, turns.InvalidRollValue) as exc:
+        except (turns.WrongInitiativeMode, turns.RoundNotStarted, turns.UnknownCombatPilot, turns.InvalidRollValue, turns.PilotIsDestroyed) as exc:
             raise HTTPException(422, str(exc)) from exc
         await manager.broadcast(campaign_id, {"type": "round_updated", **round_state})
         return round_state
@@ -1194,7 +1400,7 @@ async def report_round_initiative(campaign_id: int, body: ReportInitiativeIn) ->
     _require_campaign(campaign_id)
     try:
         result = turns.report_pilot_initiative(campaign_id, body.pilot_id, body.roll)
-    except (turns.WrongInitiativeMode, turns.RoundNotStarted, turns.UnknownCombatPilot, turns.InvalidRollValue) as exc:
+    except (turns.WrongInitiativeMode, turns.RoundNotStarted, turns.UnknownCombatPilot, turns.InvalidRollValue, turns.PilotIsDestroyed) as exc:
         raise HTTPException(422, str(exc)) from exc
     for die_value in body.dice:
         if 1 <= die_value <= 6:

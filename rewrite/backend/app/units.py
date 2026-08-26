@@ -97,6 +97,19 @@ def create_unit(
         if mech and mech["status"] != "approved":
             raise MechNotApproved(f"Mech {mech_id} is {mech['status']!r}, not approved")
     with db.connect() as conn:
+        # Real user request: "los enemigos se colocan en el mapa y están
+        # ocultos hasta que el equipo les ve... el GM no tiene que
+        # colocarle como oculto, es algo automático" — an enemy-faction
+        # pilot's unit is ALWAYS a hidden contact until the team actually
+        # spots it (combined_visibility's own newly_revealed/EnemyReveal
+        # Cinematic), regardless of whatever `is_ghost` the caller passed
+        # (nothing in the frontend ever sets it explicitly today — there
+        # never was a manual "mark as hidden" GM toggle to begin with).
+        # player/npc pilots, and any unpiloted marker, are unaffected.
+        if pilot_id is not None:
+            pilot_row = conn.execute("SELECT faction FROM pilots WHERE id = ?", (pilot_id,)).fetchone()
+            if pilot_row and pilot_row["faction"] == "enemy":
+                is_ghost = True
         # A mech can only be on one map at a time (real user request) —
         # placing it here (even on a different map than before) replaces
         # whatever unit it already had, instead of leaving a duplicate
@@ -236,10 +249,24 @@ def combined_visibility(campaign_id: int, map_id: int) -> dict:
             if seen:
                 visible[target["id"]].append(pilot_id)
 
+    # Real user report: a ghost still showed the reveal cinematic even
+    # when placed somewhere the PLAYER team had no LoS to at all —
+    # `visible[target_id]` just needed to be non-empty, and that list can
+    # contain ANY pilot with a non-ghost observer unit, not just player
+    # ones (an enemy or npc pilot with a non-ghost unit — every enemy
+    # unit created before the auto-ghost fix above still is one — could
+    # "spot" a freshly placed enemy ghost and incorrectly count as a
+    # reveal). The whole point of this mechanic is the PLAYER team
+    # discovering a hidden threat, so only a player-faction pilot in that
+    # list should ever actually flip revealed.
+    pilot_faction_by_id = {u["pilot_id"]: u["pilot_faction"] for u in units if u["pilot_id"] is not None}
     newly_revealed = []
     with db.connect() as conn:
         for u in units:
-            if u["is_ghost"] and not u["revealed"] and visible.get(u["id"]):
+            if not u["is_ghost"] or u["revealed"]:
+                continue
+            seen_by_player = any(pilot_faction_by_id.get(pid) == "player" for pid in visible.get(u["id"], []))
+            if seen_by_player:
                 conn.execute("UPDATE units SET revealed = 1 WHERE id = ?", (u["id"],))
                 newly_revealed.append(u["id"])
 
@@ -369,6 +396,17 @@ def visible_enemies_from_unit(unit_id: int, require_facing: bool = True) -> list
         if not los(observer, observer_elevation, target_cell, target_elevation, tiles):
             continue
         mech = mechs.get_mech(target["mech_id"])
+        # Real user report: "no se tiene que poder atacar a un muerto" —
+        # combat.py/melee.py already refuse the actual shot (Target
+        # AlreadyDestroyed), but a destroyed mech was still showing up as
+        # a valid target here, both for GMView's own target-picker red
+        # tile wash and turns.py's own ranged/melee phase-eligibility scan
+        # (_pilots_with_ranged_targets/_pilots_with_melee_targets, both
+        # built on this same function) — an already-dead wreck could keep
+        # a phase artificially alive by still counting as "someone to
+        # shoot at".
+        if mech and mech["destroyed_reason"] is not None:
+            continue
         visible.append(
             {
                 "unit_id": target["id"],

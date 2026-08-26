@@ -1,6 +1,7 @@
 import { useMemo, useRef } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
+import { CuboidCollider, CylinderCollider, RigidBody } from '@react-three/rapier'
 import { SkeletonUtils } from 'three-stdlib'
 import * as THREE from 'three'
 import { hashTile, buildingKind, plainsGroundVariant, terrainTexture } from '../terrain'
@@ -809,7 +810,27 @@ function MudSurface({ q, r }: { q: number; r: number }) {
  * same tile always looks the same, unlike Math.random which would
  * reshuffle on every re-render) so a cluster of trees or buildings
  * doesn't look like one model copy-pasted. */
-export function TerrainDecor({ terrain, height, q, r }: { terrain: string; height: number; q: number; r: number }) {
+export function TerrainDecor({
+  terrain, height, q, r, physics,
+}: {
+  terrain: string
+  height: number
+  q: number
+  r: number
+  /** Real user request: dice should bounce off trees/buildings, not pass
+   * straight through them. The full .glb models here are tens of
+   * thousands of triangles each — a real hull collider per instance was
+   * already tried and rejected on cost (see the comment this replaced,
+   * still in HexMap.tsx's own Tile). A cheap PRIMITIVE approximation
+   * (one cylinder for a tree trunk, one box for a building footprint)
+   * gets the same "solid obstacle" result for a fraction of the cost,
+   * and — unlike an auto "hull" collider on the async-loaded model
+   * itself — never depends on the .glb finishing its own Suspense load
+   * to exist. Only TableView passes this (its embedded HexMap is the
+   * only one with real Physics/dice at all); omitted everywhere else,
+   * same as HexMap's own `physics` prop convention. */
+  physics?: boolean
+}) {
   if (terrain === 'forest' || terrain === 'light_forest') {
     const dense = terrain === 'forest'
     const seed = hashTile(q, r, 'forest-decor')
@@ -829,6 +850,14 @@ export function TerrainDecor({ terrain, height, q, r }: { terrain: string; heigh
     const jitterZ2 = (((seed2 >>> 14) % 100) / 100 - 0.5) * 0.65
     const rotY2 = ((seed2 >>> 20) % 628) / 100
 
+    // Rough trunk approximation — TREE_BASE_SCALE=2.2 is the model's own
+    // normalized-to-1-unit-tall → world-unit factor, so a tree's real
+    // height is ~2.2 * sizeMultiplier; the trunk itself only fills a
+    // fraction of that (the rest is canopy, which a die should be able
+    // to graze/tumble through same as it would real branches), so the
+    // collider itself is deliberately much shorter than the full model.
+    const trunkHalfHeight = 0.9 * sizeMultiplier
+    const trunkRadius = 0.18 * sizeMultiplier
     return (
       <>
         <group position={[jitterX, height, jitterZ]} rotation={[0, rotY, 0]}>
@@ -842,6 +871,20 @@ export function TerrainDecor({ terrain, height, q, r }: { terrain: string; heigh
         <group position={[0, height, 0]}>
           <LeafLitter q={q} r={r} />
         </group>
+        {physics && (
+          <RigidBody type="fixed" position={[jitterX, height + trunkHalfHeight, jitterZ]} colliders={false}>
+            <CylinderCollider args={[trunkHalfHeight, trunkRadius]} />
+          </RigidBody>
+        )}
+        {physics && dense && (
+          <RigidBody
+            type="fixed"
+            position={[jitterX2, height + trunkHalfHeight * 0.7, jitterZ2]}
+            colliders={false}
+          >
+            <CylinderCollider args={[trunkHalfHeight * 0.7, trunkRadius * 0.7]} />
+          </RigidBody>
+        )}
       </>
     )
   }
@@ -864,6 +907,21 @@ export function TerrainDecor({ terrain, height, q, r }: { terrain: string; heigh
     // make obvious across many tiles.
     const rotY = ((seed >>> 10) % 1000) / 1000 * Math.PI * 2
 
+    // Approximate footprint box — same reasoning as the tree trunk
+    // collider above (real user request: dice should bounce off
+    // buildings too, but a hull off the real multi-thousand-triangle
+    // model is the exact cost HexMap.tsx's own Tile comment already
+    // rejected). Sized to roughly fill a hex tile's own footprint
+    // (radius ~1) regardless of sizeMultiplier — a building's actual
+    // footprint reads as "fills its tile" visually even as the model
+    // itself scales, so the collider doesn't need to track sizeMultiplier
+    // precisely to feel right.
+    const buildingCollider = physics && (
+      <RigidBody type="fixed" position={[0, height + 1.5, 0]} colliders={false}>
+        <CuboidCollider args={[0.8, 1.5, 0.8]} />
+      </RigidBody>
+    )
+
     if (kind < 3) {
       // Real model (BUILDING_MODEL_URLS above — one shared mesh for all
       // three kinds now) — replaces the earlier procedural box per
@@ -873,9 +931,12 @@ export function TerrainDecor({ terrain, height, q, r }: { terrain: string; heigh
       const { min, spread } = BUILDING_KIND_SIZE[kind]
       const sizeMultiplier = min + jitter(4, spread)
       return (
-        <group position={[0, height, 0]} rotation={[0, rotY, 0]}>
-          <RealBuilding url={BUILDING_MODEL_URLS[kind]} sizeMultiplier={sizeMultiplier} tint={BUILDING_KIND_TINT[kind]} />
-        </group>
+        <>
+          <group position={[0, height, 0]} rotation={[0, rotY, 0]}>
+            <RealBuilding url={BUILDING_MODEL_URLS[kind]} sizeMultiplier={sizeMultiplier} tint={BUILDING_KIND_TINT[kind]} />
+          </group>
+          {buildingCollider}
+        </>
       )
     }
 
@@ -905,6 +966,7 @@ export function TerrainDecor({ terrain, height, q, r }: { terrain: string; heigh
           <boxGeometry args={[0.25, 0.12, 0.25]} />
           <meshStandardMaterial color="#443a34" />
         </mesh>
+        {buildingCollider}
       </group>
     )
   }

@@ -9,14 +9,14 @@ import { MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
 import { ARMOR_GEOMETRY, ARMOR_VIEWBOX, type MechLocationCode } from '../mechSheetGeometry'
 import { FacingPicker } from './FacingPicker'
 import {
-  attack, getMap, getUnitVisibleEnemies, getUnitVisibleHexes, getWeaponCatalog, markRoundActed, moveUnit,
-  moveUnitWithMp, requestInitiative, requestMovement, submitMeleeAttack,
+  attack, getMap, getUnitVisibleEnemies, getUnitVisibleHexes, getWeaponCatalog, isPendingRollResult, markRoundActed,
+  moveUnit, moveUnitWithMp, requestInitiative, requestMovement, submitMeleeAttack,
   type AttackResult, type Mech, type MapData, type MeleeAttackType, type MovementType, type ReachableHex,
   type RoundState, type Unit, type VisibleEnemy, type VisibleHex, type WeaponStats,
 } from '../api'
-import { activeMoverPilotId, currentPhase, useDisplayedPhase } from '../rounds'
+import { activeMoverPilotId, currentPhase, useDisplayedPhase, useHeldActiveMover } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
-import type { UnitWalked } from '../ws'
+import type { MeleeResult, UnitWalked } from '../ws'
 import './FirstPersonView.css'
 
 // Derived from Mech3D's own scale/proportions rather than a hardcoded
@@ -583,7 +583,7 @@ const PHASES: { key: Phase; label: string }[] = [
 ]
 
 export function FirstPersonView({
-  unit, mech, units, mechs, roundState, visibility, lastAttack, unitWalked, onClose,
+  unit, mech, units, mechs, roundState, visibility, lastAttack, lastMelee, unitWalked, onClose,
 }: {
   unit: Unit
   mech: Mech | null
@@ -610,6 +610,10 @@ export function FirstPersonView({
    * not a mirror of TableView's own canvas), so it needs this threaded
    * through explicitly to play the laser/tracer/missile animation too. */
   lastAttack?: AttackResult | null
+  /** Fase B: same wait-for-the-real-result need as lastAttack above, for
+   * this cockpit's own melee (punch/kick) flow — see fireMelee's own
+   * waitForNextMeleeResult. */
+  lastMelee?: MeleeResult | null
   /** Also from useTableSocket — real user report: any visible ally/enemy
    * mech walking across this cockpit's own <HexMap> instance had no
    * route data at all (only the player's OWN move, via the Movimiento
@@ -697,7 +701,7 @@ export function FirstPersonView({
   // theirs (see the lastAttack prop's own doc comment above), queued
   // (see useAttackVfxQueue's own doc comment) so a fast attack resolving
   // while a slower one still animates doesn't cut the first one off.
-  const { activeAttack: activeAttackVfx, onAttackEffectDone } = useAttackVfxQueue(lastAttack, units)
+  const { activeAttack: activeAttackVfx, onAttackEffectDone, waitForDrain: waitForAttackVfxDrain } = useAttackVfxQueue(lastAttack, units)
 
   // Red screen-edge flash on a successful incoming hit (real user
   // request) — a monotonic counter, not a boolean, so two hits landing
@@ -759,7 +763,8 @@ export function FirstPersonView({
   // an "¡INICIATIVA YA!"/"¡TU TURNO!" banner that fires for everyone in
   // the phase would be noise; the point is telling THIS pilot they're
   // the one being waited on.
-  const isMyMoveTurn = roundState != null && unit.pilot_id != null && activeMoverPilotId(roundState) === unit.pilot_id
+  const heldMover = useHeldActiveMover(roundState ? activeMoverPilotId(roundState) : null)
+  const isMyMoveTurn = unit.pilot_id != null && heldMover.displayedMoverPilotId === unit.pilot_id
   const activePhases: Set<Phase> =
     displayedPhase === 'movement'
       ? new Set(['movimiento'])
@@ -817,6 +822,9 @@ export function FirstPersonView({
   useEffect(() => {
     if (!unitWalked || unitWalked.path.length === 0) return
     setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+    const walkedUnit = units.find((u) => u.id === unitWalked.unit_id)
+    heldMover.onUnitWalkStart(unitWalked.unit_id, walkedUnit?.pilot_id ?? null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unitWalked])
 
   const startFpvMovement = async (movementType: MovementType) => {
@@ -904,6 +912,23 @@ export function FirstPersonView({
   )
   const isReachable = (enemy: VisibleEnemy) => (phase === 'melee' ? enemy.distance <= 1 : enemy.distance <= maxWeaponRange)
 
+  // Fase B: same "wait for the real attack_result before firing the next
+  // shot / marking acted" gap as GMView's own submitWeaponVolley — see
+  // its doc comment. A pilot with dice_mode='physical' makes attack()
+  // return {pending: true, ...} instead of a finished result; TableView
+  // is what actually throws the dice, so this cockpit only learns "done"
+  // via its own lastAttack prop eventually updating.
+  const pendingAttackResolversRef = useRef<(() => void)[]>([])
+  useEffect(() => {
+    if (!lastAttack) return
+    pendingAttackResolversRef.current.forEach((resolve) => resolve())
+    pendingAttackResolversRef.current = []
+  }, [lastAttack])
+  const waitForNextAttackResult = () =>
+    new Promise<void>((resolve) => {
+      pendingAttackResolversRef.current.push(resolve)
+    })
+
   // Sequential /attack calls, one per toggled weapon, same volley
   // pattern as GMView/PlayerView's own submitWeaponVolley — mirrored
   // here instead of shared because this one drives HUD-styled JSX below
@@ -913,11 +938,12 @@ export function FirstPersonView({
     setFiringVolley(true)
     for (const weaponId of weaponIds) {
       try {
-        await attack(unit.campaign_id, {
+        const outcome = await attack(unit.campaign_id, {
           attacker_unit_id: unit.id,
           target_unit_id: selectedTargetId,
           weapon_id: weaponId,
         })
+        if (isPendingRollResult(outcome)) await waitForNextAttackResult()
       } catch {
         // A rejected weapon (out of range/no ammo/no LOS) just doesn't
         // fire — the rest of the volley still goes out. No in-cockpit
@@ -926,17 +952,36 @@ export function FirstPersonView({
         // attack_result broadcast is the only record.
       }
     }
+    // Same "wait for the VFX queue to actually finish playing, not just
+    // for the last result to land" reasoning as GMView's own
+    // submitWeaponVolley — see useAttackVfxQueue's waitForDrain doc
+    // comment.
+    await waitForAttackVfxDrain()
     if (unit.pilot_id != null) await markRoundActed(unit.campaign_id, unit.pilot_id).catch(() => {})
     setFiringVolley(false)
     setSelectedTargetId(null)
   }
+
+  // Fase B: same wait-for-the-real-result need as fireVolley's own
+  // waitForNextAttackResult, watching lastMelee instead.
+  const pendingMeleeResolversRef = useRef<(() => void)[]>([])
+  useEffect(() => {
+    if (!lastMelee) return
+    pendingMeleeResolversRef.current.forEach((resolve) => resolve())
+    pendingMeleeResolversRef.current = []
+  }, [lastMelee])
+  const waitForNextMeleeResult = () =>
+    new Promise<void>((resolve) => {
+      pendingMeleeResolversRef.current.push(resolve)
+    })
 
   // Melee phase's single-attack equivalent of fireVolley above.
   const fireMelee = async (attackType: MeleeAttackType, arm?: 'left' | 'right') => {
     if (selectedTargetId == null) return
     setFiringVolley(true)
     try {
-      await submitMeleeAttack(unit.id, selectedTargetId, attackType, arm)
+      const outcome = await submitMeleeAttack(unit.id, selectedTargetId, attackType, arm)
+      if (isPendingRollResult(outcome)) await waitForNextMeleeResult()
     } catch {
       // rejected (not adjacent/incapacitated/movement doesn't qualify) —
       // same silent-skip stance as fireVolley above.
@@ -1100,6 +1145,11 @@ export function FirstPersonView({
     : new Map<number, number>()
   const proneUnitIds = new Set(sceneUnits.filter((u) => mechs?.find((m) => m.id === u.mech_id)?.is_prone).map((u) => u.id))
   const shutdownUnitIds = new Set(sceneUnits.filter((u) => mechs?.find((m) => m.id === u.mech_id)?.is_shutdown).map((u) => u.id))
+  const destroyedReasonByUnitId = new Map(
+    sceneUnits
+      .map((u) => [u.id, mechs?.find((m) => m.id === u.mech_id)?.destroyed_reason ?? null] as const)
+      .filter((entry): entry is [number, 'structural' | 'pilot_killed'] => entry[1] != null),
+  )
   // This cockpit's own fog of war (real user request: "esa niebla en el
   // FPV pero ahí solo mostrará lo que ve el personaje") — deliberately
   // NOT the team-wide union TableView uses, just this one unit's own
@@ -1229,6 +1279,7 @@ export function FirstPersonView({
                     units={sceneUnits}
                     activeAttack={activeAttackVfx}
                     onAttackEffectDone={onAttackEffectDone}
+                    onUnitWalkDone={heldMover.onUnitWalkDone}
                     moveHighlightHexes={movementHighlight ? new Set(movementHighlight.hexes.keys()) : undefined}
                     pathPreviewHexes={
                       pendingFacing?.kind === 'move' && pendingFacing.path
@@ -1242,6 +1293,7 @@ export function FirstPersonView({
                     heatByUnitId={heatByUnitId}
                     proneUnitIds={proneUnitIds}
                     shutdownUnitIds={shutdownUnitIds}
+                    destroyedReasonByUnitId={destroyedReasonByUnitId}
                     teamVisibleHexes={cockpitVisibleHexes}
                   />
                 </Suspense>

@@ -182,7 +182,7 @@ function setGroupOpacity(group: THREE.Group | null, opacity: number) {
   })
 }
 
-function ImpactFlash({ position, color }: { position: THREE.Vector3; color: string }) {
+export function ImpactFlash({ position, color }: { position: THREE.Vector3; color: string }) {
   const ref = useRef<THREE.Group>(null)
   const start = useRef<number | null>(null)
   useFrame((state) => {

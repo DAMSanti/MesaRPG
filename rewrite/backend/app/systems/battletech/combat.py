@@ -46,7 +46,7 @@ distinct from raw elevation, vehicles/aerospace/infantry/ProtoMechs.
 
 import secrets
 
-from ... import db, events
+from ... import db, dice_resolution, events
 from ...hexgrid import Hex
 from ...hexgrid import distance as hex_distance
 from ...hexgrid import has_los
@@ -75,6 +75,12 @@ class OutOfWeaponRange(ValueError):
 class MechIncapacitated(ValueError):
     """A shut-down or prone mech can't attack (psr.py/turns.py's heat
     phase — a real mech.is_shutdown/is_prone check, not just a UI hint)."""
+
+
+class TargetAlreadyDestroyed(ValueError):
+    """Real user report: "tampoco se tiene que poder atacar a un muerto" —
+    an already-destroyed mech is a wreck, not a legal target, for either
+    ranged or melee attacks (melee.py raises the same exception)."""
 
 # ---- GATOR to-hit modifiers ---------------------------------------------
 
@@ -239,7 +245,7 @@ def recorded_movement(campaign_id: int, pilot_id: int | None) -> tuple[str, int,
     )
 
 
-def resolve_attack(
+def _prepare_attack(
     campaign_id: int,
     gunnery: int | None = None,
     target_mech_id: int | None = None,
@@ -254,7 +260,18 @@ def resolve_attack(
     attacker_unit_id: int | None = None,
     target_unit_id: int | None = None,
 ) -> dict:
-    """`damage` (legacy/manual) or `weapon_id` (a mounted mech_weapons row)
+    """All the one-time setup work an attack always needed — validation,
+    LOS/range, weapon lookup, movement modifiers, the undo snapshot
+    (Fase A), and the (always-unconditional, never gated on any dice
+    roll) ammo/heat mutation. Runs EXACTLY ONCE per attack, on the very
+    first call only — a resumed call (after a physical die comes back)
+    reloads the `ctx` this returns from the pending row instead of ever
+    calling this again, which is precisely why it's safe for this to
+    mutate (ammo/heat) despite not being "pure": there's no from-scratch
+    replay of this part, only of each individual step below, and those
+    never touch anything this function already decided.
+
+    `damage` (legacy/manual) or `weapon_id` (a mounted mech_weapons row)
     — the latter looks damage up from app/weapons.py's catalog, consumes
     one shot of ammo if the weapon uses any (whether the shot hits or not
     — firing uses the round either way), adds a to-hit penalty from the
@@ -280,6 +297,12 @@ def resolve_attack(
     narrative attack with no real unit on the board."""
     mech_weapon = None
     stats = None
+    # Pre-initialized (not just assigned inside the `if attacker_unit_id
+    # and target_unit_id` block below) so the undo-snapshot capture
+    # further down can safely check `real_attacker is not None` even on
+    # the legacy manual/narrative-attack path, which never assigns them.
+    real_attacker = None
+    real_target = None
     if weapon_id is not None:
         mech_weapon = mechs.get_mech_weapon(weapon_id)
         if mech_weapon is None:
@@ -297,11 +320,17 @@ def resolve_attack(
             raise ValueError(f"Unknown target_unit_id {target_unit_id!r}")
         if target_mech_id is None:
             target_mech_id = real_target["mech_id"]
+        if target_mech_id is not None:
+            target_mech_state = mechs.get_mech(target_mech_id)
+            if target_mech_state and target_mech_state["destroyed_reason"] is not None:
+                raise TargetAlreadyDestroyed(f"Unit {target_unit_id}'s mech is already destroyed")
 
         if real_attacker["mech_id"] is not None:
             attacker_mech_state = mechs.get_mech(real_attacker["mech_id"])
             if attacker_mech_state and (attacker_mech_state["is_shutdown"] or attacker_mech_state["is_prone"]):
                 raise MechIncapacitated(f"Unit {attacker_unit_id}'s mech is shut down or prone and can't attack")
+            if attacker_mech_state and attacker_mech_state["destroyed_reason"] is not None:
+                raise MechIncapacitated(f"Unit {attacker_unit_id}'s mech is destroyed and can't attack")
 
         m = get_map(real_attacker["map_id"])
         grid_type = m["grid_type"] if m else "hex"
@@ -357,6 +386,40 @@ def resolve_attack(
     if side is None:
         side = "front"
 
+    # Real user report: "ataqué con todas las armas, un click de deshacer
+    # debería revertir TODO" — undo used to only restore a narrow slice
+    # (one location's armor/structure, one weapon's ammo/heat), so a hit
+    # that also rolled criticals/a fall left those permanently un-undoable.
+    # Snapshotting BOTH mechs' full state (mechs.snapshot_full_state —
+    # heat, ammo, armor/structure, every critical slot, prone/shutdown/
+    # gyro/engine/sensor/life-support) and both pilots' wound count HERE,
+    # before anything below mutates, means undo just has to restore this
+    # one snapshot wholesale — covers criticals/falls/ammo-explosions that
+    # cascade from this shot too, not just the shot's own direct effects.
+    attacker_mech_id_for_undo = (
+        real_attacker["mech_id"] if real_attacker is not None
+        else mech_weapon["mech_id"] if mech_weapon is not None
+        else None
+    )
+    attacker_pilot_id = real_attacker["pilot_id"] if real_attacker is not None else None
+    target_mech_for_undo = mechs.get_mech(target_mech_id) if target_mech_id is not None else None
+    target_pilot_id = target_mech_for_undo["pilot_id"] if target_mech_for_undo else None
+    attacker_mech_snapshot = (
+        mechs.snapshot_full_state(attacker_mech_id_for_undo)
+        if attacker_mech_id_for_undo is not None and attacker_mech_id_for_undo != target_mech_id
+        else None
+    )
+    target_mech_snapshot = mechs.snapshot_full_state(target_mech_id) if target_mech_id is not None else None
+    attacker_pilot_before = pilots.get_pilot(attacker_pilot_id) if attacker_pilot_id is not None else None
+    target_pilot_before = pilots.get_pilot(target_pilot_id) if target_pilot_id is not None else None
+    attacker_pilot_hits_before = attacker_pilot_before["hits"] if attacker_pilot_before else None
+    target_pilot_hits_before = target_pilot_before["hits"] if target_pilot_before else None
+    # Fase D: a Cockpit crit can now mark the pilot permanently dead
+    # (pilots.mark_pilot_dead) — captured alongside hits so undo (below)
+    # reverts that too, not just the wound count.
+    attacker_pilot_is_dead_before = attacker_pilot_before["is_dead"] if attacker_pilot_before else None
+    target_pilot_is_dead_before = target_pilot_before["is_dead"] if target_pilot_before else None
+
     weapon_name = None
     weapon_undo_info = None
     if weapon_id is not None:
@@ -380,81 +443,236 @@ def resolve_attack(
     target_number = to_hit_number(
         gunnery, attacker_movement, target_hexes_moved, target_jumped, range_bracket, other_modifiers
     )
-    d1, d2, roll = roll_2d6()
-    hit = roll >= target_number or roll == 12
-    if roll == 2:
-        hit = False  # natural 2 always misses
 
-    result = {
+    # attacker_pilot_id/round_number are what let a "turn_acted" undo find
+    # and cascade-revert every attack event this pilot logged this round
+    # (see events.py's _undo_turn_acted) — not just the most recent one.
+    from . import turns  # local import — see events.py's own module docstring on why (avoids a load-time cycle)
+
+    attack_payload: dict = {
+        "attacker_pilot_id": attacker_pilot_id,
+        "target_pilot_id": target_pilot_id,
+        "attacker_mech_id": attacker_mech_id_for_undo,
         "target_mech_id": target_mech_id,
-        "attacker_unit_id": attacker_unit_id,
-        "target_unit_id": target_unit_id,
-        "attacker_mech_id": (
-            real_attacker["mech_id"] if attacker_unit_id is not None
-            else mech_weapon["mech_id"] if mech_weapon is not None
-            else None
-        ),
-        "weapon_id": weapon_id,
-        "weapon_name": weapon_name,
-        "target_number": target_number,
-        "roll": roll,
-        "roll_dice": [d1, d2],
-        "hit": hit,
-        "location": None,
-        "critical": False,
-        "damage": None,
-        "mech_destroyed": False,
+        "attacker_mech_snapshot": attacker_mech_snapshot,
+        "target_mech_snapshot": target_mech_snapshot,
+        "attacker_pilot_hits_before": attacker_pilot_hits_before,
+        "target_pilot_hits_before": target_pilot_hits_before,
+        "attacker_pilot_is_dead_before": attacker_pilot_is_dead_before,
+        "target_pilot_is_dead_before": target_pilot_is_dead_before,
+        "round_number": turns.current_round_number(campaign_id),
     }
-
-    attack_payload: dict = {"result": result}
     if weapon_undo_info:
         attack_payload["weapon"] = weapon_undo_info
 
-    if hit:
-        loc_d1, loc_d2, loc_roll = roll_2d6()
-        location, is_crit = HIT_LOCATION_TABLES[side][loc_roll]
-        result["location"] = location
-        result["critical"] = is_crit
-        result["location_roll"] = loc_roll
+    # Everything the roll-dependent steps below need — a plain,
+    # JSON-serializable dict (persisted verbatim to bt_pending_rolls on a
+    # physical-dice pause, reloaded on resume instead of ever re-running
+    # this function — see this function's own docstring).
+    return {
+        "campaign_id": campaign_id,
+        "target_mech_id": target_mech_id,
+        "attacker_unit_id": attacker_unit_id,
+        "target_unit_id": target_unit_id,
+        "attacker_mech_id": attacker_mech_id_for_undo,
+        "attacker_pilot_id": attacker_pilot_id,
+        "target_pilot_id": target_pilot_id,
+        "weapon_id": weapon_id,
+        "weapon_name": weapon_name,
+        "damage": damage,
+        "side": side,
+        "target_number": target_number,
+        "attack_payload": attack_payload,
+    }
 
-        with db.connect() as conn:
-            damage_result = mechs.apply_damage(
-                conn, target_mech_id, location, rear=(side == "rear"), amount=damage
-            )
-            result["damage"] = damage_result
-            # Official rule: CT or Head internal structure destroyed = whole mech destroyed.
-            result["mech_destroyed"] = damage_result["destroyed"] and location in ("CT", "HD")
-            attack_payload["before"] = damage_result
-            summary = f"Ataque {weapon_name or 'manual'} → impacto en {location} (tirada {roll})"
-            if result["mech_destroyed"]:
-                summary += " — ¡MECH DESTRUIDO!"
-            events.log_event(conn, campaign_id, "attack", summary, attack_payload)
 
-        # Critical hits: rolled whenever this hit penetrated to internal
-        # structure, OR on a natural 2 hit-location roll even if armor
-        # absorbed everything (Through-Armor Critical — `is_crit` above is
-        # exactly that natural-2 flag already, straight from
-        # HIT_LOCATION_TABLES). Skipped once the mech is already destroyed
-        # (result["mech_destroyed"]) — nothing left to critical.
-        if not result["mech_destroyed"] and (damage_result["penetrated"] or is_crit):
-            crit_hits = criticals.roll_critical_hits(target_mech_id, location)
-            if crit_hits:
-                effects = criticals.apply_critical_effects(target_mech_id, crit_hits)
-                result["critical_hits"] = effects
-                if effects["mech_destroyed"]:
-                    result["mech_destroyed"] = True
-                elif effects["fell"]:
-                    # Destroyed gyro — automatic fall, no PSR (the rulebook's
-                    # own exception: a second gyro hit in the same phase
-                    # skips the PSR "since it automatically fell").
-                    result["fall"] = psr.apply_fall(target_mech_id)
+# ---- roll-dependent steps (Fase B: each may pause for a physical die) ---
+
+ATTACK_STEP_ORDER = ["to_hit", "hit_location", "criticals", "fall"]
+
+
+def _step_to_hit(ctx: dict, dice) -> dict:
+    d1, d2, roll = dice.next_2d6("to_hit", ctx["attacker_pilot_id"])
+    hit = roll >= ctx["target_number"] or roll == 12
+    if roll == 2:
+        hit = False  # natural 2 always misses
+    return {"roll": roll, "roll_dice": [d1, d2], "hit": hit}
+
+
+def _step_hit_location(ctx: dict, dice) -> dict:
+    d1, d2, loc_roll = dice.next_2d6("hit_location", ctx["attacker_pilot_id"])
+    location, is_crit = HIT_LOCATION_TABLES[ctx["side"]][loc_roll]
+    with db.connect() as conn:
+        damage_result = mechs.apply_damage(
+            conn, ctx["target_mech_id"], location, rear=(ctx["side"] == "rear"), amount=ctx["damage"]
+        )
+    # Official rule: CT or Head internal structure destroyed = whole mech destroyed.
+    mech_destroyed = damage_result["destroyed"] and location in ("CT", "HD")
+    return {
+        "location": location, "critical": is_crit, "location_roll": loc_roll,
+        "damage": damage_result, "mech_destroyed": mech_destroyed,
+    }
+
+
+def _step_criticals(ctx: dict, hit_location: dict, dice) -> dict:
+    mech = mechs.get_mech(ctx["target_mech_id"])
+    # Rolled/placed by the ATTACKER (same convention as to-hit/location —
+    # it's their shot's own critical, the target doesn't roll for it).
+    hits = criticals.decide_criticals(mech, hit_location["location"], dice, ctx["attacker_pilot_id"])
+    if not hits:
+        return {"hits": [], "effects": None}
+    effects = criticals.apply_criticals(ctx["target_mech_id"], hits)
+    return {"hits": hits, "effects": effects}
+
+
+def _step_fall(ctx: dict, dice) -> dict:
+    # Destroyed gyro -> automatic fall, no separate PSR (the rulebook's
+    # own exception: a second gyro hit in the same phase skips the PSR
+    # "since it automatically fell") — only the fall's own location/
+    # seatbelt rolls happen here, belonging to the mech that's falling
+    # (the TARGET — it's their own pilot's skill check).
+    mech = mechs.get_mech(ctx["target_mech_id"])
+    decision = psr.decide_fall(mech, 0, dice, ctx["target_pilot_id"])
+    return psr.apply_fall_decision(decision)
+
+
+def _needs_step(step: str, committed: dict) -> bool:
+    """Mirrors the original single-function resolve_attack's own
+    conditional structure — a miss skips location/criticals/fall; no
+    penetration/through-armor-crit skips criticals; no gyro-destroy skips
+    the fall."""
+    if step == "to_hit":
+        return True
+    if step == "hit_location":
+        return committed["to_hit"]["hit"]
+    if step == "criticals":
+        hl = committed.get("hit_location")
+        return bool(hl) and not hl["mech_destroyed"] and (hl["damage"]["penetrated"] or hl["critical"])
+    if step == "fall":
+        crit = committed.get("criticals")
+        return bool(crit) and crit["effects"] is not None and crit["effects"]["fell"]
+    raise ValueError(step)
+
+
+def _run_step_fn(step: str, ctx: dict, committed: dict, dice):
+    if step == "to_hit":
+        return _step_to_hit(ctx, dice)
+    if step == "hit_location":
+        return _step_hit_location(ctx, dice)
+    if step == "criticals":
+        return _step_criticals(ctx, committed["hit_location"], dice)
+    if step == "fall":
+        return _step_fall(ctx, dice)
+    raise ValueError(step)
+
+
+def _finalize_attack(ctx: dict, committed: dict) -> dict:
+    """Builds the exact same `result` shape resolve_attack always
+    returned, and logs the ONE undo event (Fase A) — called once every
+    needed step has committed (naturally, or short-circuited by a miss/
+    no-penetration/no-fall via _needs_step), never on an intermediate
+    pause."""
+    to_hit = committed["to_hit"]
+    result: dict = {
+        "target_mech_id": ctx["target_mech_id"], "attacker_unit_id": ctx["attacker_unit_id"],
+        "target_unit_id": ctx["target_unit_id"], "attacker_mech_id": ctx["attacker_mech_id"],
+        "weapon_id": ctx["weapon_id"], "weapon_name": ctx["weapon_name"],
+        "target_number": ctx["target_number"], "roll": to_hit["roll"], "roll_dice": to_hit["roll_dice"],
+        "hit": to_hit["hit"], "location": None, "critical": False, "damage": None, "mech_destroyed": False,
+    }
+    weapon_label = ctx["weapon_name"] or "manual"
+    if to_hit["hit"]:
+        hl = committed["hit_location"]
+        result["location"] = hl["location"]
+        result["critical"] = hl["critical"]
+        result["location_roll"] = hl["location_roll"]
+        result["damage"] = hl["damage"]
+        result["mech_destroyed"] = hl["mech_destroyed"]
+        crit = committed.get("criticals")
+        if crit and crit["effects"] is not None:
+            result["critical_hits"] = crit["effects"]
+            if crit["effects"]["mech_destroyed"]:
+                result["mech_destroyed"] = True
+        if "fall" in committed:
+            result["fall"] = committed["fall"]
+        summary = f"Ataque {weapon_label} → impacto en {hl['location']} (tirada {to_hit['roll']})"
+        if result["mech_destroyed"]:
+            summary += " — ¡MECH DESTRUIDO!"
     else:
         # A miss still consumes ammo/adds heat when a real weapon fired
-        # (see weapon_undo_info above) — logged (and undoable) too, not
-        # just hits, so undo can restore that even when the shot missed
-        # (previously not tracked at all — a real gap this fixes).
-        with db.connect() as conn:
-            summary = f"Ataque {weapon_name or 'manual'} → fallo (tirada {roll})"
-            events.log_event(conn, campaign_id, "attack", summary, attack_payload)
+        # (_prepare_attack's own unconditional mutation) — logged (and
+        # undoable) too, not just hits, so undo can restore that even
+        # when the shot missed.
+        summary = f"Ataque {weapon_label} → fallo (tirada {to_hit['roll']})"
 
+    attack_payload = dict(ctx["attack_payload"])
+    attack_payload["result"] = result
+    with db.connect() as conn:
+        events.log_event(conn, ctx["campaign_id"], "attack", summary, attack_payload)
     return result
+
+
+def run_attack(
+    campaign_id: int, params: dict | None = None, *, ctx: dict | None = None,
+    committed: dict | None = None, collected: list | None = None, force_auto: bool = False,
+) -> dict:
+    """The Fase B driver. On the INITIAL call (ctx/committed both None),
+    runs _prepare_attack once — real setup + mutation, see its own
+    docstring for why that's only ever safe to run once — then walks
+    ATTACK_STEP_ORDER, running whichever steps are still needed
+    (_needs_step) through dice_resolution.run_step. A resumed call
+    (main.py's report-pending-roll endpoint) passes in the persisted
+    ctx/committed/collected instead, so _prepare_attack is never re-
+    entered. Raises dice_resolution.PendingRoll if a step needs a real
+    physical die; otherwise returns the same result shape resolve_attack
+    always has."""
+    if ctx is None:
+        ctx = _prepare_attack(campaign_id=campaign_id, **(params or {}))
+        committed = {}
+        collected = []
+
+    first = True
+    for step in ATTACK_STEP_ORDER:
+        if step in committed:
+            continue
+        if not _needs_step(step, committed):
+            break
+        this_step_collected = collected if first else []
+        first = False
+        result = dice_resolution.run_step(
+            lambda dice, _step=step: _run_step_fn(_step, ctx, committed, dice), this_step_collected,
+            campaign_id=campaign_id, kind="attack", step=step, ctx=ctx, committed=committed, force_auto=force_auto,
+        )
+        committed[step] = result
+
+    return _finalize_attack(ctx, committed)
+
+
+def resolve_attack(
+    campaign_id: int,
+    gunnery: int | None = None,
+    target_mech_id: int | None = None,
+    damage: int | None = None,
+    weapon_id: int | None = None,
+    attacker_movement: str | None = None,
+    target_hexes_moved: int | None = None,
+    target_jumped: bool | None = None,
+    range_bracket: str | None = None,
+    side: str | None = None,
+    other_modifiers: int = 0,
+    attacker_unit_id: int | None = None,
+    target_unit_id: int | None = None,
+) -> dict:
+    """Old, fully synchronous entrypoint — ALWAYS instant (force_auto,
+    ignoring any pilot's real dice_mode), kept 100% behavior-identical to
+    before Fase B for every existing caller (every test in this repo,
+    and anything not explicitly wired for physical dice). Implemented on
+    top of run_attack; see combat.py's module docstring / run_attack's
+    own docstring for the physical-dice-aware entrypoint."""
+    params = {
+        "gunnery": gunnery, "target_mech_id": target_mech_id, "damage": damage, "weapon_id": weapon_id,
+        "attacker_movement": attacker_movement, "target_hexes_moved": target_hexes_moved,
+        "target_jumped": target_jumped, "range_bracket": range_bracket, "side": side,
+        "other_modifiers": other_modifiers, "attacker_unit_id": attacker_unit_id, "target_unit_id": target_unit_id,
+    }
+    return run_attack(campaign_id, params, force_auto=True)

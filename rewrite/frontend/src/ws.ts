@@ -62,6 +62,9 @@ export interface MeleeResult {
   hit: boolean
   damage: number | null
   mech_destroyed: boolean
+  /** Charge/DFA's own recoil damage can destroy the ATTACKER's mech too —
+   * see api.ts's MeleeAttackResult.attacker_mech_destroyed doc comment. */
+  attacker_mech_destroyed: boolean
   fall: Record<string, unknown> | null
   self_fall: Record<string, unknown> | null
 }
@@ -77,6 +80,19 @@ export interface HeatPhaseResolved {
   results: {
     mech_id: number
     heat_current: number
+    /** The actual resulting mechs.is_shutdown, not just this phase's
+     * shutdown/restarted transition flags below (which only describe
+     * what HAPPENED, not the resulting state) — real user report: the
+     * overheat tint stayed stale until some later, unrelated mechs
+     * refetch caught up, since callers had no unambiguous signal to
+     * patch from before this field existed. */
+    is_shutdown: boolean
+    /** Same reasoning as is_shutdown above — the actual resulting
+     * mechs.destroyed_reason, for when an ammo explosion this phase was
+     * severe enough to finish a mech off outright (its own explosion VFX
+     * otherwise waited on whatever later, unrelated refetch happened to
+     * patch this in). */
+    destroyed_reason: 'structural' | 'pilot_killed' | null
     shutdown: boolean | null
     restarted: boolean | null
     ammo_explosion: { damage: number } | null
@@ -117,6 +133,28 @@ export interface MovementStarted {
   hexes: ReachableHex[]
 }
 
+// Fase B (real user request: physical dice for every roll, not just
+// initiative — confirmed 100% real, not cosmetic, since a future camera-
+// based reader will feed into this same primitive) — a combat resolution
+// paused mid-way needing a real physical roll from `pilot_id` (whichever
+// pilot conceptually owns THIS specific roll — not necessarily the one
+// who submitted the action). Consumed only by TableView, same division
+// of labor as InitiativeRollRequested: it spawns the real physics dice
+// (1 or 2, per `dice_spec`), reads whatever they land on, and reports
+// that back via api.ts's reportPendingRoll. Deliberately a separate,
+// parallel WS type from InitiativeRollRequested rather than folding
+// initiative into it — see api.ts's reportPendingRoll for why.
+export interface PhysicalRollRequested {
+  type: 'physical_roll_requested'
+  pending_roll_id: number
+  pilot_id: number | null
+  pilot_name: string | null
+  color: string | null
+  die_style: string | null
+  dice_spec: '1d6' | '2d6'
+  purpose: string
+}
+
 // The real hex-by-hex route a move-with-mp just took (see
 // movement.py's execute_move) — real user report: without this,
 // any client that didn't itself pick this destination (the shared
@@ -139,6 +177,7 @@ export function useTableSocket(campaignId: number | null) {
   const [activeMapId, setActiveMapId] = useState<number | null>(null)
   const [roundState, setRoundState] = useState<RoundState | null>(null)
   const [initiativeRollRequest, setInitiativeRollRequest] = useState<InitiativeRollRequested | null>(null)
+  const [physicalRollRequest, setPhysicalRollRequest] = useState<PhysicalRollRequested | null>(null)
   const [movementStarted, setMovementStarted] = useState<MovementStarted | null>(null)
   const [unitWalked, setUnitWalked] = useState<UnitWalked | null>(null)
   const [lastMelee, setLastMelee] = useState<MeleeResult | null>(null)
@@ -190,6 +229,8 @@ export function useTableSocket(campaignId: number | null) {
         setRoundState(message as RoundState)
       } else if (message.type === 'initiative_roll_requested') {
         setInitiativeRollRequest(message as InitiativeRollRequested)
+      } else if (message.type === 'physical_roll_requested') {
+        setPhysicalRollRequest(message as PhysicalRollRequested)
       } else if (message.type === 'movement_started') {
         setMovementStarted(message as MovementStarted)
       } else if (message.type === 'unit_walked') {
@@ -225,6 +266,6 @@ export function useTableSocket(campaignId: number | null) {
 
   return {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState,
-    initiativeRollRequest, movementStarted, unitWalked, lastMelee, heatPhaseResult, rosterVersion, roll,
+    initiativeRollRequest, physicalRollRequest, movementStarted, unitWalked, lastMelee, heatPhaseResult, rosterVersion, roll,
   }
 }
