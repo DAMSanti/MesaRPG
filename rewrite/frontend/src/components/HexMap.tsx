@@ -1361,6 +1361,34 @@ function ImpactMarkTrail({ marks }: { marks: ImpactMark[] }) {
 // once it's genuinely one shape. See buildFogRegions's own doc comment
 // for the algorithm.
 const FOG_HEIGHT = 1.7
+// Real user request: "en FPV deberia ser mas sutil... debe tener mas
+// altura, que no se vea donde termina por arriba" — a completely
+// separate, MUCH taller volume for that view (see FogRegionMesh's own
+// `subtle` prop), so there's real height for the fragment shader's own
+// upward fade to fade all the way to invisible well before any real
+// top edge could ever be seen from inside/beside it.
+const FOG_HEIGHT_SUBTLE = FOG_HEIGHT * 4.2
+
+// Real user follow-up: "es como un bloque gris geometrico... quiero que
+// sea como una nube densa, o humo blanco, que tenga corriente y
+// movimiento/turbulencia" — a single flat noise-modulated alpha on one
+// rigid extruded polygon (the previous version) always reads as "a solid
+// shape with a texture on it," because the shape's own silhouette never
+// moves and there's no sense of depth/parallax. Three real, independently
+// time-phased/offset copies of the SAME region geometry (see
+// FogRegionMesh below) fixes both at once: each layer's own noise flow
+// runs at a different speed/direction so they visibly drift past each
+// other (the "corriente" — real relative motion, not just one static
+// pattern scrolling), and stacking partial-opacity layers naturally
+// varies local density the way real layered fog/smoke does, instead of
+// one uniform slab. yOffset is in world units (a small vertical stagger,
+// like sedimentary bands); flowAngle is radians; opacity is this layer's
+// OWN multiplier on top of the caller's overall uOpacity.
+const FOG_LAYERS = [
+  { yOffset: 0, flowAngle: 0.6, flowSpeed: 1, noiseScale: 1, opacity: 1 },
+  { yOffset: 0.22, flowAngle: 2.4, flowSpeed: 0.62, noiseScale: 1.7, opacity: 0.65 },
+  { yOffset: 0.42, flowAngle: 4.4, flowSpeed: 1.35, noiseScale: 0.55, opacity: 0.5 },
+] as const
 
 // Matches CylinderGeometry(radius, radius, height, 6)'s own real default
 // corner layout — verified directly against three.js's own source
@@ -1521,77 +1549,177 @@ function buildFogRegions(fogTiles: { q: number; r: number; groundY: number }[]):
 // the top face instead of an equally-solid vertical curtain, which is
 // what a hard polygon boundary alone would otherwise still look like
 // from any oblique angle.
+// Shared between both shader stages (three.js just concatenates whatever
+// GLSL text it's given — no separate "shader library" mechanism here) so
+// the vertex stage's own turbulence displacement and the fragment stage's
+// own density noise stay the exact same noise function, not two
+// independently-drifting approximations of "similar-looking" noise.
+const fogNoiseGLSL = /* glsl */ `
+  float fogHash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+  float fogValueNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = fogHash(i);
+    float b = fogHash(i + vec2(1.0, 0.0));
+    float c = fogHash(i + vec2(0.0, 1.0));
+    float d = fogHash(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+  }
+  float fogFbm(vec2 p, int octaves) {
+    float value = 0.0;
+    float amplitude = 0.55;
+    for (int i = 0; i < 4; i++) {
+      if (i >= octaves) break;
+      value += amplitude * fogValueNoise(p);
+      p *= 2.05;
+      amplitude *= 0.5;
+    }
+    return value;
+  }
+`
+
+// Real user report: "es como un bloque gris geometrico... quiero que sea
+// como una nube densa, o humo blanco, que tenga corriente y
+// movimiento/turbulencia" — the previous version only ever animated
+// ALPHA on a perfectly rigid extruded polygon, so the shape's own outer
+// edge never moved and read as "a solid block with a texture," no matter
+// how the density noise was tuned. This displaces the actual vertex
+// positions (mostly near the top — see the `lift` falloff below, which
+// keeps the base flush with the ground so it doesn't visibly detach from
+// the terrain) with the SAME noise function the fragment shader uses for
+// density, so the silhouette itself billows instead of just its opacity.
 const fogVertexShader = /* glsl */ `
+  ${fogNoiseGLSL}
+  uniform float uTime;
+  uniform float uBaseY;
+  uniform float uTopY;
+  uniform float uNoiseScale;
+  uniform vec2 uFlowDir;
+  // Real user report: FPV's own volume (tall, viewed up close/from the
+  // side instead of TableView's steep top-down angle) billowing by the
+  // SAME absolute amount as the blocking variant pushed it clean outside
+  // its own hex and over/around whatever — a mech — happened to be
+  // standing in the next one, reading as a chunky blob wrapping the
+  // model instead of mist. Per-variant multiplier (FOG_VARIANTS' own
+  // displaceScale) so blocking (TableView, confirmed to already look
+  // right) stays exactly as it was.
+  uniform float uDisplaceScale;
   varying vec3 vWorldPosition;
   varying float vCapFactor;
   void main() {
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    float heightT = clamp((worldPos.y - uBaseY) / max(0.0001, uTopY - uBaseY), 0.0, 1.0);
+    // Stays grounded at the base (lift ~0), billows more with height —
+    // real smoke drifts/spreads as it rises, it doesn't sway uniformly
+    // top to bottom.
+    float lift = smoothstep(0.0, 0.7, heightT) * uDisplaceScale;
+    vec2 flow = uFlowDir * uTime;
+    float wx = fogFbm(worldPos.xz * (0.35 * uNoiseScale) + flow, 2) - 0.5;
+    float wz = fogFbm(worldPos.xz * (0.35 * uNoiseScale) - flow, 2) - 0.5;
+    worldPos.x += wx * lift * 0.9;
+    worldPos.z += wz * lift * 0.9;
+    worldPos.y += (fogValueNoise(worldPos.xz * 0.4 + flow * 0.6) - 0.5) * lift * 0.35;
     vWorldPosition = worldPos.xyz;
     vCapFactor = abs(normal.y);
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `
 const fogFragmentShader = /* glsl */ `
+  ${fogNoiseGLSL}
   uniform float uTime;
   uniform vec3 uColor;
   uniform float uBaseY;
   uniform float uTopY;
   uniform float uOpacity;
+  uniform float uNoiseScale;
+  uniform vec2 uFlowDir;
+  // Real user request: FPV's own volume must fade out long before its
+  // real (very tall — see FOG_HEIGHT_SUBTLE) top, so nobody ever
+  // perceives a "lid"; TableView's needs to stay dense almost all the
+  // way up instead, since its camera looks nearly straight down through
+  // the top face. Same falloff shape, different knobs per caller.
+  uniform float uFadeStart;
+  uniform float uFadeAmount;
   varying vec3 vWorldPosition;
   varying float vCapFactor;
 
-  float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
-  }
-  float valueNoise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    float a = hash(i);
-    float b = hash(i + vec2(1.0, 0.0));
-    float c = hash(i + vec2(0.0, 1.0));
-    float d = hash(i + vec2(1.0, 1.0));
-    vec2 u = f * f * (3.0 - 2.0 * f);
-    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
-  }
-  float fbm(vec2 p) {
-    float value = 0.0;
-    float amplitude = 0.55;
-    for (int i = 0; i < 3; i++) {
-      value += amplitude * valueNoise(p);
-      p *= 2.05;
-      amplitude *= 0.5;
-    }
-    return value;
-  }
-
   void main() {
     float heightT = clamp((vWorldPosition.y - uBaseY) / max(0.0001, uTopY - uBaseY), 0.0, 1.0);
-    // Dense near the ground, thinning toward the top — but with a HIGH
-    // floor: TableView's own camera looks almost straight down, so it's
-    // mostly looking at this volume's own top cap face, and that face
-    // must stay solid enough to actually hide the terrain under it.
-    float heightDensity = 1.0 - smoothstep(0.15, 1.0, heightT) * 0.28;
+    float heightDensity = 1.0 - smoothstep(uFadeStart, 1.0, heightT) * uFadeAmount;
     // Side walls read noticeably thinner than the top/bottom caps — see
     // vCapFactor's own doc comment above.
     float capSoftness = mix(0.4, 1.0, vCapFactor);
-    vec2 flow = vec2(uTime * 0.03, uTime * 0.021);
-    float n = fbm(vWorldPosition.xz * 0.5 + flow) * 0.65 + fbm(vWorldPosition.xz * 1.15 - flow * 1.5) * 0.35;
-    float density = heightDensity * capSoftness * (0.88 + n * 0.5);
-    vec3 tint = mix(uColor * 0.72, uColor * 1.32, n);
+    vec2 flow = uFlowDir * uTime;
+    float n = fogFbm(vWorldPosition.xz * (0.5 * uNoiseScale) + flow, 3) * 0.65
+      + fogFbm(vWorldPosition.xz * (1.15 * uNoiseScale) - flow * 1.5, 3) * 0.35;
+    // A third, finer/faster pass on top — wispy detail a single fbm call
+    // at one scale never produces, real smoke reads as several sizes of
+    // curl at once.
+    float wisp = fogFbm(vWorldPosition.xz * (2.4 * uNoiseScale) + flow * 2.2, 2);
+    float density = heightDensity * capSoftness * (0.72 + n * 0.55 + wisp * 0.18);
+    vec3 tint = mix(uColor * 0.86, min(uColor * 1.18, vec3(1.0)), n * 0.7 + wisp * 0.3);
     gl_FragColor = vec4(tint, clamp(density, 0.0, 1.0) * uOpacity);
   }
 `
+
+// Real user request: "en tableview [debe] bloquear la vision, pero en FPV
+// deberia ser mas sutil" — two named looks, not a free numeric knob per
+// caller (nobody else needs a third variant yet, and a named pair is
+// harder to accidentally get wrong than remembering the right opacity/
+// fade numbers at every call site).
+// Real user report on the first version of `subtle`: "se ve un poco
+// cutre... parece cualquier cosa" (a chunky, hard-edged blob wrapping a
+// nearby mech instead of mist) — two real bugs, both fixed by the fields
+// below rather than the layering/turbulence approach itself (which the
+// SAME shader already proved out fine in `blocking`, confirmed live):
+// (1) `displaceScale` — the vertex billow (fogVertexShader's own
+// uDisplaceScale) was strong enough, on FPV's much taller volume, to push
+// a fog column clean outside its own hex into a neighboring one, wrapping
+// whatever was standing there. Way down for `subtle`, untouched for
+// `blocking` (that one's confirmed to already look right — real user
+// quote: "me gusta MUCHO la de tableview"). (2) `opacity` — three stacked
+// layers compose via real alpha-over-alpha (1-(1-a)(1-b)(1-c)), so the
+// old subtle.opacity=0.4 combined with FOG_LAYERS' own per-layer
+// multipliers (1, 0.65, 0.5) actually stacked to ~65% combined opacity,
+// nowhere near "sutil" — dropped low enough that the SAME stacking nets
+// out to a genuinely faint veil instead.
+const FOG_VARIANTS = {
+  blocking: { height: FOG_HEIGHT, color: '#e3e8e8', opacity: 0.95, fadeStart: 0.15, fadeAmount: 0.28, displaceScale: 1 },
+  subtle: { height: FOG_HEIGHT_SUBTLE, color: '#eef2f2', opacity: 0.15, fadeStart: 0.04, fadeAmount: 0.94, displaceScale: 0.3 },
+} as const
 
 /** One real merged region's own body — see this section's own top
  * comment and buildFogRegions's doc comment for the "why" and the
  * boundary-tracing algorithm. `shape` already sits in real world (x, z)
  * coordinates (buildFogRegions builds it straight from hexToWorld), so
  * this only needs to extrude it upward and place it at the right
- * height — no further per-tile positioning. */
-function FogRegionMesh({ shape, baseY, seed }: { shape: THREE.Shape; baseY: number; seed: number }) {
-  const materialRef = useRef<THREE.ShaderMaterial>(null)
+ * height — no further per-tile positioning.
+ *
+ * Renders FOG_LAYERS.length stacked copies (real user request: "que
+ * tenga corriente y movimiento/turbulencia... no como un bloque gris
+ * geometrico" — see FOG_LAYERS' own doc comment for why one static layer
+ * never reads as real depth/motion no matter how its own noise is
+ * tuned), all sharing the SAME extruded geometry (only its per-layer
+ * uniforms/Y-offset differ), so this is still exactly one real mesh
+ * object's worth of triangles per layer, not a heavier per-tile scheme. */
+function FogRegionMesh({
+  shape, baseY, seed, subtle,
+}: {
+  shape: THREE.Shape
+  baseY: number
+  seed: number
+  /** false (default): TableView/GMView's own opaque, vision-blocking
+   * look. true: FirstPersonView's taller, fainter look — see
+   * FOG_VARIANTS above for the actual numbers. */
+  subtle?: boolean
+}) {
+  const variant = FOG_VARIANTS[subtle ? 'subtle' : 'blocking']
+  const materialRefs = useRef<(THREE.ShaderMaterial | null)[]>([])
   const geometry = useMemo(() => {
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: FOG_HEIGHT, bevelEnabled: false, curveSegments: 1 })
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: variant.height, bevelEnabled: false, curveSegments: 1 })
     // ExtrudeGeometry lays the shape's own local (x, y) in the XY plane
     // and extrudes along LOCAL +Z from 0 to `depth` (confirmed directly
     // against three.js's own source, not assumed, after an earlier
@@ -1599,40 +1727,52 @@ function FogRegionMesh({ shape, baseY, seed }: { shape: THREE.Shape; baseY: numb
     // in world (x, z), extruded along world Y" with NO mirroring on
     // either axis (+90°, not -90° — that direction previously flipped
     // Z) — the tradeoff is local Y then runs from 0 down to -depth, so
-    // the mesh itself gets positioned from its TOP (baseY + FOG_HEIGHT)
-    // rather than its bottom to compensate, see the mesh position below.
+    // the mesh itself gets positioned from its TOP (baseY + height)
+    // rather than its bottom to compensate, see each layer's own mesh
+    // position below.
     geo.rotateX(Math.PI / 2)
     geo.computeVertexNormals()
     return geo
-  }, [shape])
-  const uniforms = useMemo(
-    () => ({
-      uTime: { value: seed },
-      uColor: { value: new THREE.Color('#7d8589') },
-      uBaseY: { value: baseY },
-      uTopY: { value: baseY + FOG_HEIGHT },
-      uOpacity: { value: 0.94 },
-    }),
-    // seed only used to desync each region's own animation phase at
-    // mount — never meant to reset uTime on every re-render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [baseY],
-  )
+  }, [shape, variant.height])
+  const color = useMemo(() => new THREE.Color(variant.color), [variant.color])
   useFrame((state) => {
-    if (materialRef.current) materialRef.current.uniforms.uTime.value = seed + state.clock.elapsedTime
+    for (const mat of materialRefs.current) {
+      if (mat) mat.uniforms.uTime.value = seed + state.clock.elapsedTime
+    }
   })
   return (
-    <mesh position={[0, baseY + FOG_HEIGHT, 0]} geometry={geometry}>
-      <shaderMaterial
-        ref={materialRef}
-        vertexShader={fogVertexShader}
-        fragmentShader={fogFragmentShader}
-        uniforms={uniforms}
-        transparent
-        depthWrite={false}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
+    <>
+      {FOG_LAYERS.map((layer, i) => {
+        const layerBaseY = baseY + layer.yOffset
+        const layerTopY = layerBaseY + variant.height
+        const flowDir = [Math.cos(layer.flowAngle) * 0.028 * layer.flowSpeed, Math.sin(layer.flowAngle) * 0.028 * layer.flowSpeed]
+        return (
+          <mesh key={i} position={[0, layerTopY, 0]} geometry={geometry}>
+            <shaderMaterial
+              ref={(el) => { materialRefs.current[i] = el }}
+              vertexShader={fogVertexShader}
+              fragmentShader={fogFragmentShader}
+              uniforms={{
+                uTime: { value: seed + i * 91.7 },
+                uColor: { value: color },
+                uBaseY: { value: layerBaseY },
+                uTopY: { value: layerTopY },
+                uOpacity: { value: variant.opacity * layer.opacity },
+                uNoiseScale: { value: layer.noiseScale },
+                uFlowDir: { value: flowDir },
+                uFadeStart: { value: variant.fadeStart },
+                uFadeAmount: { value: variant.fadeAmount },
+                uDisplaceScale: { value: variant.displaceScale },
+              }}
+              transparent
+              depthWrite={false}
+              side={THREE.DoubleSide}
+            />
+          </mesh>
+        )
+      })}
+    </>
   )
 }
 
@@ -1641,7 +1781,7 @@ export function HexMap({
   moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, walkMovementTypes, outlineUnitIds, heatByUnitId,
   proneUnitIds, shutdownUnitIds,
   destroyedReasonByUnitId,
-  teamVisibleHexes, physics, activeAttack, onAttackEffectDone, onUnitWalkDone, onUnitWalkStep,
+  teamVisibleHexes, fogSubtle, physics, activeAttack, onAttackEffectDone, onUnitWalkDone, onUnitWalkStep,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
 }: {
   map: MapData
@@ -1729,6 +1869,13 @@ export function HexMap({
    * a real, meaningful value (the team currently sees nothing at all),
    * not the same as omitting the prop. */
   teamVisibleHexes?: Set<string>
+  /** Real user request: "en tableview [debe] bloquear la vision, pero en
+   * FPV deberia ser mas sutil... debe tener mas altura, que no se vea
+   * donde termina por arriba" — false/omitted (GMView/TableView) keeps
+   * the opaque, vision-blocking look; true (FirstPersonView) switches
+   * every fog region in THIS instance to the taller, fainter look (see
+   * FOG_VARIANTS in this file). */
+  fogSubtle?: boolean
   /** Give every tile and mech a real physics collider (initiative dice
    * roll and bounce across the actual board — TableView only). Must
    * only be set true when this HexMap is rendered inside a <Physics>
@@ -2088,7 +2235,7 @@ export function HexMap({
         />
       ))}
       {fogRegions.map((region, i) => (
-        <FogRegionMesh key={`fog-region-${i}`} shape={region.shape} baseY={region.baseY} seed={i * 7.13} />
+        <FogRegionMesh key={`fog-region-${i}`} shape={region.shape} baseY={region.baseY} seed={i * 7.13} subtle={fogSubtle} />
       ))}
       {visibleUnits.map((unit) => (
         <UnitMarker

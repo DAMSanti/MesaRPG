@@ -1615,6 +1615,7 @@ export function FirstPersonView({
                     shutdownUnitIds={shutdownUnitIds}
                     destroyedReasonByUnitId={destroyedReasonByUnitId}
                     teamVisibleHexes={cockpitVisibleHexes}
+                    fogSubtle
                   />
                 </Suspense>
                 <EnemyMarkersController
