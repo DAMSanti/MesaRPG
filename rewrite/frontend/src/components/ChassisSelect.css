@@ -1,0 +1,62 @@
+.chassis-select {
+  position: relative;
+  display: inline-block;
+}
+
+.chassis-select input {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 13px;
+  width: 180px;
+}
+
+.chassis-select input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.chassis-select-menu {
+  /* Portaled onto <body> (see ChassisSelect.tsx's own comment) — fixed
+     viewport coordinates computed there, not relative to this wrapper. */
+  position: fixed;
+  z-index: 60;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.chassis-select-empty {
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.chassis-select-group-label {
+  padding: 5px 10px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.chassis-select-option {
+  padding: 5px 10px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.chassis-select-option:hover {
+  background: var(--surface-hover);
+}
+
+.chassis-select-option.selected {
+  color: var(--accent);
+}

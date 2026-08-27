@@ -7,6 +7,7 @@ import { useMapState } from '../useMapState'
 import { useTableSocket } from '../ws'
 import { NavBar, GM_LINKS } from '../components/NavBar'
 import { PilotForm } from '../components/PilotForm'
+import { ChassisSelect } from '../components/ChassisSelect'
 import { MechRecordSheet } from '../components/MechRecordSheet'
 import { HexMap, useAttackVfxQueue } from '../components/HexMap'
 import { SquareMap } from '../components/SquareMap'
@@ -23,7 +24,6 @@ import { Tooltip } from '../components/Tooltip'
 import { CameraBridge } from '../components/CameraBridge'
 import { DieStylePicker } from '../components/DieStylePicker'
 import { MECH_CHASSIS_ASSETS } from '../mechAssets'
-import { groupChassisByWeightClass } from '../weightClass'
 import { FACTION_COLORS, FACTION_LABELS, NEUTRAL_UNIT_COLOR, type Faction } from '../factions'
 import { suggestPilotColor } from '../pilotColors'
 import { DIE_STYLES, buildHeldByMap } from '../dieStyles'
@@ -65,7 +65,9 @@ import {
   requestInitiative,
   requestMovement,
   reviewPilot,
+  fallOver,
   setEnemyRevealCinematic,
+  setGmDiceMode,
   setGmDieStyle,
   setInitiativeMode,
   standUp,
@@ -230,7 +232,7 @@ function GMViewBattletech() {
   // just plays no animation. Queued (see useAttackVfxQueue's own doc
   // comment) so a fast attack resolving while a slower one is still
   // animating doesn't cut the first one's VFX off mid-flight.
-  const { activeAttack: activeAttackVfx, onAttackEffectDone, waitForDrain: waitForAttackVfxDrain } = useAttackVfxQueue(lastAttack, units)
+  const { activeAttack: activeAttackVfx, onAttackEffectDone, waitForDrain: waitForAttackVfxDrain } = useAttackVfxQueue(lastAttack, units, mechs)
 
   // ---- pilot form (now lives inside a modal opened from the sidebar's
   // "+" button, not an always-visible inline section) ----
@@ -462,6 +464,20 @@ function GMViewBattletech() {
     }
   }
 
+  // Real user request/correction: "el GM también tiene que poder
+  // escoger entre dados físicos o tiradas automáticas... O TODOS SUS
+  // PILOTOS TIRAN AUTOMATICO O TODOS TIRAN FISICO" — one campaign-wide
+  // switch governing every enemy/npc pilot's rolls, not a per-pilot one.
+  const submitGmDiceMode = async (mode: 'physical' | 'auto') => {
+    if (!campaignId) return
+    try {
+      const c = await setGmDiceMode(campaignId, mode)
+      setCampaign(c)
+    } catch {
+      setError('No se pudo cambiar el modo de dados del GM.')
+    }
+  }
+
   // Toggle-off if re-picking your own current style, otherwise switch
   // directly (the old one is simply overwritten server-side, freeing it).
   const submitGmDieStyle = async (styleId: string) => {
@@ -629,6 +645,15 @@ function GMViewBattletech() {
   // move in flight, keyed by unit id — threaded to HexMap's walkPaths so
   // the mech walks the actual calculated path instead of a straight line.
   const [walkPaths, setWalkPaths] = useState<Map<number, { q: number; r: number }[]>>(new Map())
+  // Real user request: proper Walk/Run/Jump animation chains, not the
+  // same Idle/Walk crossfade for every move — same population pattern as
+  // walkPaths above (set locally in submitPhaseMove for this screen's own
+  // moves, from unit_walked's own movement_type for everyone else's).
+  const [walkMovementTypes, setWalkMovementTypes] = useState<Map<number, MovementType>>(new Map())
+  // Debug-only (real user request: "activar temporalmente... el salto
+  // siempre") — see UnitContextMenu's own forceJump prop doc comment.
+  // Purely client-side, per-unit, never sent to the backend.
+  const [forceJumpUnitIds, setForceJumpUnitIds] = useState<Set<number>>(new Set())
   // unit_walked (real user report) covers every move this screen didn't
   // itself resolve — PlayerView's Acciones tab, FirstPersonView's cockpit
   // HUD, or another connected GM screen — which this client would
@@ -644,6 +669,7 @@ function GMViewBattletech() {
     if (selfResolvedMoveRef.current.delete(unitWalked.unit_id)) return
     if (unitWalked.path.length > 0) {
       setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+      setWalkMovementTypes((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.movement_type))
       const walkedUnit = units.find((u) => u.id === unitWalked.unit_id)
       heldMover.onUnitWalkStart(unitWalked.unit_id, walkedUnit?.pilot_id ?? null)
     }
@@ -657,7 +683,10 @@ function GMViewBattletech() {
     // move request + WS-triggered refetch to catch up a moment later.
     setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, q, r, ...(facingDeg != null ? { facing_deg: facingDeg } : {}) } : u)))
     try {
-      await moveUnit(unit.id, q, r, facingDeg)
+      // Debug-only (real user request, see UnitContextMenu's own
+      // forceJump doc comment) — tags this already-unrestricted move as
+      // a jump for animation purposes, no MP/jump_mp involved at all.
+      await moveUnit(unit.id, q, r, facingDeg, forceJumpUnitIds.has(unit.id) ? 'jump' : undefined)
       if (markActed && unit.pilot_id != null) await submitMarkActed(unit.pilot_id)
     } catch {
       setUnits((prev) => prev.map((u) => (u.id === unit.id ? { ...u, q: unit.q, r: unit.r } : u)))
@@ -671,6 +700,7 @@ function GMViewBattletech() {
     // walk instead of a straight line for one frame.
     if (path && path.length > 0) {
       setWalkPaths((prev) => new Map(prev).set(unit.id, path))
+      setWalkMovementTypes((prev) => new Map(prev).set(unit.id, movementType))
       selfResolvedMoveRef.current.add(unit.id)
       heldMover.onUnitWalkStart(unit.id, unit.pilot_id ?? null)
     }
@@ -725,8 +755,6 @@ function GMViewBattletech() {
   const [editGunnery, setEditGunnery] = useState(4)
   const [editPiloting, setEditPiloting] = useState(5)
   const [editPilotFaction, setEditPilotFaction] = useState<Faction>('player')
-  const [editPilotColor, setEditPilotColor] = useState('#9aa4a2')
-  const [editPilotDiceMode, setEditPilotDiceMode] = useState<'physical' | 'auto'>('physical')
   const [editingMech, setEditingMech] = useState<Mech | null>(null)
   const [editMechPilotId, setEditMechPilotId] = useState<number | ''>('')
   const [confirmDeletePilot, setConfirmDeletePilot] = useState<Pilot | null>(null)
@@ -739,8 +767,6 @@ function GMViewBattletech() {
     setEditGunnery(p.gunnery)
     setEditPiloting(p.piloting)
     setEditPilotFaction(p.faction)
-    setEditPilotColor(p.color)
-    setEditPilotDiceMode(p.dice_mode)
   }
 
   const submitEditPilot = async () => {
@@ -752,8 +778,6 @@ function GMViewBattletech() {
         gunnery: editGunnery,
         piloting: editPiloting,
         faction: editPilotFaction,
-        color: editPilotColor,
-        dice_mode: editPilotDiceMode,
       })
       setEditingPilot(null)
       refetch()
@@ -915,7 +939,19 @@ function GMViewBattletech() {
   // went away with the Mover button that started it (see
   // UnitContextMenu's own doc comment for why).
   const onTileClick = (q: number, r: number, clientX: number, clientY: number) => {
-    if (movementHighlight == null) return
+    if (movementHighlight == null) {
+      // Real user request: "quiero que el menu que se abre al hacer click
+      // a un mech en el GMview, se abra tambien si le das al tile en el
+      // que esta situado" — HexMap's own onUnitClick only fires on a
+      // direct raycast hit against the model's own mesh, which can miss
+      // on a mech's own thin/gappy silhouette; the tile it's actually
+      // standing on is a much more forgiving target for the exact same
+      // menu (onUnitClick itself still handles the pickingTargetFor
+      // attack-target-pick branch same as a direct click would).
+      const unit = units.find((u) => u.q === q && u.r === r)
+      if (unit) onUnitClick(unit, clientX, clientY)
+      return
+    }
     const key = `${q},${r}`
     const hex = movementHighlight.hexes.get(key)
     if (hex) {
@@ -1064,7 +1100,7 @@ function GMViewBattletech() {
 
   return (
     <div className="gm-view">
-      <NavBar campaignId={campaignId} current="/gm" links={GM_LINKS}>
+      <NavBar campaignId={campaignId} campaignName={campaign?.name} current="/gm" links={GM_LINKS}>
         <button className="nav-gear-btn" onClick={() => setShowSettingsModal(true)} title="Ajustes">⚙️</button>
       </NavBar>
       {loading && <p className="loading">Cargando…</p>}
@@ -1201,6 +1237,7 @@ function GMViewBattletech() {
                   }
                   targetableHexes={targetableHexes}
                   walkPaths={walkPaths}
+                  walkMovementTypes={walkMovementTypes}
                   heatByUnitId={heatByUnitId}
                   proneUnitIds={proneUnitIds}
                   shutdownUnitIds={shutdownUnitIds}
@@ -1308,6 +1345,28 @@ function GMViewBattletech() {
               {(campaign?.enemy_reveal_cinematic ?? true) ? 'Activada' : 'Desactivada'}
             </span>
           </div>
+
+          <div className="row settings-row">
+            <span>Dados del GM</span>
+            <label className="toggle-switch" title="Gobierna TODOS los pilotos enemy/npc a la vez, no uno a uno">
+              <input
+                type="checkbox"
+                checked={campaign?.gm_dice_mode === 'auto'}
+                onChange={(e) => submitGmDiceMode(e.target.checked ? 'auto' : 'physical')}
+              />
+              <span className="toggle-slider" />
+            </label>
+            <span className="toggle-label">
+              {campaign?.gm_dice_mode === 'auto' ? 'Automáticos (todos los enemigos)' : 'Físicos en la mesa (todos los enemigos)'}
+            </span>
+          </div>
+
+          {/* Real user request: herramienta de anotación de mechs (dev-
+              only, no la ve ningún jugador) — un enlace discreto aquí
+              para que sea localizable sin memorizar la URL. */}
+          <div className="row settings-row">
+            <a href="/mechlab" target="_blank" rel="noreferrer">🔧 Editor de mechs (dev)</a>
+          </div>
         </Modal>
       )}
 
@@ -1319,7 +1378,6 @@ function GMViewBattletech() {
             gunnery={gunnery} onGunnery={setGunnery}
             piloting={piloting} onPiloting={setPiloting}
             faction={pilotFaction} onFaction={setPilotFaction} showFaction
-            color={pilotColor} onColor={setPilotColor}
             onSubmit={submitPilot} submitLabel={submittingPilot ? 'Creando…' : 'Crear piloto'} submitDisabled={!pilotName || submittingPilot}
           />
         </Modal>
@@ -1328,16 +1386,7 @@ function GMViewBattletech() {
       {showMechModal && (
         <Modal title="Nuevo mech" onClose={() => setShowMechModal(false)}>
           <div className="row">
-            <select value={selectedChassis} onChange={(e) => setSelectedChassis(e.target.value)}>
-              <option value="">chasis…</option>
-              {groupChassisByWeightClass(chassisOptions).map(({ weightClass, entries }) => (
-                <optgroup key={weightClass} label={weightClass}>
-                  {entries.map(({ chassis: c }) => (
-                    <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
-                  ))}
-                </optgroup>
-              ))}
-            </select>
+            <ChassisSelect value={selectedChassis} onChange={setSelectedChassis} options={chassisOptions} />
             <select
               value={selectedModelFile}
               onChange={(e) => setSelectedModelFile(e.target.value)}
@@ -1460,8 +1509,6 @@ function GMViewBattletech() {
             gunnery={editGunnery} onGunnery={setEditGunnery}
             piloting={editPiloting} onPiloting={setEditPiloting}
             faction={editPilotFaction} onFaction={setEditPilotFaction} showFaction
-            color={editPilotColor} onColor={setEditPilotColor}
-            diceMode={editPilotDiceMode} onDiceMode={setEditPilotDiceMode}
             onSubmit={submitEditPilot} submitLabel="Guardar" submitDisabled={!editPilotName}
           />
         </Modal>
@@ -1540,6 +1587,16 @@ function GMViewBattletech() {
             }}
             onSkipMovement={() => { submitMoveUnit(menu.unit, menu.unit.q, menu.unit.r, false); setMenu(null) }}
             onStandUp={() => { standUp(menu.unit.id).then(refetch).catch(() => {}); setMenu(null) }}
+            onFallOver={() => { fallOver(menu.unit.id).then(refetch).catch(() => {}); setMenu(null) }}
+            forceJump={forceJumpUnitIds.has(menu.unit.id)}
+            onForceJumpChange={(value) => {
+              setForceJumpUnitIds((prev) => {
+                const next = new Set(prev)
+                if (value) next.add(menu.unit.id)
+                else next.delete(menu.unit.id)
+                return next
+              })
+            }}
           />
         )
       })()}

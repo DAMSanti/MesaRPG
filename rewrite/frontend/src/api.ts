@@ -18,6 +18,12 @@ export interface Campaign {
    * toggle (default on) lets the GM turn it off from their own Ajustes
    * modal. */
   enemy_reveal_cinematic: boolean
+  /** Real user request/correction: "el GM también tiene que poder
+   * escoger entre dados físicos o tiradas automáticas... O TODOS SUS
+   * PILOTOS TIRAN AUTOMATICO O TODOS TIRAN FISICO" — one campaign-wide
+   * switch (not per-pilot, unlike a player's own dice_mode) governing
+   * every enemy/npc pilot's rolls at once. */
+  gm_dice_mode: 'physical' | 'auto'
   pilot_count: number
   mech_count: number
 }
@@ -172,10 +178,17 @@ export const generateMap = (campaignId: number, name: string, width: number, hei
 
 export const getUnits = (mapId: number) => request<Unit[]>(`/api/maps/${mapId}/units`)
 
-export const moveUnit = (unitId: number, q: number, r: number, facingDeg?: number) =>
+export const moveUnit = (unitId: number, q: number, r: number, facingDeg?: number, movementType?: MovementType) =>
   request<Unit>(`/api/units/${unitId}/move`, {
     method: 'POST',
-    body: JSON.stringify({ q, r, ...(facingDeg != null ? { facing_deg: facingDeg } : {}) }),
+    body: JSON.stringify({
+      q, r, ...(facingDeg != null ? { facing_deg: facingDeg } : {}),
+      // Debug-only (real user request: "forzar salto" must work no
+      // matter what — no MP check) — this endpoint enforces zero
+      // rules already, this is purely an animation tag on the resulting
+      // unit_walked broadcast.
+      ...(movementType != null ? { movement_type: movementType } : {}),
+    }),
   })
 
 export const getVisibility = (mapId: number) =>
@@ -474,6 +487,107 @@ export interface MechModelResult {
 
 export const listMechModels = (chassis: string) =>
   request<MechModelResult[]>(`/api/mech-catalog/chassis/${encodeURIComponent(chassis)}/models`)
+
+// MechLab (real user request: "una pequeña vista dentro de nuestra app
+// donde seleccione el modelo del mech que quiero... y que yo tenga una
+// forma de decirte a ti donde esta cada cosa") — dev-only 3D annotation
+// tool. Points live in Mech3D.tsx's own normalized local space (1 unit
+// tall, centered on X/Z, resting on y=0), BEFORE MODEL_SCALE/facing_deg —
+// see MechLabView.tsx's own top comment for the full pipeline.
+// Only arms/legs are ever a detachable "limb" — losing a Head or Torso
+// location is mech death outright under the real rules this app already
+// follows elsewhere, not a part that visually falls off a still-standing
+// mech. Same set app/mech_annotations.py's own LIMB_LOCATIONS validates.
+export const LIMB_LOCATIONS = ['LA', 'RA', 'LL', 'RL'] as const
+
+export interface MechAnnotation {
+  id: number
+  model_url: string
+  // 'hit' = where an incoming attack on this location should visually land
+  // on the model (real user request: "vamos a seleccionar las diferentes
+  // partes del cuerpo del mech, para que cuando reciba ataques en sitios
+  // especificos, podamos mostrar esos ataques golpeando donde deben") —
+  // one per location (any of the 8, including HD/CT), unlike 'weapon'
+  // which can have several per location.
+  kind: 'weapon' | 'cockpit' | 'limb' | 'hit'
+  location: (typeof MECH_LOCATIONS)[number] | null
+  x: number
+  y: number
+  z: number
+  /** kind='limb' only — the glTF node names (SkinnedMesh/Mesh/Object3D
+   * names, as they came out of the source file) making up that limb, so
+   * a future "lose an arm" VFX knows exactly what to hide/detach. null
+   * for 'weapon'/'cockpit'. */
+  mesh_names: string[] | null
+  updated_at: string
+}
+
+export interface MechAnnotationPoint {
+  kind: 'weapon' | 'cockpit' | 'limb' | 'hit'
+  location: (typeof MECH_LOCATIONS)[number] | null
+  x: number
+  y: number
+  z: number
+  mesh_names?: string[] | null
+}
+
+export const listMechAnnotations = () => request<MechAnnotation[]>('/api/mech-annotations')
+
+export const saveMechAnnotations = (modelUrl: string, points: MechAnnotationPoint[]) =>
+  request<MechAnnotation[]>('/api/mech-annotations', {
+    method: 'PUT',
+    body: JSON.stringify({ model_url: modelUrl, points }),
+  })
+
+/** Per-model, per-track review state for MechLab (real user request: "poder
+ * ver a simple vista en que estado se encuentra el anotar armas,
+ * extremidades y rig"). `'accepted'` is only ever set by an explicit user
+ * action in MechLabView — never inferred here or on the backend. A model
+ * with no row for a track is implicitly `'not_started'`. */
+export type MechAnnotationTrack = 'weapons' | 'limbs' | 'rig' | 'texture'
+export type MechAnnotationReviewStatus = 'not_started' | 'done' | 'accepted'
+
+export interface MechAnnotationReview {
+  model_url: string
+  track: MechAnnotationTrack
+  status: MechAnnotationReviewStatus
+  updated_at: string
+}
+
+export const listMechAnnotationReview = () => request<MechAnnotationReview[]>('/api/mech-annotations/review')
+
+export const setMechAnnotationReview = (modelUrl: string, track: MechAnnotationTrack, status: MechAnnotationReviewStatus) =>
+  request<MechAnnotationReview>('/api/mech-annotations/review', {
+    method: 'PUT',
+    body: JSON.stringify({ model_url: modelUrl, track, status }),
+  })
+
+/** MechLabView's Textura tab (real user request: "quiero poder guardarlo
+ * desde el mechlab y como lo demas, 3 estados y un marcador en el
+ * desplegable") — persists the live PBR tuning sliders (see Mech3D.tsx's
+ * own MechPbrSettings) per model_url. Review status for this tab reuses
+ * MechAnnotationTrack='texture' above via the existing review endpoints;
+ * this is only the actual slider VALUES. Wire format is snake_case (the
+ * backend's own column names); the frontend's own MechPbrSettings type
+ * (Mech3D.tsx) is camelCase — callers convert at the boundary. */
+export interface MechPbrSettingsRecord {
+  model_url: string
+  repeat: number
+  normal_scale: number
+  roughness: number
+  metalness: number
+  color_boost: number
+  ao_intensity: number
+  updated_at: string
+}
+
+export const listMechPbrSettings = () => request<MechPbrSettingsRecord[]>('/api/mech-pbr-settings')
+
+export const saveMechPbrSettings = (record: Omit<MechPbrSettingsRecord, 'updated_at'>) =>
+  request<MechPbrSettingsRecord>('/api/mech-pbr-settings', {
+    method: 'PUT',
+    body: JSON.stringify(record),
+  })
 
 export const updateMech = (
   mechId: number,
@@ -874,6 +988,13 @@ export const submitMeleeAttack = (unitId: number, targetUnitId: number, attackTy
 export const standUp = (unitId: number) =>
   request<Record<string, unknown>>(`/api/units/${unitId}/stand-up`, { method: 'POST' })
 
+/** Debug-only affordance (real user request: "una opcion de tirarse... en
+ * el menu de movimiento") — sets is_prone directly, no PSR/fall damage,
+ * purely to preview Caerse/Levantarse without waiting for a real failed
+ * PSR to happen naturally. */
+export const fallOver = (unitId: number) =>
+  request<Record<string, unknown>>(`/api/units/${unitId}/fall-over`, { method: 'POST' })
+
 export const startRound = (campaignId: number) =>
   request<RoundState>(`/api/campaigns/${campaignId}/round/start`, { method: 'POST' })
 
@@ -895,6 +1016,15 @@ export const setEnemyRevealCinematic = (campaignId: number, enabled: boolean) =>
   request<Campaign>(`/api/campaigns/${campaignId}/enemy-reveal-cinematic`, {
     method: 'POST',
     body: JSON.stringify({ enabled }),
+  })
+
+// GM's own campaign-wide switch (real user request/correction — see
+// Campaign.gm_dice_mode's own doc comment) — no `pilots` row of its own,
+// so this lives on the campaign itself, same as gm_die_style above.
+export const setGmDiceMode = (campaignId: number, mode: 'physical' | 'auto') =>
+  request<Campaign>(`/api/campaigns/${campaignId}/gm-dice-mode`, {
+    method: 'POST',
+    body: JSON.stringify({ mode }),
   })
 
 export const markRoundActed = (campaignId: number, pilotId: number) =>

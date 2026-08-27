@@ -270,7 +270,23 @@ export function useDisplayedPhase(round: RoundState | null, holdMs = 900): Round
   useEffect(() => {
     const queue = queueRef.current
     const last = queue.length > 0 ? queue[queue.length - 1] : displayedRef.current
-    if (raw !== last) queue.push(raw)
+    if (raw !== last) {
+      queue.push(raw)
+      // Real user report during group rolls ("me marcaba varias fases
+      // activas a la vez... un poco rallado" — the HUD visibly cycling
+      // through several stale phases at once): a burst of several WS
+      // messages landing close together (a team-mode roll touches many
+      // pilots' worth of state almost simultaneously) can nudge `raw`
+      // through more distinct values, sometimes flip-flopping, faster
+      // than they can each get their holdMs on screen — left unbounded,
+      // the queue just replays every one of those stale hops in order,
+      // visibly lagging seconds behind the round's REAL current phase.
+      // Once more than one hop is already queued up, only the one about
+      // to show next and this latest real value are still worth
+      // keeping — collapse whatever's queued in between instead of
+      // dutifully replaying every flicker.
+      if (queue.length > 2) queueRef.current = [queue[0], raw]
+    }
 
     if (timerRef.current == null) {
       const step = () => {

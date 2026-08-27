@@ -75,6 +75,18 @@ class MechNotApproved(ValueError):
     pass
 
 
+class HexOccupied(ValueError):
+    """Real user request: "no podemos mover a una casilla ocupada por un
+    mech" — raised by create_unit/move_unit whenever the target hex
+    already has a DIFFERENT unit on the same map. Applies to every path
+    that lands a unit somewhere (GM free drag/place, movement-phase
+    execute_move, sidebar drop) since they all funnel through these two
+    functions — movement.py's own occupied-hex checks (reachable_hexes/
+    execute_move) already keep the MP-budgeted flow from ever calling
+    move_unit with a bad destination in the first place, so this is the
+    single enforcement point the free-form flows didn't have."""
+
+
 def create_unit(
     campaign_id: int,
     map_id: int,
@@ -116,6 +128,11 @@ def create_unit(
         # token behind on the old map.
         if mech_id is not None:
             conn.execute("DELETE FROM units WHERE mech_id = ?", (mech_id,))
+        occupant = conn.execute(
+            "SELECT id FROM units WHERE map_id = ? AND q = ? AND r = ?", (map_id, q, r)
+        ).fetchone()
+        if occupant is not None:
+            raise HexOccupied(f"({q}, {r}) on map {map_id} is already occupied")
         cur = conn.execute(
             """
             INSERT INTO units
@@ -159,8 +176,15 @@ def delete_unit(unit_id: int) -> bool:
 def move_unit(unit_id: int, q: int, r: int, facing_deg: int | None = None) -> dict:
     with db.connect() as conn:
         prev = conn.execute(
-            "SELECT campaign_id, mech_id, pilot_id, q, r, facing_deg FROM units WHERE id = ?", (unit_id,)
+            "SELECT campaign_id, map_id, mech_id, pilot_id, q, r, facing_deg FROM units WHERE id = ?", (unit_id,)
         ).fetchone()
+        if prev and (q, r) != (prev["q"], prev["r"]):
+            occupant = conn.execute(
+                "SELECT id FROM units WHERE map_id = ? AND q = ? AND r = ? AND id != ?",
+                (prev["map_id"], q, r, unit_id),
+            ).fetchone()
+            if occupant is not None:
+                raise HexOccupied(f"({q}, {r}) on map {prev['map_id']} is already occupied")
         if facing_deg is None:
             conn.execute("UPDATE units SET q = ?, r = ? WHERE id = ?", (q, r, unit_id))
         else:
@@ -226,9 +250,12 @@ def combined_visibility(campaign_id: int, map_id: int) -> dict:
     tiles = tiles_lookup(map_id)
     elevation_of = {(u["q"], u["r"]): tiles.get((u["q"], u["r"]), {}).get("elevation", 0) for u in units}
 
+    # Real user report: "un muerto deja de tener LoS y su equipo pierde lo
+    # que el veía" — a destroyed mech is a wreck, not a lookout, so it
+    # must stop contributing observation to its team the instant it dies.
     observers_by_pilot: dict[int, list[dict]] = {}
     for u in units:
-        if u["pilot_id"] is not None and not u["is_ghost"]:
+        if u["pilot_id"] is not None and not u["is_ghost"] and u["destroyed_reason"] is None:
             observers_by_pilot.setdefault(u["pilot_id"], []).append(u)
 
     visible: dict[int, list[int]] = {u["id"]: [] for u in units}
@@ -277,7 +304,10 @@ def combined_visibility(campaign_id: int, map_id: int) -> dict:
     }
 
 
-def _team_visible_hexes(units: list[dict], tiles: dict, map_id: int, faction: str) -> list[dict]:
+def _team_visible_hexes(
+    units: list[dict], tiles: dict, map_id: int, faction: str,
+    override: tuple[int, int, int, int] | None = None,
+) -> list[dict]:
     """Every hex at least one `faction` unit can currently see (front-
     facing cone + LoS — same per-unit computation visible_hexes_from_unit
     already does for the debug overlay/FirstPersonView's own cockpit fog,
@@ -288,28 +318,115 @@ def _team_visible_hexes(units: list[dict], tiles: dict, map_id: int, faction: st
     this is only ever computed for 'player' in practice — a ghost unit
     (ON PURPOSE excluded, matching the pilot-observer exclusion above)
     never contributes since it has no real miniature on the table yet to
-    see anything from."""
+    see anything from.
+
+    `override` — (unit_id, q, r, facing_deg) — real user request: "la
+    niebla se tiene que ir disipando con cada movimiento... cada giro,
+    cada paso del mech tiene que actualizar la niebla" — lets a caller
+    ask "what would the team see if THIS ONE unit were standing here
+    instead", without writing anything to the database, so a per-step
+    fog snapshot for an in-progress walk (visibility_steps_for_walk
+    below) can be computed for every waypoint of a route the unit hasn't
+    actually finished walking yet."""
     m = get_map(map_id)
     grid_type = m["grid_type"] if m else "hex"
     cell_cls, los = (Cell, square_has_los) if grid_type == "square" else (Hex, has_los)
 
     visible_hex_set: set[tuple[int, int]] = set()
     for u in units:
-        if u["pilot_faction"] != faction or u["is_ghost"]:
+        if u["pilot_faction"] != faction or u["is_ghost"] or u["destroyed_reason"] is not None:
             continue
-        observer = cell_cls(u["q"], u["r"])
-        observer_elevation = tiles.get((u["q"], u["r"]), {}).get("elevation", 0)
-        facing_deg = u["facing_deg"]
+        if override is not None and u["id"] == override[0]:
+            obs_q, obs_r, facing_deg = override[1], override[2], override[3]
+        else:
+            obs_q, obs_r, facing_deg = u["q"], u["r"], u["facing_deg"]
+        observer = cell_cls(obs_q, obs_r)
+        observer_elevation = tiles.get((obs_q, obs_r), {}).get("elevation", 0)
         for (q, r), tile in tiles.items():
             if (q, r) in visible_hex_set:
                 continue
-            dx, dz = _world_delta(u["q"], u["r"], q, r, grid_type)
+            dx, dz = _world_delta(obs_q, obs_r, q, r, grid_type)
             if not _within_facing_arc(dx, dz, facing_deg, _VISION_ARC_DEG):
                 continue
             if los(observer, observer_elevation, cell_cls(q, r), tile.get("elevation", 0), tiles):
                 visible_hex_set.add((q, r))
 
     return [{"q": q, "r": r} for q, r in visible_hex_set]
+
+
+def _facing_toward(from_q: int, from_r: int, to_q: int, to_r: int, grid_type: str) -> int:
+    """Same convention _world_delta/_within_facing_arc use (0° = world
+    +X, counter-clockwise). Mirrors movement.py's own _facing_toward —
+    duplicated rather than imported, since movement.py already imports
+    FROM this module (a reverse import would be circular)."""
+    dx, dz = _world_delta(from_q, from_r, to_q, to_r, grid_type)
+    if dx == 0 and dz == 0:
+        return 0
+    return round(math.degrees(math.atan2(dz, dx))) % 360
+
+
+def visibility_steps_for_walk(
+    campaign_id: int, map_id: int, unit_id: int, from_q: int, from_r: int,
+    path: list[dict], final_facing_deg: int,
+) -> list[dict]:
+    """One player-team fog snapshot (_team_visible_hexes) per waypoint of
+    `path` (the real route a unit is about to walk, from (from_q, from_r)
+    — the unit's own position BEFORE this move, needed to compute the
+    FIRST waypoint's own direction of travel) — real user request: "la
+    niebla se tiene que ir disipando con cada movimiento... cada paso
+    del mech tiene que actualizar la niebla, tanto en TableView como en
+    FPV. Ahora mismo calcula la de la posicion final nada mas empezar el
+    movimiento" — a walk used to only ever broadcast the FINAL
+    destination's fog, immediately, even though every view was still
+    visually animating the mech across the whole path one hex at a time.
+    Every step faces the direction of travel INTO that hex, same
+    convention the frontend's own walk animation turns toward while
+    stepping (HexMap.tsx's stepToward) — only the LAST step uses the
+    real final commanded facing, matching where the mech actually ends
+    up looking. Every other unit's own position is read as-is (nothing
+    written to the database here); only the walking unit is
+    hypothetically relocated, one waypoint at a time, via
+    _team_visible_hexes' own override param. Returns [{"q", "r",
+    "visible_hexes": [...]}, ...] in path order, one entry per waypoint —
+    callers only bother computing/broadcasting this for a player-faction
+    walker (an enemy/npc's own movement never changes what the player
+    team's stationary units can see, so there's nothing to step through
+    for one)."""
+    all_units = list_units(map_id)
+    tiles = tiles_lookup(map_id)
+    m = get_map(map_id)
+    grid_type = m["grid_type"] if m else "hex"
+
+    steps = []
+    prev: tuple[int, int] = (from_q, from_r)
+    last_index = len(path) - 1
+    for i, p in enumerate(path):
+        q, r = p["q"], p["r"]
+        facing_deg = final_facing_deg if i == last_index else _facing_toward(prev[0], prev[1], q, r, grid_type)
+        visible_hexes = _team_visible_hexes(all_units, tiles, map_id, "player", override=(unit_id, q, r, facing_deg))
+        steps.append({"q": q, "r": r, "visible_hexes": visible_hexes})
+        prev = (q, r)
+    return steps
+
+
+def _visible_hexes_from_position(
+    obs_q: int, obs_r: int, facing_deg: int, tiles: dict, grid_type: str,
+) -> list[dict]:
+    """Every map tile visible from one hypothetical (q, r, facing) —
+    the single-observer core visible_hexes_from_unit uses for a unit's
+    real position, factored out so unit_visibility_steps_for_walk below
+    can reuse it per waypoint of an in-progress walk too."""
+    cell_cls, los = (Cell, square_has_los) if grid_type == "square" else (Hex, has_los)
+    observer = cell_cls(obs_q, obs_r)
+    observer_elevation = tiles.get((obs_q, obs_r), {}).get("elevation", 0)
+    visible = []
+    for (q, r), tile in tiles.items():
+        dx, dz = _world_delta(obs_q, obs_r, q, r, grid_type)
+        if not _within_facing_arc(dx, dz, facing_deg, _VISION_ARC_DEG):
+            continue
+        if los(observer, observer_elevation, cell_cls(q, r), tile.get("elevation", 0), tiles):
+            visible.append({"q": q, "r": r})
+    return visible
 
 
 def visible_hexes_from_unit(unit_id: int) -> list[dict] | None:
@@ -323,27 +440,38 @@ def visible_hexes_from_unit(unit_id: int) -> list[dict] | None:
     unit = get_unit(unit_id)
     if unit is None:
         return None
-
     m = get_map(unit["map_id"])
     grid_type = m["grid_type"] if m else "hex"
     tiles = tiles_lookup(unit["map_id"])
-    observer_elevation = tiles.get((unit["q"], unit["r"]), {}).get("elevation", 0)
+    return _visible_hexes_from_position(unit["q"], unit["r"], unit["facing_deg"], tiles, grid_type)
 
-    if grid_type == "square":
-        cell_cls, los = Cell, square_has_los
-    else:
-        cell_cls, los = Hex, has_los
-    observer = cell_cls(unit["q"], unit["r"])
-    facing_deg = unit["facing_deg"]
 
-    visible = []
-    for (q, r), tile in tiles.items():
-        dx, dz = _world_delta(unit["q"], unit["r"], q, r, grid_type)
-        if not _within_facing_arc(dx, dz, facing_deg, _VISION_ARC_DEG):
-            continue
-        if los(observer, observer_elevation, cell_cls(q, r), tile.get("elevation", 0), tiles):
-            visible.append({"q": q, "r": r})
-    return visible
+def unit_visibility_steps_for_walk(
+    map_id: int, from_q: int, from_r: int, path: list[dict], final_facing_deg: int,
+) -> list[dict]:
+    """The single-unit sibling of visibility_steps_for_walk — one
+    visible_hexes_from_unit-equivalent snapshot per waypoint, for the
+    walking unit's OWN sightline alone (no team union), same real user
+    request but for FirstPersonView's own cockpit fog specifically
+    (getUnitVisibleHexes's own single-unit LoS, unlike TableView's
+    team-wide combined_visibility) — "la niebla se tiene que ir
+    disipando con cada movimiento... tanto en TableView como en FPV".
+    Same direction-of-travel-per-step / final-facing-on-the-last-step
+    convention as visibility_steps_for_walk. Returns [{"q", "r",
+    "visible_hexes": [...]}, ...] in path order."""
+    tiles = tiles_lookup(map_id)
+    m = get_map(map_id)
+    grid_type = m["grid_type"] if m else "hex"
+
+    steps = []
+    prev: tuple[int, int] = (from_q, from_r)
+    last_index = len(path) - 1
+    for i, p in enumerate(path):
+        q, r = p["q"], p["r"]
+        facing_deg = final_facing_deg if i == last_index else _facing_toward(prev[0], prev[1], q, r, grid_type)
+        steps.append({"q": q, "r": r, "visible_hexes": _visible_hexes_from_position(q, r, facing_deg, tiles, grid_type)})
+        prev = (q, r)
+    return steps
 
 
 def visible_enemies_from_unit(unit_id: int, require_facing: bool = True) -> list[dict] | None:
@@ -427,7 +555,7 @@ def _get(conn, unit_id: int) -> dict | None:
         """
         SELECT u.id, u.campaign_id, u.map_id, u.mech_id, u.pilot_id, u.q, u.r,
                u.facing_deg, u.is_ghost, u.revealed, u.created_at, p.faction AS pilot_faction,
-               m.chassis AS mech_chassis, m.model AS mech_model,
+               m.chassis AS mech_chassis, m.model AS mech_model, m.destroyed_reason,
                u.dnd_character_id, dc.name AS dnd_name, dc.ac AS dnd_ac,
                dc.hp_current AS dnd_hp_current, dc.hp_max AS dnd_hp_max
         FROM units u

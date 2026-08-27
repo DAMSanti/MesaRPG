@@ -3,3 +3,17 @@
   color: var(--danger);
   padding: 0 2px 2px;
 }
+
+/* Real user request: "activar temporalmente... el salto siempre" — a
+   plain neutral toggle, not a warning (unlike .unit-menu-hint above,
+   which is always red — wrong tone for "here's an optional debug
+   switch", not an error state). */
+.unit-menu-debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  padding: 4px 2px 2px;
+  cursor: pointer;
+}

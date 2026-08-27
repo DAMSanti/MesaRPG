@@ -1,0 +1,301 @@
+.mechlab {
+  display: flex;
+  height: 100vh;
+  background: var(--bg-deep);
+  color: var(--text);
+  font-family: var(--font-body);
+}
+
+.mechlab-sidebar {
+  width: 320px;
+  flex-shrink: 0;
+  padding: 16px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.mechlab .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+/* Deliberately scoped to specific classes, not a blanket "select"/
+   "button" element selector — this file sits alongside ChassisSelect's
+   own scoped CSS (imported by the same component tree) and .mechlab-slot's
+   own filled/active states below; a blanket rule here would fight both
+   on specificity/source-order instead of losing cleanly. */
+.mechlab-model-select {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 5px 8px;
+  font-size: 13px;
+}
+
+.mechlab-save-btn {
+  cursor: pointer;
+  background: var(--surface-hover);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.mechlab-save-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mechlab-sidebar h1 {
+  font-size: 16px;
+  margin: 0 0 4px;
+  color: var(--accent);
+}
+
+.mechlab-sidebar h2 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
+  margin: 18px 0 8px;
+}
+
+.mechlab-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0;
+}
+
+.mechlab-mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 14px 0 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.mechlab-mode-tabs button {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-muted);
+  padding: 6px 4px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.mechlab-mode-tabs button.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
+.mechlab-slots {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.mechlab-slot {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mechlab-slot-weapons {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+.mechlab-slot.filled {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mechlab-slot.active {
+  background: var(--surface-hover);
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.mechlab-slot:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+/* Real user request: "DEBEN ESTAR BLOQUEADAS COMO EN ANOTAR ARMAS" — the
+   underlying click handler already no-ops once a track is accepted, but
+   the list looked exactly as clickable as an unlocked one, which read as
+   "still lets me edit" even though nothing was actually changing. */
+.mechlab-point-list.mechlab-locked li {
+  opacity: 0.6;
+  cursor: default;
+  pointer-events: none;
+}
+
+.mechlab-point-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mechlab-point-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.mechlab-point-list button {
+  background: none;
+  border: none;
+  color: var(--danger);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.mechlab-point-list button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mechlab-scrub {
+  width: 100%;
+  margin: 6px 0 10px;
+}
+
+.mechlab-bone-list {
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.mechlab-bone-list li {
+  cursor: pointer;
+  justify-content: flex-start;
+}
+
+.mechlab-bone-list li:hover {
+  border-color: var(--accent-2);
+}
+
+.mechlab-bone-list li.selected {
+  border-color: var(--accent-2);
+  color: var(--accent-2);
+}
+
+.mechlab-fpv-toggle {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mechlab-saved {
+  color: var(--accent);
+  font-size: 12px;
+}
+
+.mechlab-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.mechlab-review {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 6px 0 4px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.mechlab-review-badge {
+  font-size: 12px;
+}
+
+.mechlab-review-done {
+  border-color: #c9a227;
+}
+
+.mechlab-review-accepted {
+  border-color: #3fae5c;
+  color: #3fae5c;
+}
+
+.mechlab-review button {
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  padding: 3px 8px;
+  font-size: 11px;
+}
+
+.mechlab-review button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Passed into ChassisSelect via its generic getOptionClassName prop — see
+   MechLabView's own chassisOptionClassName for what "accepted" means here. */
+.chassis-select-option.mechlab-chassis-partially-accepted {
+  background: rgba(201, 162, 39, 0.28);
+}
+
+.chassis-select-option.mechlab-chassis-fully-accepted {
+  background: rgba(63, 174, 92, 0.28);
+}
+
+.mechlab-canvas-wrap {
+  flex: 1;
+  position: relative;
+}
+
+.mechlab-context-lost-banner {
+  position: absolute;
+  z-index: 10;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background: var(--danger, #b33033);
+  color: #fff;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.mechlab-empty {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}

@@ -1,10 +1,9 @@
-import { Suspense, useEffect, useRef } from 'react'
+import { Suspense } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Mech3D, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import './EnemyRevealCinematic.css'
 
 const ORBIT_DURATION_S = 6
-const AUTO_CLOSE_MS = 7000
 
 /** Circles the camera 360° around the mech at chest height over
  * ORBIT_DURATION_S seconds, always looking at it — a real Object3D
@@ -32,7 +31,12 @@ function OrbitingCamera() {
  * in a spotlight) shown the instant a hostile enters the team's LOS
  * (TableView's own lastRevealedUnitId, gated by the campaign's
  * enemy_reveal_cinematic toggle — see GMView's own Ajustes modal).
- * Auto-closes after AUTO_CLOSE_MS; the × button also closes it early. */
+ * Auto-closes after a delay owned by the caller (TableView — see its own
+ * AUTO_CLOSE_MS, driven off the reveal id directly rather than an effect
+ * in here keyed on chassis/model, which never re-armed when two reveals
+ * in a row shared the same chassis/model: real user report, "hay una
+ * cinematica, la ultima, que se queda eternamente ahi"); the × button
+ * also closes it early. */
 export function EnemyRevealCinematic({
   chassis, model, color, onClose,
 }: {
@@ -41,16 +45,6 @@ export function EnemyRevealCinematic({
   color: string
   onClose: () => void
 }) {
-  const closedRef = useRef(false)
-  useEffect(() => {
-    closedRef.current = false
-    const t = setTimeout(() => {
-      if (!closedRef.current) onClose()
-    }, AUTO_CLOSE_MS)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chassis, model])
-
   return (
     <div className="enemy-reveal-overlay">
       <div className="enemy-reveal-frame">
@@ -70,7 +64,7 @@ export function EnemyRevealCinematic({
         </div>
         <button
           type="button" className="enemy-reveal-close"
-          onClick={() => { closedRef.current = true; onClose() }}
+          onClick={onClose}
         >
           ×
         </button>

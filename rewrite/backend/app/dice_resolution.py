@@ -31,7 +31,7 @@ and moves on. `run_step` drives exactly ONE step:
 
 import json
 
-from . import db
+from . import campaigns, db
 from .dice_source import NeedsRoll, RandomDice, SuppliedDice
 from .systems.battletech import pilots
 
@@ -49,10 +49,21 @@ class PendingRoll(Exception):
 
 
 def _dice_mode_for(pilot_id: int | None) -> str:
+    """Real user correction: "lo del GM no tiene que ser por piloto...
+    O TODOS SUS PILOTOS TIRAN AUTOMATICO O TODOS TIRAN FISICO" — an
+    enemy/npc pilot's own dice_mode column is never consulted; every
+    roll belonging to one follows the campaign's single gm_dice_mode
+    switch instead (GMView's own Ajustes modal). Only a player-faction
+    pilot's own dice_mode (their personal PlayerView toggle) is used."""
     if pilot_id is None:
         return "auto"
     pilot = pilots.get_pilot(pilot_id)
-    return pilot["dice_mode"] if pilot else "auto"
+    if not pilot:
+        return "auto"
+    if pilot["faction"] in ("enemy", "npc"):
+        campaign = campaigns.get_campaign(pilot["campaign_id"])
+        return campaign["gm_dice_mode"] if campaign else "physical"
+    return pilot["dice_mode"]
 
 
 def run_step(decide_fn, collected: list, *, campaign_id: int, kind: str, step: str, ctx, committed: dict, force_auto: bool = False):

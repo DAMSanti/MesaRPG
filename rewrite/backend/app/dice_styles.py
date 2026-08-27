@@ -12,7 +12,7 @@ shared config between the two languages in this codebase).
 DIE_STYLE_IDS = {
     "standard-ivory", "standard-onyx", "crimson-pip", "cobalt-pip",
     "verdant-pip", "amber-numeral", "slate-numeral", "chrome-metallic",
-    "gunmetal-metallic", "opal-pearl",
+    "gunmetal-metallic", "opal-pearl", "jade-glass",
 }
 
 

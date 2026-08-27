@@ -83,6 +83,27 @@ def test_combined_visibility_team_hexes_exclude_enemy_units(campaign):
     assert visibility["visible_hexes"] == []
 
 
+def test_a_destroyed_mech_stops_contributing_los_to_its_team(campaign, atlas):
+    # Real user request: "un muerto deja de tener LoS y su equipo pierde
+    # lo que el veía en el TableView" — a wreck is not a lookout.
+    m = maps.create_map(campaign["id"], "Open field", width=6, height=3)
+    observer = units.create_unit(
+        campaign["id"], m["id"], q=0, r=0, mech_id=atlas["id"], pilot_id=atlas["pilot_id"], facing_deg=0
+    )
+    ghost = units.create_unit(campaign["id"], m["id"], q=3, r=0, is_ghost=True)
+
+    before = units.combined_visibility(campaign["id"], m["id"])
+    assert atlas["pilot_id"] in before["visible"][ghost["id"]]
+    assert (3, 0) in {(h["q"], h["r"]) for h in before["visible_hexes"]}
+
+    mechs.mark_destroyed(atlas["id"], "structural")
+
+    after = units.combined_visibility(campaign["id"], m["id"])
+    assert after["visible"][ghost["id"]] == []
+    assert after["visible_hexes"] == []
+    assert observer["id"] in [u["id"] for u in units.list_units(m["id"])], "the wreck stays on the map, just blind"
+
+
 def test_moving_observer_around_hill_reveals_ghost(campaign, pilot):
     m = maps.create_map(campaign["id"], "Valley", width=6, height=6, elevations={(1, 0): 3})
     observer = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"])
@@ -232,6 +253,43 @@ def test_create_unit_rejects_a_rejected_mech(campaign, pilot):
     m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
     with pytest.raises(units.MechNotApproved):
         units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=rejected["id"])
+
+
+def test_create_unit_rejects_an_occupied_hex(campaign, atlas):
+    # Real user request: "no podemos mover a una casilla ocupada por un
+    # mech" — placing a second unit directly on top of an existing one is
+    # rejected, same as moving one there (see test_move_unit_rejects_an_
+    # occupied_hex below).
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    units.create_unit(campaign["id"], m["id"], q=1, r=1)
+    with pytest.raises(units.HexOccupied):
+        units.create_unit(campaign["id"], m["id"], q=1, r=1, mech_id=atlas["id"])
+
+
+def test_move_unit_rejects_an_occupied_hex(campaign):
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    mover = units.create_unit(campaign["id"], m["id"], q=0, r=0)
+    units.create_unit(campaign["id"], m["id"], q=1, r=1)
+    with pytest.raises(units.HexOccupied):
+        units.move_unit(mover["id"], q=1, r=1)
+    assert (units.get_unit(mover["id"])["q"], units.get_unit(mover["id"])["r"]) == (0, 0), "rejected move never applied"
+
+
+def test_move_unit_to_its_own_hex_is_not_occupied_by_itself(campaign):
+    # A pure facing change ("Mover" dropped back on the same tile, or a
+    # rotate-in-place) passes q=r=its own current position — must not
+    # trip HexOccupied against itself.
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    unit = units.create_unit(campaign["id"], m["id"], q=2, r=2)
+    updated = units.move_unit(unit["id"], q=2, r=2, facing_deg=90)
+    assert updated["facing_deg"] == 90
+
+
+def test_move_unit_to_a_different_unoccupied_hex_still_works(campaign):
+    m = maps.create_map(campaign["id"], "Open field", width=4, height=4)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0)
+    updated = units.move_unit(unit["id"], q=3, r=3)
+    assert (updated["q"], updated["r"]) == (3, 3)
 
 
 def test_visible_hexes_from_unit_works_without_a_pilot(campaign):
@@ -482,6 +540,88 @@ def test_undo_unit_removed_recreates_it_at_the_same_spot(campaign, pilot):
     assert len(remaining) == 1
     assert (remaining[0]["q"], remaining[0]["r"], remaining[0]["facing_deg"]) == (2, 3, 120)
     assert remaining[0]["mech_id"] == mech["id"]
+
+
+def test_visibility_steps_for_walk_one_entry_per_waypoint(campaign, pilot):
+    m = maps.create_map(campaign["id"], "Open field", width=6, height=3)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"])
+    path = [{"q": 1, "r": 0}, {"q": 2, "r": 0}, {"q": 3, "r": 0}]
+
+    steps = units.visibility_steps_for_walk(campaign["id"], m["id"], unit["id"], 0, 0, path, final_facing_deg=0)
+    assert [(s["q"], s["r"]) for s in steps] == [(1, 0), (2, 0), (3, 0)]
+    assert all("visible_hexes" in s for s in steps)
+
+
+def test_visibility_steps_for_walk_progressively_reveals_around_a_hill(campaign, pilot):
+    # Real user request: "la niebla se tiene que ir disipando con cada
+    # movimiento... cada paso del mech tiene que actualizar la niebla" —
+    # the whole point is that an intermediate waypoint's fog can genuinely
+    # differ from a later one, not just repeat the final position's.
+    m = maps.create_map(campaign["id"], "Valley", width=6, height=6, elevations={(1, 0): 3})
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"])
+
+    from_origin = units.visibility_steps_for_walk(
+        campaign["id"], m["id"], unit["id"], 0, 0, [{"q": 0, "r": 0}], final_facing_deg=0,
+    )
+    assert (2, 0) not in {(h["q"], h["r"]) for h in from_origin[0]["visible_hexes"]}, "the hill blocks it from here"
+
+    stepped_around = units.visibility_steps_for_walk(
+        campaign["id"], m["id"], unit["id"], 0, 0, [{"q": 0, "r": 1}], final_facing_deg=0,
+    )
+    assert (2, 0) in {(h["q"], h["r"]) for h in stepped_around[0]["visible_hexes"]}, "clear of the hill from here"
+
+
+def test_visibility_steps_for_walk_last_step_uses_the_final_commanded_facing(campaign, pilot):
+    m = maps.create_map(campaign["id"], "Open field", width=6, height=3)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"], facing_deg=0)
+    # Walking straight along r=0 (direction of travel = facing_deg 0),
+    # but the player picks a final facing of 180° (looking back the way
+    # they came) — the LAST step's fog must reflect that real commanded
+    # facing, not "still facing forward like every step before it".
+    path = [{"q": 1, "r": 0}, {"q": 2, "r": 0}]
+    steps = units.visibility_steps_for_walk(campaign["id"], m["id"], unit["id"], 0, 0, path, final_facing_deg=180)
+
+    first_visible = {(h["q"], h["r"]) for h in steps[0]["visible_hexes"]}
+    assert (3, 0) in first_visible, "still facing the direction of travel mid-walk"
+
+    last_visible = {(h["q"], h["r"]) for h in steps[-1]["visible_hexes"]}
+    assert (0, 0) in last_visible, "facing 180° at (2,0) looks back toward the origin"
+    assert (5, 0) not in last_visible, "and no longer sees straight ahead"
+
+
+def test_visibility_steps_for_walk_does_not_relocate_other_units(campaign, pilot):
+    m = maps.create_map(campaign["id"], "Open field", width=10, height=3)
+    mover = units.create_unit(campaign["id"], m["id"], q=0, r=0, pilot_id=pilot["id"], facing_deg=0)
+    other_pilot = pilots.create_pilot(campaign["id"], "Ally", faction="player")
+    units.create_unit(campaign["id"], m["id"], q=9, r=0, pilot_id=other_pilot["id"], facing_deg=180)
+
+    steps = units.visibility_steps_for_walk(
+        campaign["id"], m["id"], mover["id"], 0, 0, [{"q": 1, "r": 0}], final_facing_deg=0,
+    )
+    visible = {(h["q"], h["r"]) for h in steps[0]["visible_hexes"]}
+    assert (9, 0) in visible, "the OTHER unit's real position still sees its own tile — it was never relocated"
+
+
+def test_unit_visibility_steps_for_walk_is_single_observer_only(campaign):
+    # The FirstPersonView sibling of visibility_steps_for_walk — no team
+    # union, other units on the map don't matter at all, just this one
+    # hypothetical (q, r, facing)'s own facing-arc LoS, same as
+    # getUnitVisibleHexes/visible_hexes_from_unit already gives for a
+    # real (non-walking) position.
+    m = maps.create_map(campaign["id"], "Open field", width=6, height=3)
+    steps = units.unit_visibility_steps_for_walk(m["id"], 0, 0, [{"q": 3, "r": 0}], final_facing_deg=0)
+    visible = {(h["q"], h["r"]) for h in steps[0]["visible_hexes"]}
+    assert (5, 0) in visible, "straight ahead, within the front 180° arc"
+    assert (0, 0) not in visible, "directly behind, outside the front 180° arc"
+
+
+def test_unit_visibility_steps_for_walk_progressively_reveals_around_a_hill(campaign):
+    m = maps.create_map(campaign["id"], "Valley", width=6, height=6, elevations={(1, 0): 3})
+    from_origin = units.unit_visibility_steps_for_walk(m["id"], 0, 0, [{"q": 0, "r": 0}], final_facing_deg=0)
+    assert (2, 0) not in {(h["q"], h["r"]) for h in from_origin[0]["visible_hexes"]}
+
+    stepped_around = units.unit_visibility_steps_for_walk(m["id"], 0, 0, [{"q": 0, "r": 1}], final_facing_deg=0)
+    assert (2, 0) in {(h["q"], h["r"]) for h in stepped_around[0]["visible_hexes"]}
 
 
 def test_undo_unit_moved_restores_prior_position(campaign, pilot):

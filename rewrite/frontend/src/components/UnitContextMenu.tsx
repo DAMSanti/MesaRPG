@@ -24,6 +24,7 @@ export function UnitContextMenu({
   showAttack, onSkipAttack,
   showRollInitiative, canRollInitiative, onRollInitiative,
   showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement, onStandUp,
+  onFallOver, forceJump, onForceJumpChange,
 }: {
   unit: Unit
   mech: Mech | null
@@ -76,6 +77,24 @@ export function UnitContextMenu({
    * since standing back up IS this round's movement action for a
    * fallen mech, not a separate one. */
   onStandUp?: () => void
+  /** Debug-only (real user request: "una opcion de tirarse... en el menu
+   * de movimiento") — sets is_prone directly (no PSR/fall damage), to
+   * preview Caerse/Levantarse without waiting for a real failed PSR.
+   * Undefined hides the button entirely (callers that don't wire debug
+   * tooling never show it). */
+  onFallOver?: () => void
+  /** Debug-only (real user request: "activar temporalmente... el salto
+   * siempre", then, after the FIRST version of this gated the phase-move
+   * buttons behind the mech's own real jump_mp and broke for anyone
+   * testing on a mech without jets: "no quiero que dependa de que tenga
+   * nada, quiero darle, probarle y si funciona quitarlo y punto") — while
+   * true, dragging THIS unit (the ordinary unrestricted GM reposition,
+   * already ignoring MP/rules entirely) tags the resulting move as a
+   * jump for animation purposes, completely independent of the mech's
+   * own stats. Purely client-side (the caller owns the flag, keyed by
+   * unit id); undefined hides the checkbox. */
+  forceJump?: boolean
+  onForceJumpChange?: (value: boolean) => void
 }) {
   const label = mech ? `${mech.chassis} ${mech.model ?? ''}`.trim() : `unidad #${unit.id}`
 
@@ -105,6 +124,18 @@ export function UnitContextMenu({
             </>
           )}
           <button disabled={!canPhaseMove} onClick={onSkipMovement}>Saltar movimiento</button>
+          {onFallOver && !mech?.is_prone && (
+            <button disabled={!canPhaseMove} onClick={onFallOver}>Tirarse (debug)</button>
+          )}
+          {onForceJumpChange && (
+            <label className="unit-menu-debug-toggle">
+              <input
+                type="checkbox" checked={forceJump ?? false}
+                onChange={(e) => onForceJumpChange(e.target.checked)}
+              />
+              {' '}Forzar salto al arrastrar (debug)
+            </label>
+          )}
         </>
       )}
     </DropdownMenu>

@@ -77,6 +77,22 @@ def test_set_enemy_reveal_cinematic_can_disable_and_reenable(campaign):
     assert reenabled["enemy_reveal_cinematic"] is True
 
 
+def test_new_campaign_defaults_to_physical_gm_dice_mode(campaign):
+    assert campaign["gm_dice_mode"] == "physical"
+
+
+def test_set_gm_dice_mode_to_auto_and_back(campaign):
+    updated = campaigns.set_gm_dice_mode(campaign["id"], "auto")
+    assert updated["gm_dice_mode"] == "auto"
+    back = campaigns.set_gm_dice_mode(campaign["id"], "physical")
+    assert back["gm_dice_mode"] == "physical"
+
+
+def test_set_gm_dice_mode_rejects_unknown_mode(campaign):
+    with pytest.raises(pilots.UnknownDiceMode):
+        campaigns.set_gm_dice_mode(campaign["id"], "telepathic")
+
+
 def test_set_gm_die_style_sets_and_clears(campaign):
     updated = campaigns.set_gm_die_style(campaign["id"], "chrome-metallic")
     assert updated["gm_die_style"] == "chrome-metallic"

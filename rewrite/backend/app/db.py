@@ -284,6 +284,59 @@ CREATE TABLE IF NOT EXISTS table_session (
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- MechLab (real user request: "una pequeña vista dentro de nuestra app
+-- donde seleccione el modelo del mech que quiero... y que yo tenga una
+-- forma de decirte a ti donde esta cada cosa") — dev-only annotation tool,
+-- global/unscoped by campaign, keyed by the .glb URL itself (not
+-- chassis+model — several models share one asset via mechAssets.ts's own
+-- placeholder fallback, so annotating the URL once covers all of them).
+-- Points live in the SAME normalized local space Mech3D.tsx's own
+-- Mech3DModel already puts every model into (1 unit tall, centered on
+-- X/Z, resting on y=0) — see MechLabView.tsx's own top comment for the
+-- full pipeline this feeds.
+CREATE TABLE IF NOT EXISTS mech_model_annotations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_url TEXT NOT NULL,
+    kind TEXT NOT NULL,        -- 'weapon' | 'cockpit' (room for more kinds later, no migration needed)
+    location TEXT,             -- one of MECH_LOCATIONS for kind='weapon'; NULL for 'cockpit'
+    x REAL NOT NULL, y REAL NOT NULL, z REAL NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Real user request: "necesito en el desplegable de mechs... poder ver a
+-- simple vista en que estado se encuentra el anotar armas, extremidades y
+-- rig... Solo yo puedo aceptar cada parte" — one row per (model_url,
+-- track), tracking a review status independent of the annotation data
+-- itself ('done' is set automatically by the frontend once there's real
+-- data/a first look for that track; 'accepted' is ONLY ever set by an
+-- explicit user action, never inferred).
+CREATE TABLE IF NOT EXISTS mech_model_review (
+    model_url TEXT NOT NULL,
+    track TEXT NOT NULL,       -- 'weapons' | 'limbs' | 'rig' | 'texture'
+    status TEXT NOT NULL DEFAULT 'not_started',  -- 'not_started' | 'done' | 'accepted'
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (model_url, track)
+);
+
+-- Real user request: "quiero poder guardarlo desde el mechlab y como lo
+-- demas, 3 estados y un marcador en el desplegable" — MechLabView's
+-- Textura tab (live PBR sliders, see Mech3D.tsx's own MechPbrSettings)
+-- persists here, one row per model_url, the same "replace whole state on
+-- save" shape as mech_model_annotations above (no per-field history
+-- needed — the editor always sends its full current slider state). Review
+-- status for this same tab lives in mech_model_review under track='texture',
+-- reusing that table rather than a parallel status column here.
+CREATE TABLE IF NOT EXISTS mech_pbr_settings (
+    model_url TEXT PRIMARY KEY,
+    repeat REAL NOT NULL,
+    normal_scale REAL NOT NULL,
+    roughness REAL NOT NULL,
+    metalness REAL NOT NULL,
+    color_boost REAL NOT NULL,
+    ao_intensity REAL NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 -- D&D 5e (ROADMAP.md Fase R4 — segundo sistema, slice mínimo de
 -- validación de la arquitectura de plugins). Sin flujo de aprobación
 -- (a diferencia de pilots/mechs) — el GM crea la ficha directamente,
@@ -449,8 +502,18 @@ def init_db() -> None:
         _ensure_column(conn, "campaigns", "enemy_reveal_cinematic", "INTEGER NOT NULL DEFAULT 1")
         # Real user request: per-pilot choice between physical dice
         # (thrown on TableView) and automatic server-rolled initiative —
-        # see pilots.py's DICE_MODES.
+        # see pilots.py's DICE_MODES. Player-faction pilots only; an
+        # enemy/npc pilot's OWN dice_mode is ignored in favor of the
+        # campaign-wide gm_dice_mode below (see dice_resolution.py's own
+        # _dice_mode_for) — real user correction: "lo del GM no tiene que
+        # ser por piloto... O TODOS SUS PILOTOS TIRAN AUTOMATICO O TODOS
+        # TIRAN FISICO".
         _ensure_column(conn, "pilots", "dice_mode", "TEXT NOT NULL DEFAULT 'physical'")
+        # The GM has no `pilots` row of their own (same reasoning as
+        # gm_die_style above) — one campaign-wide switch governing every
+        # enemy/npc pilot's rolls at once, set from GMView's own Ajustes
+        # modal.
+        _ensure_column(conn, "campaigns", "gm_dice_mode", "TEXT NOT NULL DEFAULT 'physical'")
         # Melee/heat-phase/critical-hit state (ROADMAP.md follow-up —
         # "fase de melee... fase de heat... shutdown... sistema PSR/
         # caída/prono... daño a componentes por crítico"). Gyro/engine/
@@ -493,6 +556,16 @@ def init_db() -> None:
         # the rest of that round; a mode change now only takes effect
         # starting the NEXT round.
         _ensure_column(conn, "bt_rounds", "mode", "TEXT NOT NULL DEFAULT 'team'")
+        # MechLab (real user request: "nos falta una forma de seleccionar
+        # o pintar las partes del mech correspondientes a los brazos y las
+        # piernas para que puedan perderlas en combate") — kind='limb'
+        # rows tag which named mesh nodes belong to one limb (LA/RA/LL/RL
+        # only — a lost CT/HD is mech death, not a detachable part, same
+        # real Total Warfare rule the rest of this app already follows).
+        # JSON-encoded list of glTF node names, since one limb can be
+        # built from several separate meshes (upper arm/forearm/hand,
+        # say). NULL for kind='weapon'/'cockpit' rows, which don't use it.
+        _ensure_column(conn, "mech_model_annotations", "mesh_names", "TEXT")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

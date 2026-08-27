@@ -4,6 +4,7 @@ import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import { useTableSocket } from '../ws'
 import { PilotForm } from '../components/PilotForm'
+import { ChassisSelect } from '../components/ChassisSelect'
 import { PinPrompt } from '../components/PinPrompt'
 import { Modal } from '../components/Modal'
 import { MechRecordSheet } from '../components/MechRecordSheet'
@@ -92,7 +93,10 @@ export function PlayerView() {
   const [joinCallsign, setJoinCallsign] = useState('')
   const [joinGunnery, setJoinGunnery] = useState(4)
   const [joinPiloting, setJoinPiloting] = useState(5)
-  const [joinColor, setJoinColor] = useState(() => suggestPilotColor(pilots.length))
+  // Real user request: "quita la selección del color en la creación de
+  // pilotos" — auto-assigned only now, no picker for the player to fuss
+  // with.
+  const joinColor = suggestPilotColor(pilots.length)
   // Chassis → model, same two cascading dropdowns as GMView's own "Nuevo
   // mech" modal (real user request: "copia la forma de hacerlo de GM
   // view") — tonnage/movement/armor/structure all come from the picked
@@ -389,22 +393,12 @@ export function PlayerView() {
               callsign={joinCallsign} onCallsign={setJoinCallsign}
               gunnery={joinGunnery} onGunnery={setJoinGunnery}
               piloting={joinPiloting} onPiloting={setJoinPiloting}
-              color={joinColor} onColor={setJoinColor}
               pin={joinPin} onPin={setJoinPin}
               onSubmit={join} submitLabel="Crear ficha" submitDisabled={!joinName || !joinChassis || joinPin.length !== 4} hideSubmit
             />
             <h3 className="step-label">Mech</h3>
             <div className="row">
-              <select value={joinChassis} onChange={(e) => setJoinChassis(e.target.value)}>
-                <option value="">chasis…</option>
-                {groupChassisByWeightClass(chassisOptions).map(({ weightClass, entries }) => (
-                  <optgroup key={weightClass} label={weightClass}>
-                    {entries.map(({ chassis: c }) => (
-                      <option key={c} value={c}>{MECH_CHASSIS_ASSETS[c] ? `🛠️ ${c}` : c}</option>
-                    ))}
-                  </optgroup>
-                ))}
-              </select>
+              <ChassisSelect value={joinChassis} onChange={setJoinChassis} options={chassisOptions} />
               <select
                 value={joinSelectedModelFile}
                 onChange={(e) => setJoinSelectedModelFile(e.target.value)}

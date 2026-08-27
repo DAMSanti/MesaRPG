@@ -108,6 +108,15 @@
     var(--die-style-color);
 }
 
+/* 'glass' swatch: a lighter wash of the base color (standing in for real
+   transmission) plus a sharper glassy highlight streak than the metallic
+   sheen above. */
+.die-style-swatch-color.material-glass {
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.75) 0%, transparent 25%, transparent 75%, rgba(255, 255, 255, 0.25) 100%),
+    color-mix(in srgb, var(--die-style-color) 55%, white 45%);
+}
+
 .die-style-marking {
   color: #fff;
   mix-blend-mode: difference;

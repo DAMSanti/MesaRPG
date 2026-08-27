@@ -1,13 +1,13 @@
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { Physics } from '@react-three/rapier'
-import { OrbitControls } from '@react-three/drei'
+import { Environment, OrbitControls } from '@react-three/drei'
 import { PhysicalDiceThrow, THROW_ORIGIN_X } from '../components/PhysicalDiceThrow'
 import { HexMap, useAttackVfxQueue } from '../components/HexMap'
 import { TableBackground } from '../components/TableBackground'
 import { BoardWalls } from '../components/BoardWalls'
 import { EnemyRevealCinematic } from '../components/EnemyRevealCinematic'
-import { useTableSocket } from '../ws'
+import { useTableSocket, type FogWalkStep } from '../ws'
 import { useCampaignId } from '../useCampaignId'
 import { useMapId } from '../useMapId'
 import {
@@ -21,6 +21,8 @@ import {
 import { FACTION_COLORS } from '../factions'
 import { SquareMap } from '../components/SquareMap'
 import './TableView.css'
+
+const REVEAL_CINEMATIC_AUTO_CLOSE_MS = 7000
 
 // Manual per-pilot initiative rolls (individual mode) roll physically on
 // the shared table's own board instead of a popup on the GM's/player's
@@ -113,6 +115,15 @@ function TableViewBattletech() {
   // REST refetch), so this needs to keep retrying, unmarked, until the
   // unit's own data is actually there to check its faction against.
   const handledRevealIdRef = useRef<number | null>(null)
+  // Real user request: "si se descubren dos o mas mechs a la vez, sus
+  // cinematicas serán secuenciales" — main.py's own _broadcast_visibility
+  // fires one unit_revealed message per newly-revealed unit in a tight
+  // loop, so two-or-more genuine reveals in the same round-trip used to
+  // just overwrite each other in this single revealCinematicUnitId piece
+  // of state (only the LAST one ever got shown, or — worse — cut the
+  // first one's cinematic short mid-playback). A real queue: a reveal
+  // that arrives while one is already showing waits its turn instead.
+  const revealQueueRef = useRef<number[]>([])
   useEffect(() => {
     if (lastRevealedUnitId == null) return
     if (handledRevealIdRef.current === lastRevealedUnitId) return
@@ -127,8 +138,30 @@ function TableViewBattletech() {
     // ally/npc ghost (rare, but the mechanic doesn't discriminate) isn't
     // the "surprise enemy contact" moment this was built for.
     if (revealed.pilot_faction !== 'enemy') return
-    setRevealCinematicUnitId(lastRevealedUnitId)
+    setRevealCinematicUnitId((current) => {
+      // Dedupe: a stray duplicate unit_revealed broadcast for the same id
+      // must never queue a second showing of it — same id, same key, so
+      // the child wouldn't remount and its own state would look "stuck"
+      // even though it's really just showing the same thing twice.
+      if (current === lastRevealedUnitId || revealQueueRef.current.includes(lastRevealedUnitId)) return current
+      if (current == null) return lastRevealedUnitId
+      revealQueueRef.current.push(lastRevealedUnitId)
+      return current
+    })
   }, [lastRevealedUnitId, campaign, units])
+  const closeRevealCinematic = () => {
+    setRevealCinematicUnitId(revealQueueRef.current.shift() ?? null)
+  }
+  // Owned here, not inside EnemyRevealCinematic itself — this effect is
+  // keyed on the id directly, so it re-arms on every real transition
+  // (including two reveals in a row sharing chassis/model, which used to
+  // leave the child's own chassis/model-keyed timer never restarting).
+  useEffect(() => {
+    if (revealCinematicUnitId == null) return
+    const t = setTimeout(closeRevealCinematic, REVEAL_CINEMATIC_AUTO_CLOSE_MS)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revealCinematicUnitId])
   const revealCinematicUnit = units.find((u) => u.id === revealCinematicUnitId) ?? null
 
   // Mechs aren't part of useMapState (units alone drive the board's own
@@ -204,6 +237,21 @@ function TableViewBattletech() {
   // kept live off the same visibility_update broadcast everything else
   // here already listens to.
   const [teamVisibleHexes, setTeamVisibleHexes] = useState<Set<string> | null>(null)
+  // Real user request: "la niebla se tiene que ir disipando con cada
+  // movimiento" — the OLD instant visibility_update (main.py's own
+  // _broadcast_visibility, sent right after unit_walked) still arrives
+  // over the wire almost immediately, well before a multi-hex walk's
+  // animation actually finishes — applying it on arrival would fight
+  // the new progressive fog_steps: the fog would jump straight to the
+  // TRUE final state first, then visibly regress back to earlier/
+  // incomplete steps for the rest of the walk, only to "catch up" again
+  // once the animation reaches the end. Tracks which unit(s) currently
+  // have a fog-stepped walk in flight (added in the unitWalked effect
+  // below, removed once onTableUnitWalkStep applies that walk's own
+  // LAST step) — the eager visibility_update write is skipped entirely
+  // while any are, since the walk's own final fog_step already carries
+  // the same authoritative answer at exactly the right moment.
+  const walkingFogUnitIdsRef = useRef<Set<number>>(new Set())
   useEffect(() => {
     if (mapId == null) return
     let cancelled = false
@@ -216,6 +264,7 @@ function TableViewBattletech() {
   }, [mapId])
   useEffect(() => {
     if (!visibility) return
+    if (walkingFogUnitIdsRef.current.size > 0) return
     setTeamVisibleHexes(new Set(visibility.visible_hexes.map((h) => `${h.q},${h.r}`)))
   }, [visibility])
 
@@ -223,7 +272,7 @@ function TableViewBattletech() {
   // animation as GMView, derived the same way, queued (see
   // useAttackVfxQueue's own doc comment) so a fast attack resolving
   // while a slower one still animates doesn't cut the first one off.
-  const { activeAttack: activeAttackVfx, onAttackEffectDone } = useAttackVfxQueue(lastAttack, units)
+  const { activeAttack: activeAttackVfx, onAttackEffectDone } = useAttackVfxQueue(lastAttack, units, mechs)
 
   // GMView's/PlayerView's "Tirar iniciativa" button doesn't roll
   // anything itself anymore — it broadcasts "please throw dice for this
@@ -351,6 +400,19 @@ function TableViewBattletech() {
   // eventually reflects the new q/r (via broadcast + refetch), HexMap
   // walks the actual calculated path instead of a straight line.
   const [walkPaths, setWalkPaths] = useState<Map<number, { q: number; r: number }[]>>(new Map())
+  // Real user request: proper Walk/Run/Jump animation chains, not the
+  // same Idle/Walk crossfade for every move — same population pattern as
+  // walkPaths above, straight off this same unit_walked broadcast.
+  const [walkMovementTypes, setWalkMovementTypes] = useState<Map<number, 'walk' | 'run' | 'jump'>>(new Map())
+  // Real user request: "la niebla se tiene que ir disipando con cada
+  // movimiento... cada paso del mech tiene que actualizar la niebla,
+  // tanto en TableView como en FPV. Ahora mismo calcula la de la
+  // posicion final nada mas empezar el movimiento" — one fog snapshot
+  // per waypoint of whichever unit(s) are currently walking a real
+  // path, applied to teamVisibleHexes exactly when HexMap's own walk
+  // animation ARRIVES at each hex (onUnitWalkStep below), not the
+  // instant the move starts.
+  const [fogStepsByUnit, setFogStepsByUnit] = useState<Map<number, FogWalkStep[]>>(new Map())
 
   // Real user report (investigated 2026-08): a move whose destination
   // click THIS screen didn't itself capture (GM's own map, PlayerView's
@@ -372,10 +434,37 @@ function TableViewBattletech() {
   useEffect(() => {
     if (!unitWalked || unitWalked.path.length === 0) return
     setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+    setWalkMovementTypes((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.movement_type))
+    if (unitWalked.fog_steps && unitWalked.fog_steps.length > 0) {
+      setFogStepsByUnit((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.fog_steps!))
+      walkingFogUnitIdsRef.current.add(unitWalked.unit_id)
+    }
     const walkedUnit = units.find((u) => u.id === unitWalked.unit_id)
     heldMover.onUnitWalkStart(unitWalked.unit_id, walkedUnit?.pilot_id ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unitWalked])
+
+  const onTableUnitWalkStep = (unitId: number, index: number) => {
+    const unitSteps = fogStepsByUnit.get(unitId)
+    const step = unitSteps?.[index]
+    if (step) setTeamVisibleHexes(new Set(step.visible_hexes.map((h) => `${h.q},${h.r}`)))
+    // The last waypoint's own fog_step IS the true final answer (both
+    // computed from the same settled position) — safe to let the
+    // ordinary visibility_update-driven effect resume writing again.
+    if (unitSteps && index === unitSteps.length - 1) walkingFogUnitIdsRef.current.delete(unitId)
+  }
+
+  // Safety net for onTableUnitWalkStep's own last-index clear above — a
+  // walk that never actually reaches its last waypoint (an undo mid-
+  // flight redirects it elsewhere, the unit is destroyed mid-walk, …)
+  // would otherwise leave that unit's id stuck in walkingFogUnitIdsRef
+  // forever, silently freezing EVERY unit's fog on this screen. Whatever
+  // eventually makes the walk animation settle — for any reason — also
+  // clears it here.
+  const onTableUnitWalkDone = (unitId: number) => {
+    walkingFogUnitIdsRef.current.delete(unitId)
+    heldMover.onUnitWalkDone(unitId)
+  }
 
   // The move itself can also complete somewhere that never clicks a tile
   // HERE — GMView's own embedded map resolves its own moves directly
@@ -414,43 +503,57 @@ function TableViewBattletech() {
       <div className="hud">
         <span className={`status-dot ${connected ? 'on' : 'off'}`} />
         <span>
-          {connected ? 'conectado' : 'sin conexión'} — campaña #{campaignId}
+          {connected ? 'conectado' : 'sin conexión'} — {campaign?.name ?? `campaña #${campaignId}`}
         </span>
         {lastRoll && (
           <span className="roll-badge">
             {lastRoll.die} → <strong>{lastRoll.result}</strong>
           </span>
         )}
-        {lastRevealedUnitId != null && (
-          <span className="roll-badge reveal-badge">¡figura revelada! #{lastRevealedUnitId}</span>
-        )}
       </div>
 
-      {/* Real user request: centered at the top instead of tucked into
-          the left-corner HUD strip, and just phase + round number — no
-          initiative-roll listing (that moved out of this shared screen
-          entirely, real user request: "eliminar iniciativas de la table
-          view"). */}
-      {roundState && roundState.round_number > 0 && (
-        <div className="phase-indicator">
+      {/* Real user request: just phase + round number, no initiative-roll
+          listing (that moved out of this shared screen entirely, real
+          user request: "eliminar iniciativas de la table view"). One
+          copy per screen edge (see .phase-indicator-side's own doc
+          comment) — this projects onto a table with players seated all
+          the way around it, not just one "front". */}
+      {roundState && roundState.round_number > 0 && ['top', 'bottom', 'left', 'right'].map((side) => (
+        <div key={side} className={`phase-indicator-side ${side}`}>
           <span className="phase-indicator-phase">{PHASE_LABELS[displayedPhase]}</span>
           <span className="phase-indicator-round">Ronda {roundState.round_number}</span>
         </div>
-      )}
+      ))}
 
       {/* Cenital por defecto: es lo que replica la cámara real de la mesa
           física. Solo se rompe para el inset de repetición (abajo), nunca
           para el canvas principal. */}
       <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
         <color attach="background" args={['#0f1a18']} />
-        <ambientLight intensity={0.6} />
+        {/* Real user report: "los dados de jade se ven muy oscuros,
+            quiza la escena tenga poca luz" — bumped alongside the
+            per-material envMapIntensity values in dieStyles.ts; this
+            benefits every mech/unit rendered in the same scene too,
+            not just dice. */}
+        <ambientLight intensity={0.85} />
         <directionalLight
-          position={[4, 8, 3]} intensity={1.4} castShadow
+          position={[4, 8, 3]} intensity={1.8} castShadow
           shadow-mapSize={[2048, 2048]}
           shadow-camera-left={-30} shadow-camera-right={30}
           shadow-camera-top={30} shadow-camera-bottom={-30}
           shadow-camera-far={60}
         />
+        {/* Real user request: metallic/glass dice need real reflections
+            to read as true chrome/glass rather than a flat tinted
+            material (see dieStyles.ts's own doc comment) — lighting/
+            reflections ONLY (background=false keeps the plain table
+            backdrop above untouched). Same bundled CC0 HDRI already
+            partly used for FirstPersonView's sky (public/textures/
+            CREDITS.md), offline per VISION.md §3 — no network fetch at
+            runtime, just a local file under public/. */}
+        <Suspense fallback={null}>
+          <Environment files="/textures/dice-env.exr" background={false} />
+        </Suspense>
         <Physics gravity={[0, -9.81, 0]}>
           {/* Real user report: a die that rolled off a tile into a gap
               fell straight through — this used to render OUTSIDE
@@ -470,6 +573,7 @@ function TableViewBattletech() {
                 activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}
                 moveHighlightHexes={activeMovement ? new Set(activeMovement.hexes.keys()) : undefined}
                 walkPaths={walkPaths}
+                walkMovementTypes={walkMovementTypes}
                 heatByUnitId={heatByUnitId}
                 proneUnitIds={proneUnitIds}
                 shutdownUnitIds={shutdownUnitIds}
@@ -477,7 +581,8 @@ function TableViewBattletech() {
                 teamVisibleHexes={teamVisibleHexes ?? undefined}
                 activeAttack={activeAttackVfx}
                 onAttackEffectDone={onAttackEffectDone}
-                onUnitWalkDone={heldMover.onUnitWalkDone}
+                onUnitWalkDone={onTableUnitWalkDone}
+                onUnitWalkStep={onTableUnitWalkStep}
                 onTileClick={onTableTileClick}
                 physics
               />
@@ -502,29 +607,37 @@ function TableViewBattletech() {
                  spot. Fixed by handing out `lane` ONCE per throw, at
                  creation (nextLaneRef above), never recomputed from the
                  array afterward. */}
-          {activeThrows.map((t) => (
-            <InitiativeDice
-              key={t.pilotId}
-              rollId={t.pilotId}
-              color={t.color}
-              dieStyle={t.dieStyle}
-              lane={t.lane}
-              onSettled={reportSettledInitiative(t.pilotId)}
-              onDone={() => setActiveThrows((prev) => prev.filter((x) => x.pilotId !== t.pilotId))}
-            />
-          ))}
-          {activePhysicalThrows.map((t) => (
-            <PhysicalDiceThrow
-              key={t.pendingRollId}
-              rollId={t.pendingRollId}
-              dieCount={t.dieCount}
-              color={t.color}
-              dieStyle={t.dieStyle}
-              lane={t.lane}
-              onSettled={reportSettledPhysicalRoll(t.pendingRollId)}
-              onDone={() => setActivePhysicalThrows((prev) => prev.filter((x) => x.pendingRollId !== t.pendingRollId))}
-            />
-          ))}
+          {/* Die.tsx now loads real PBR textures for metallic styles via
+              drei's useTexture (Suspense-based) — needs a boundary
+              somewhere above it, this is the nearest one. fallback={null}
+              just holds off mounting a throw's RigidBody for the (after
+              the very first roll, cache-instant) moment its style's
+              textures load, same as HexMap's own Suspense right above. */}
+          <Suspense fallback={null}>
+            {activeThrows.map((t) => (
+              <InitiativeDice
+                key={t.pilotId}
+                rollId={t.pilotId}
+                color={t.color}
+                dieStyle={t.dieStyle}
+                lane={t.lane}
+                onSettled={reportSettledInitiative(t.pilotId)}
+                onDone={() => setActiveThrows((prev) => prev.filter((x) => x.pilotId !== t.pilotId))}
+              />
+            ))}
+            {activePhysicalThrows.map((t) => (
+              <PhysicalDiceThrow
+                key={t.pendingRollId}
+                rollId={t.pendingRollId}
+                dieCount={t.dieCount}
+                color={t.color}
+                dieStyle={t.dieStyle}
+                lane={t.lane}
+                onSettled={reportSettledPhysicalRoll(t.pendingRollId)}
+                onDone={() => setActivePhysicalThrows((prev) => prev.filter((x) => x.pendingRollId !== t.pendingRollId))}
+              />
+            ))}
+          </Suspense>
         </Physics>
         {/* dampingFactor explicit — drei's OrbitControls defaults
             enableDamping to true but leaves three.js's own default
@@ -536,11 +649,19 @@ function TableViewBattletech() {
       </Canvas>
 
       {revealCinematicUnit && (
+        // key={revealCinematicUnitId} forces a full remount for every new
+        // reveal — without it, two reveals sharing the same chassis/model
+        // (a common case: two of the same enemy mech) leave React reusing
+        // the same instance, so EnemyRevealCinematic's own auto-close
+        // timer (keyed off [chassis, model], see its own file) never
+        // restarts for the second one — real user report: "la última se
+        // queda eternamente".
         <EnemyRevealCinematic
+          key={revealCinematicUnitId}
           chassis={revealCinematicUnit.mech_chassis}
           model={revealCinematicUnit.mech_model}
           color={FACTION_COLORS.enemy}
-          onClose={() => setRevealCinematicUnitId(null)}
+          onClose={closeRevealCinematic}
         />
       )}
     </div>

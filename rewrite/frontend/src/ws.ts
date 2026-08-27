@@ -162,10 +162,35 @@ export interface PhysicalRollRequested {
 // any other viewer) had no route data at all and animated a straight
 // line through whatever was in between, ignoring the actual
 // pathfinding. Broadcast to everyone regardless of who moved it.
+export interface FogWalkStep {
+  q: number
+  r: number
+  visible_hexes: VisibleHex[]
+}
+
 export interface UnitWalked {
   type: 'unit_walked'
   unit_id: number
   path: { q: number; r: number }[]
+  /** Real user request: proper Walk/Run/Jump animation chains instead of
+   * the same Idle/Walk crossfade for every move — main.py's own
+   * _unit_walked_payload always includes this now (defaults to 'walk' on
+   * the free-drag /move path, which has no real movement-type concept of
+   * its own). */
+  movement_type: 'walk' | 'run' | 'jump'
+  /** One entry per `path` waypoint, same order — real user request: "la
+   * niebla se tiene que ir disipando con cada movimiento... cada paso
+   * del mech tiene que actualizar la niebla, tanto en TableView como en
+   * FPV" — only present for a player-faction walker (main.py's own
+   * _unit_walked_payload; an enemy/npc's own movement never changes
+   * what the player team can see, so there's nothing to step through).
+   * fog_steps is TableView's team-wide fog (units.py's
+   * visibility_steps_for_walk); cockpit_fog_steps is FirstPersonView's
+   * own single-mech sightline (units.py's unit_visibility_steps_for_walk
+   * — same shape getUnitVisibleHexes already returns for a real,
+   * non-walking position). */
+  fog_steps?: FogWalkStep[]
+  cockpit_fog_steps?: FogWalkStep[]
 }
 
 export function useTableSocket(campaignId: number | null) {

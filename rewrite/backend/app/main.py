@@ -15,7 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import campaigns, db, dice_resolution, dice_styles, equipment, events, mapgen, maps, mech_templates, rolls, systems, table_session, units
+from . import campaigns, db, dice_resolution, dice_styles, equipment, events, mapgen, maps, mech_annotations, mech_templates, rolls, systems, table_session, units
 from .systems.battletech import combat, mechs, melee, movement, pilots, psr, turns, weapons
 from .systems.dnd5e import characters as dnd_characters
 from .systems.dnd5e import combat as dnd_combat
@@ -142,6 +142,27 @@ async def set_enemy_reveal_cinematic(campaign_id: int, body: EnemyRevealCinemati
     # Same reasoning as gm-die-style above — TableView (the one screen
     # that actually shows the cinematic) needs to learn the GM just
     # toggled this live, not only on its next unrelated refetch.
+    await manager.broadcast(campaign_id, {"type": "roster_updated"})
+    return updated
+
+
+class GmDiceModeIn(BaseModel):
+    mode: str
+
+
+@app.post("/api/campaigns/{campaign_id}/gm-dice-mode")
+async def set_gm_dice_mode(campaign_id: int, body: GmDiceModeIn) -> dict:
+    """Real user request/correction: "el GM también tiene que poder
+    escoger entre dados físicos o tiradas automáticas... O TODOS SUS
+    PILOTOS TIRAN AUTOMATICO O TODOS TIRAN FISICO" — one campaign-wide
+    switch, not a per-pilot setting (unlike a player's own dice_mode).
+    See dice_resolution.py's own _dice_mode_for."""
+    _require_campaign(campaign_id)
+    try:
+        updated = campaigns.set_gm_dice_mode(campaign_id, body.mode)
+    except pilots.UnknownDiceMode as exc:
+        raise HTTPException(422, str(exc)) from exc
+    # Same reasoning as gm-die-style/enemy-reveal-cinematic above.
     await manager.broadcast(campaign_id, {"type": "roster_updated"})
     return updated
 
@@ -650,6 +671,87 @@ def get_mech_import(filename: str) -> dict:
     return template
 
 
+# ---- MechLab (real user request: "una pequeña vista dentro de nuestra
+# app donde seleccione el modelo del mech que quiero... y que yo tenga una
+# forma de decirte a ti donde esta cada cosa") — dev-only 3D annotation
+# tool, global/unscoped by campaign like everything else in this block.
+
+class MechAnnotationPointIn(BaseModel):
+    kind: str
+    location: str | None = None
+    x: float = 0
+    y: float = 0
+    z: float = 0
+    mesh_names: list[str] | None = None
+
+
+class MechAnnotationsSaveIn(BaseModel):
+    model_url: str
+    points: list[MechAnnotationPointIn]
+
+
+@app.get("/api/mech-annotations")
+def list_mech_annotations() -> list[dict]:
+    return mech_annotations.list_annotations()
+
+
+@app.put("/api/mech-annotations")
+def save_mech_annotations(body: MechAnnotationsSaveIn) -> list[dict]:
+    try:
+        return mech_annotations.save_annotations(body.model_url, [p.model_dump() for p in body.points])
+    except mech_annotations.InvalidAnnotation as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+class MechAnnotationReviewIn(BaseModel):
+    model_url: str
+    track: str
+    status: str
+
+
+@app.get("/api/mech-annotations/review")
+def list_mech_annotation_review() -> list[dict]:
+    return mech_annotations.list_review()
+
+
+@app.put("/api/mech-annotations/review")
+def set_mech_annotation_review(body: MechAnnotationReviewIn) -> dict:
+    try:
+        return mech_annotations.set_review_status(body.model_url, body.track, body.status)
+    except mech_annotations.InvalidReview as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+# Real user request: "quiero poder guardarlo desde el mechlab y como lo
+# demas, 3 estados y un marcador en el desplegable" — persists MechLabView's
+# Textura tab (live PBR tuning, see Mech3D.tsx's own MechPbrSettings/
+# useMechPbr). Review status for this tab reuses the existing
+# /api/mech-annotations/review endpoint above with track='texture', same
+# as weapons/limbs/rig — only the actual slider VALUES need their own
+# storage/endpoint here.
+class MechPbrSettingsIn(BaseModel):
+    model_url: str
+    repeat: float
+    normal_scale: float
+    roughness: float
+    metalness: float
+    color_boost: float
+    ao_intensity: float
+
+
+@app.get("/api/mech-pbr-settings")
+def list_mech_pbr_settings() -> list[dict]:
+    return mech_annotations.list_pbr_settings()
+
+
+@app.put("/api/mech-pbr-settings")
+def save_mech_pbr_settings(body: MechPbrSettingsIn) -> dict:
+    try:
+        return mech_annotations.save_pbr_settings(body.model_url, body.model_dump(exclude={"model_url"}))
+    except mech_annotations.InvalidPbrSettings as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 class MechWeaponIn(BaseModel):
     weapon_name: str
     location: str
@@ -796,6 +898,40 @@ async def _broadcast_visibility(campaign_id: int, map_id: int) -> None:
         await manager.broadcast(campaign_id, {"type": "unit_revealed", "unit_id": revealed_id})
 
 
+def _unit_walked_payload(unit: dict, path: list[dict], final_facing_deg: int, movement_type: str = "walk") -> dict:
+    """Real user request: "la niebla se tiene que ir disipando con cada
+    movimiento... cada giro, cada paso del mech tiene que actualizar la
+    niebla, tanto en TableView como en FPV. Ahora mismo calcula la de la
+    posicion final nada mas empezar el movimiento" — every unit_walked
+    broadcast now carries per-waypoint fog snapshots the frontend applies
+    exactly when its own walk animation reaches each hex, instead of the
+    whole fog jumping straight to the final destination's the instant
+    the move starts: fog_steps (TableView's team-wide combined fog) and
+    cockpit_fog_steps (FirstPersonView's own single-mech sightline —
+    getUnitVisibleHexes' own LoS, not the team union). Both only
+    computed for a player-faction walker — an enemy/npc's own movement
+    never changes what the player team's stationary units (or their own
+    single mech, for the cockpit version) can see (units.py's
+    visibility_steps_for_walk/unit_visibility_steps_for_walk's own doc
+    comments), so there's nothing to step through for one and every
+    other mover keeps the old single-broadcast-at-the-end behavior.
+
+    `movement_type` (real user request: proper Walk/Run/Jump animation
+    chains on the frontend, not the same Idle/Walk crossfade for every
+    move) — defaults to "walk" for move_unit's free-drag path below,
+    which has no real movement-type concept of its own (matches what
+    record_free_move already assumes internally elsewhere)."""
+    payload = {"type": "unit_walked", "unit_id": unit["id"], "path": path, "movement_type": movement_type}
+    if unit["pilot_faction"] == "player":
+        payload["fog_steps"] = units.visibility_steps_for_walk(
+            unit["campaign_id"], unit["map_id"], unit["id"], unit["q"], unit["r"], path, final_facing_deg,
+        )
+        payload["cockpit_fog_steps"] = units.unit_visibility_steps_for_walk(
+            unit["map_id"], unit["q"], unit["r"], path, final_facing_deg,
+        )
+    return payload
+
+
 class TilePatchIn(BaseModel):
     elevation: int | None = None
     blocks_los: bool | None = None
@@ -844,6 +980,8 @@ async def create_unit(map_id: int, body: UnitIn) -> dict:
         )
     except units.MechNotApproved as exc:
         raise HTTPException(422, str(exc)) from exc
+    except units.HexOccupied as exc:
+        raise HTTPException(409, str(exc)) from exc
     # Placing a token (GM sidebar drag, or a freshly-created mech) used to
     # be invisible to an already-open Mesa view until something else
     # happened to also touch visibility — same gap move_unit already
@@ -883,6 +1021,15 @@ class UnitMoveIn(BaseModel):
     q: int
     r: int
     facing_deg: int | None = None
+    # Real user request: a debug-only "forzar salto" toggle that must work
+    # regardless of the mech's own jump_mp/walk_mp/heat/anything — no MP
+    # check, no reachable-hexes gate, just "let me see the animation".
+    # This endpoint already has zero rule enforcement (real user request,
+    # see its own docstring below), so it's the natural place for that:
+    # purely an animation tag on the unit_walked broadcast, never
+    # validated against the mech's own stats the way move-with-mp's real
+    # movement_type is.
+    movement_type: str | None = None
 
 
 @app.post("/api/units/{unit_id}/move")
@@ -890,7 +1037,27 @@ async def move_unit(unit_id: int, body: UnitMoveIn) -> dict:
     unit = units.get_unit(unit_id)
     if not unit:
         raise HTTPException(404, f"Unit {unit_id} not found")
-    updated = units.move_unit(unit_id, body.q, body.r, body.facing_deg)
+    # Real user request: "cuando el GM hace drag, el movimiento no
+    # contara MP, ni pasara turno, sin embargo si que tiene que calcular
+    # el path mas barato y seguirle, y por supuesto actualizar camara y
+    # LoS" — this endpoint (a free drag/"Mover"/sidebar-drop reposition,
+    # NOT the MP-budgeted movement-phase flow below) never had its own
+    # unit_walked broadcast, so every view watching this unit — including
+    # its own pilot's FirstPersonView camera — had nothing to animate
+    # through and just sat frozen on the pre-drag position/facing until
+    # some UNRELATED broadcast happened to nudge it. Computed from the
+    # hex BEFORE the move (unit's own q/r, still the old position here).
+    avoid = {(u["q"], u["r"]) for u in units.list_units(unit["map_id"]) if u["id"] != unit_id}
+    path = movement.shortest_terrain_path(unit["map_id"], unit["q"], unit["r"], body.q, body.r, avoid=avoid)
+    try:
+        updated = units.move_unit(unit_id, body.q, body.r, body.facing_deg)
+    except units.HexOccupied as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if path:
+        await manager.broadcast(
+            unit["campaign_id"],
+            _unit_walked_payload(unit, path, updated["facing_deg"], body.movement_type or "walk"),
+        )
     # A free-form reposition (drag, "Mover", sidebar drop) during this
     # pilot's movement-phase turn still counts as their move for the
     # round — otherwise activeMoverPilotId never advances past them and
@@ -960,7 +1127,8 @@ async def move_unit_with_mp(unit_id: int, body: MoveWithMpIn) -> dict:
     # path — every connected client now learns the actual route to
     # populate its own local walkPaths with, regardless of who moved it.
     await manager.broadcast(
-        unit["campaign_id"], {"type": "unit_walked", "unit_id": unit_id, "path": updated["path"]}
+        unit["campaign_id"],
+        _unit_walked_payload(unit, updated["path"], updated["facing_deg"], body.movement_type),
     )
     await _broadcast_visibility(unit["campaign_id"], unit["map_id"])
     await manager.broadcast(unit["campaign_id"], {"type": "round_updated", **turns.get_round(unit["campaign_id"])})
@@ -1153,6 +1321,8 @@ async def report_pending_roll(campaign_id: int, pending_roll_id: int, body: Pend
 
     if pending["kind"] == "heat_phase":
         await manager.broadcast(campaign_id, {"type": "heat_phase_resolved", **result})
+        if campaign["active_map_id"] is not None:
+            await _broadcast_visibility(campaign_id, campaign["active_map_id"])
         await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
         return result
 
@@ -1239,6 +1409,24 @@ async def stand_up_unit(unit_id: int) -> dict:
     return result
 
 
+@app.post("/api/units/{unit_id}/fall-over")
+async def fall_over_unit(unit_id: int) -> dict:
+    """Debug-only affordance (real user request: "una opcion de tirarse...
+    en el menu de movimiento", to test Caerse/Levantarse without waiting
+    for a real failed PSR) — sets is_prone directly, no PSR roll, no fall
+    damage; this is for previewing the animation, not simulating a real
+    fall. Broadcasts the same bare `roster_updated` stand_up already uses
+    above — every OTHER connected client detects the is_prone transition
+    itself (frontend's own prev-vs-current edge check), no dedicated event
+    type needed."""
+    unit = units.get_unit(unit_id)
+    if not unit or unit["mech_id"] is None:
+        raise HTTPException(404, f"Unit {unit_id} not found")
+    result = mechs.set_prone(unit["mech_id"], True)
+    await manager.broadcast(unit["campaign_id"], {"type": "roster_updated"})
+    return result
+
+
 @app.post("/api/campaigns/{campaign_id}/undo")
 async def undo(campaign_id: int) -> dict:
     campaign = _require_campaign(campaign_id)
@@ -1297,7 +1485,7 @@ async def resolve_heat(campaign_id: int) -> dict:
     frontend calls this itself the instant it sees the round phase has
     nothing left to act on (no GM button needed), and a second call from
     another open tab is a harmless no-op."""
-    _require_campaign(campaign_id)
+    campaign = _require_campaign(campaign_id)
     try:
         result = turns.run_heat_phase(campaign_id)
     except dice_resolution.PendingRoll as exc:
@@ -1310,6 +1498,10 @@ async def resolve_heat(campaign_id: int) -> dict:
         await _broadcast_physical_roll_requested(campaign_id, exc)
         return {"pending": True, "pending_roll_id": exc.pending_roll_id}
     await manager.broadcast(campaign_id, {"type": "heat_phase_resolved", **result})
+    if campaign["active_map_id"] is not None:
+        # An ammo explosion can destroy a mech right here — its team must
+        # immediately lose whatever only it could see (real user report).
+        await _broadcast_visibility(campaign_id, campaign["active_map_id"])
     await manager.broadcast(campaign_id, {"type": "round_updated", **turns.get_round(campaign_id)})
     return result
 

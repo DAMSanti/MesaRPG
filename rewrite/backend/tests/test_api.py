@@ -559,6 +559,25 @@ def test_gm_die_style_endpoint_409_when_taken_by_a_pilot():
         assert res.status_code == 409
 
 
+def test_gm_dice_mode_endpoint_sets_and_broadcasts():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/campaigns/{camp['id']}/gm-dice-mode", json={"mode": "auto"})
+            assert res.status_code == 200
+            assert res.json()["gm_dice_mode"] == "auto"
+            broadcast = ws.receive_json()
+            assert broadcast["type"] == "roster_updated"
+
+
+def test_gm_dice_mode_endpoint_422s_on_unknown_mode():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        res = c.post(f"/api/campaigns/{camp['id']}/gm-dice-mode", json={"mode": "telepathic"})
+        assert res.status_code == 422
+
+
 def _atlas_body(**overrides) -> dict:
     body = {"chassis": "Atlas", "tonnage": 100, "walk_mp": 3, "run_mp": 5, "locations": _ATLAS_LOCATIONS}
     body.update(overrides)
@@ -707,6 +726,63 @@ def test_list_mech_models_endpoint_is_not_shadowed_by_the_filename_route():
         assert res.status_code == 200
         models = {m["model"] for m in res.json()}
         assert models == {"AS7-D", "AS7-D-DC"}
+
+
+def test_mech_annotations_save_and_list_roundtrip_via_api():
+    with client() as c:
+        res = c.put(
+            "/api/mech-annotations",
+            json={
+                "model_url": "/models/mechs/atlas-as7-d.glb",
+                "points": [
+                    {"kind": "weapon", "location": "RA", "x": 0.3, "y": 0.6, "z": 0.1},
+                    {"kind": "cockpit", "x": 0.0, "y": 0.9, "z": 0.15},
+                ],
+            },
+        )
+        assert res.status_code == 200
+        assert len(res.json()) == 2
+
+        listed = c.get("/api/mech-annotations").json()
+        urls = {row["model_url"] for row in listed}
+        assert "/models/mechs/atlas-as7-d.glb" in urls
+
+
+def test_mech_annotations_save_422s_on_unknown_location():
+    with client() as c:
+        res = c.put(
+            "/api/mech-annotations",
+            json={
+                "model_url": "/models/mechs/atlas-as7-d.glb",
+                "points": [{"kind": "weapon", "location": "TAIL", "x": 0, "y": 0, "z": 0}],
+            },
+        )
+        assert res.status_code == 422
+
+
+def test_mech_annotation_review_set_and_list_via_api():
+    with client() as c:
+        res = c.put(
+            "/api/mech-annotations/review",
+            json={"model_url": "/models/mechs/atlas-as7-d.glb", "track": "limbs", "status": "accepted"},
+        )
+        assert res.status_code == 200
+        assert res.json()["status"] == "accepted"
+
+        listed = c.get("/api/mech-annotations/review").json()
+        assert any(
+            row["model_url"] == "/models/mechs/atlas-as7-d.glb" and row["track"] == "limbs" and row["status"] == "accepted"
+            for row in listed
+        )
+
+
+def test_mech_annotation_review_422s_on_unknown_status():
+    with client() as c:
+        res = c.put(
+            "/api/mech-annotations/review",
+            json={"model_url": "/models/mechs/atlas-as7-d.glb", "track": "weapons", "status": "half_done"},
+        )
+        assert res.status_code == 422
 
 
 def test_setting_active_map_broadcasts_to_table_over_websocket():
@@ -1414,6 +1490,33 @@ def test_move_with_mp_endpoint_moves_a_unit_within_range():
         assert res.json()["r"] == 0
 
 
+def test_move_with_mp_endpoint_broadcasts_fog_steps_for_a_player_walker():
+    # Real user request: "la niebla se tiene que ir disipando con cada
+    # movimiento... cada paso del mech tiene que actualizar la niebla" —
+    # the real movement-phase walk (not just the free drag) also needs
+    # this, and its own real facing_deg (not just the last leg's
+    # direction of travel) for the final step.
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 6, "height": 6}).json()
+        mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={"chassis": "Locust", "tonnage": 20, "walk_mp": 2, "run_mp": 3, "locations": _ATLAS_LOCATIONS},
+        ).json()
+        pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Solo"}).json()
+        unit = c.post(
+            f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "mech_id": mech["id"], "pilot_id": pilot["id"]}
+        ).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/move-with-mp", json={"q": 2, "r": 0, "movement_type": "walk"})
+            assert res.status_code == 200
+            walked = ws.receive_json()
+            assert walked["type"] == "unit_walked"
+            assert [(s["q"], s["r"]) for s in walked["fog_steps"]] == [(1, 0), (2, 0)]
+            assert [(s["q"], s["r"]) for s in walked["cockpit_fog_steps"]] == [(1, 0), (2, 0)]
+
+
 def test_move_with_mp_endpoint_422s_for_an_unreachable_destination():
     with client() as c:
         camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
@@ -1431,6 +1534,102 @@ def test_move_with_mp_endpoint_422s_for_an_unreachable_destination():
 def test_move_with_mp_endpoint_404s_for_unknown_unit():
     with client() as c:
         res = c.post("/api/units/999999/move-with-mp", json={"q": 0, "r": 0, "movement_type": "walk"})
+        assert res.status_code == 404
+
+
+def test_move_with_mp_endpoint_broadcasts_the_real_movement_type():
+    # Real user request: proper Walk/Run/Jump animation chains on the
+    # frontend need to know which one actually happened — unit_walked
+    # used to always look identical (no movement_type at all).
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 6, "height": 6}).json()
+        mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={
+                "chassis": "Locust", "tonnage": 20, "walk_mp": 4, "run_mp": 6, "jump_mp": 4,
+                "locations": _ATLAS_LOCATIONS,
+            },
+        ).json()
+        unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "mech_id": mech["id"]}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/move-with-mp", json={"q": 3, "r": 0, "movement_type": "jump"})
+            assert res.status_code == 200
+            walked = ws.receive_json()
+            assert walked["type"] == "unit_walked"
+            assert walked["movement_type"] == "jump"
+
+
+def test_free_move_endpoint_broadcasts_walk_as_the_movement_type():
+    # The unrestricted GM drag has no real movement-type concept of its
+    # own — defaults to "walk" so unit_walked always carries the field.
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 6, "height": 6}).json()
+        mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={"chassis": "Locust", "tonnage": 20, "walk_mp": 4, "run_mp": 6, "locations": _ATLAS_LOCATIONS},
+        ).json()
+        unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "mech_id": mech["id"]}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/move", json={"q": 2, "r": 0})
+            assert res.status_code == 200
+            walked = ws.receive_json()
+            assert walked["type"] == "unit_walked"
+            assert walked["movement_type"] == "walk"
+
+
+def test_free_move_endpoint_accepts_a_debug_movement_type_override_with_no_jump_mp():
+    # Real user request: "no quiero que dependa de que tenga nada, quiero
+    # darle, probarle y si funciona quitarlo" — GMView's own "forzar salto
+    # al arrastrar (debug)" tags an ordinary unrestricted drag as a jump
+    # for animation purposes ONLY, regardless of the mech's own jump_mp
+    # (this mech has none at all here) — this endpoint enforces zero
+    # rules already, so there's nothing to bypass.
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 6, "height": 6}).json()
+        mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={"chassis": "Locust", "tonnage": 20, "walk_mp": 4, "run_mp": 6, "locations": _ATLAS_LOCATIONS},
+        ).json()
+        assert mech["jump_mp"] == 0
+        unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "mech_id": mech["id"]}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/move", json={"q": 2, "r": 0, "movement_type": "jump"})
+            assert res.status_code == 200
+            assert res.json()["q"] == 2
+            walked = ws.receive_json()
+            assert walked["type"] == "unit_walked"
+            assert walked["movement_type"] == "jump"
+
+
+def test_fall_over_endpoint_sets_prone_and_broadcasts_roster_updated():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 6, "height": 6}).json()
+        mech = c.post(
+            f"/api/campaigns/{camp['id']}/mechs",
+            json={"chassis": "Locust", "tonnage": 20, "walk_mp": 4, "run_mp": 6, "locations": _ATLAS_LOCATIONS},
+        ).json()
+        unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "mech_id": mech["id"]}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/fall-over")
+            assert res.status_code == 200
+            assert res.json()["is_prone"] is True
+            assert ws.receive_json() == {"type": "roster_updated"}
+
+        mech_after = c.get(f"/api/mechs/{mech['id']}").json()
+        assert mech_after["is_prone"] is True
+
+
+def test_fall_over_endpoint_404s_for_unknown_unit():
+    with client() as c:
+        res = c.post("/api/units/999999/fall-over")
         assert res.status_code == 404
 
 
@@ -1475,6 +1674,72 @@ def test_free_move_endpoint_does_not_record_movement_before_a_round_starts():
 
         state = c.get(f"/api/campaigns/{camp['id']}/round").json()
         assert state["moved_pilot_ids"] == []
+
+
+def test_free_move_endpoint_broadcasts_unit_walked_with_the_real_path():
+    # Real user request: "cuando el GM hace drag, el movimiento no
+    # contara MP, ni pasara turno, sin embargo si que tiene que calcular
+    # el path mas barato y seguirle, y por supuesto actualizar camara y
+    # LoS" — every view watching this unit (including its own pilot's
+    # FirstPersonView camera) needs a real path to animate through, not
+    # just an instant position update with nothing to walk.
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 10, "height": 6}).json()
+        pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Solo"}).json()
+        unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "pilot_id": pilot["id"]}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/move", json={"q": 3, "r": 0})
+            assert res.status_code == 200
+            walked = ws.receive_json()
+            assert walked["type"] == "unit_walked"
+            assert walked["unit_id"] == unit["id"]
+            assert walked["path"] == [{"q": 1, "r": 0}, {"q": 2, "r": 0}, {"q": 3, "r": 0}]
+            # Real user request: "la niebla se tiene que ir disipando con
+            # cada movimiento... cada paso del mech tiene que actualizar
+            # la niebla" — a player-faction walker's own fog steps through
+            # the path (units.py's visibility_steps_for_walk), not just
+            # the final destination's.
+            assert [(s["q"], s["r"]) for s in walked["fog_steps"]] == [(1, 0), (2, 0), (3, 0)]
+            assert [(s["q"], s["r"]) for s in walked["cockpit_fog_steps"]] == [(1, 0), (2, 0), (3, 0)]
+
+
+def test_free_move_endpoint_omits_fog_steps_for_a_non_player_walker():
+    # An enemy/npc's own movement never changes what the player team's
+    # stationary units can see (units.py's visibility_steps_for_walk own
+    # doc comment) — no per-step fog to compute or broadcast for one.
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 10, "height": 6}).json()
+        pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Hostile", "faction": "enemy"}).json()
+        unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 0, "r": 0, "pilot_id": pilot["id"]}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/move", json={"q": 3, "r": 0})
+            assert res.status_code == 200
+            walked = ws.receive_json()
+            assert walked["type"] == "unit_walked"
+            assert "fog_steps" not in walked
+            assert "cockpit_fog_steps" not in walked
+
+
+def test_free_move_endpoint_same_hex_does_not_broadcast_unit_walked():
+    with client() as c:
+        camp = c.post("/api/campaigns", json={"name": "API Test"}).json()
+        m = c.post(f"/api/campaigns/{camp['id']}/maps", json={"name": "M", "width": 10, "height": 6}).json()
+        pilot = c.post(f"/api/campaigns/{camp['id']}/pilots", json={"name": "Solo"}).json()
+        unit = c.post(f"/api/maps/{m['id']}/units", json={"q": 2, "r": 1, "pilot_id": pilot["id"]}).json()
+
+        with c.websocket_connect(f"/ws/{camp['id']}") as ws:
+            res = c.post(f"/api/units/{unit['id']}/move", json={"q": 2, "r": 1, "facing_deg": 60})
+            assert res.status_code == 200
+            # A same-hex reposition (rotate-in-place) has nothing to
+            # walk — the first (and here, only) broadcast should be the
+            # visibility_update every /move call always sends, not a
+            # degenerate empty-path unit_walked.
+            first = ws.receive_json()
+            assert first["type"] == "visibility_update"
 
 
 def test_request_movement_broadcasts_movement_started_over_websocket():

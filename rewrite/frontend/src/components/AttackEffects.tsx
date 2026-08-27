@@ -604,18 +604,41 @@ export interface AttackEffectData {
   targetPos: [number, number]
   attackerY: number
   targetY: number
+  /** The target's own tile ground height (HexMap's groundYAt) — where a
+   * miss actually lands, see `to`'s own doc comment below. Unused on a
+   * hit (the real target point already has its own Y). */
+  groundY: number
   weaponName: string
   hit: boolean
 }
 
+// Real user request: "los ataques de los mechs graficamente no pueden
+// fallar a mas de 2 tiles del objetivo que son mechs no Storm troopers"
+// — hex center-to-center spacing is √3 ≈ 1.73 (hexMath.ts), so this caps
+// a miss's lateral drift well inside 2 tiles (max ≈1.15 tiles) rather
+// than an arbitrary-feeling number, and reads as "just barely missed" —
+// a mech pilot's aim, not a stormtrooper's.
+const MAX_MISS_LATERAL = 2.0
+const MIN_MISS_LATERAL = 0.8
+
 /** One weapon's whole visual — resolves a category from the weapon
  * name, builds the real 3D from/to points (raised to roughly torso
- * height, and nudged sideways off the true target on a miss so the shot
- * visibly goes wide instead of "hitting" a target the roll actually
- * missed), and self-unmounts via onDone once its category's duration
- * has played out. Mounted fresh (a new `key`) per attack_result by
- * whichever caller renders it — see HexMap's own activeAttack prop. */
-export function AttackEffect({ data, onDone }: { data: AttackEffectData; onDone: () => void }) {
+ * height on a hit), and self-unmounts via onDone once its category's
+ * duration has played out. Mounted fresh (a new `key`) per attack_result
+ * by whichever caller renders it — see HexMap's own activeAttack prop. */
+export function AttackEffect({
+  data, onDone, onMissGround,
+}: {
+  data: AttackEffectData
+  onDone: () => void
+  /** Real user request: "los disparos fallados deben golpear el suelo,
+   * no ir al infinito, y deben dejar marcas en el mapa/tile que golpean"
+   * — fires once, right away, with the real ground point `to` resolves
+   * to on a miss, so the caller (HexMap) can drop a persistent scorch
+   * mark there. Never fires on a hit (nothing to mark — the target
+   * itself sold the impact). */
+  onMissGround?: (pos: [number, number, number]) => void
+}) {
   const category = weaponEffectCategory(data.weaponName)
   const color = CATEGORY_COLOR[category]
 
@@ -623,16 +646,27 @@ export function AttackEffect({ data, onDone }: { data: AttackEffectData; onDone:
   const to = useMemo(() => {
     const real = new THREE.Vector3(data.targetPos[0], data.targetY, data.targetPos[1])
     if (data.hit) return real
-    // A miss goes past/beside the real target instead of "hitting" it —
-    // a fixed lateral+vertical offset large enough to clearly not be the
-    // target's own silhouette, small enough to still read as aimed at
-    // them rather than a random direction.
+    // A miss goes past/beside the real target and all the way DOWN TO
+    // THE GROUND instead of hovering near torso height with nothing to
+    // visibly stop it — real user report, it read as vanishing into
+    // nowhere rather than actually missing. Landing on the ground is
+    // also what the persistent scorch mark (see onMissGround) sits on.
     const dir = new THREE.Vector3().subVectors(real, from).setY(0).normalize()
     const perp = new THREE.Vector3(-dir.z, 0, dir.x)
     const side = Math.random() < 0.5 ? -1 : 1
-    return real.clone().add(perp.multiplyScalar(side * (0.9 + Math.random() * 0.6))).add(new THREE.Vector3(0, 0.6 + Math.random() * 0.5, 0))
+    const lateral = MIN_MISS_LATERAL + Math.random() * (MAX_MISS_LATERAL - MIN_MISS_LATERAL)
+    return new THREE.Vector3(real.x, data.groundY, real.z).add(perp.multiplyScalar(side * lateral))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])
+
+  useEffect(() => {
+    if (!data.hit) onMissGround?.([to.x, to.y, to.z])
+    // Fire exactly once per mount (a fresh AttackEffect per shot, see its
+    // own doc comment) — `to`/`onMissGround` intentionally excluded so a
+    // parent re-render passing a new-reference-but-same callback (or,
+    // pathologically, a re-render mid-flight) can't fire this twice.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // tracer/missile/mg travel the REAL distance at a constant speed (see
   // CATEGORY_SPEED) so a long shot visibly takes proportionally longer

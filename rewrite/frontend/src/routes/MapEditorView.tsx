@@ -205,9 +205,9 @@ export function MapEditorView() {
 
   return (
     <div className="map-editor">
-      <NavBar campaignId={campaignId} current="/mapeditor" links={GM_LINKS} />
+      <NavBar campaignId={campaignId} campaignName={campaign?.name} current="/mapeditor" links={GM_LINKS} />
       <header>
-        <h1>Editor de mapas — campaña #{campaignId}</h1>
+        <h1>Editor de mapas — {campaign?.name ?? `campaña #${campaignId}`}</h1>
       </header>
       {loading && <p className="loading">Cargando…</p>}
       {error && <div className="error-banner">{error} <button onClick={() => setError(null)}>×</button></div>}

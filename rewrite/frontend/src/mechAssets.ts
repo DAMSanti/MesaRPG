@@ -80,8 +80,14 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
   },
   Commando: {
     placeholder: `${MECHS_DIR}/commando-com-tdk.glb`,
-    // "The Death" — not in the current catalog under this code.
-    models: { 'COM-tDK': `${MECHS_DIR}/commando-com-tdk.glb` },
+    // Real user finding (MechLab): "COM-tDK" ("The Death") was never a
+    // real catalog variant code (see the old comment this replaces) —
+    // harmless before (MechLab's own model dropdown now requires an
+    // EXACT match, so this silently emptied Commando's model list
+    // instead of just falling back). Anchored to the catalog's actual
+    // baseline variant instead — same .glb, just a code that really
+    // exists.
+    models: { 'COM-1A': `${MECHS_DIR}/commando-com-tdk.glb` },
   },
   Crockett: {
     placeholder: `${MECHS_DIR}/crockett-crk-5003-0.glb`,
@@ -104,7 +110,10 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
   },
   JagerMech: {
     placeholder: `${MECHS_DIR}/jagermech-jm6-fb.glb`,
-    models: { 'JM6-FB': `${MECHS_DIR}/jagermech-jm6-fb.glb` }, // "Firebrand"
+    // Real user finding (MechLab): "JM6-FB" ("Firebrand") was never a
+    // real catalog variant code either — same issue/fix as Commando
+    // above, anchored to the real baseline variant instead.
+    models: { 'JM6-A': `${MECHS_DIR}/jagermech-jm6-fb.glb` },
   },
   Jenner: {
     placeholder: `${MECHS_DIR}/jenner-jr7-f.glb`,
@@ -123,14 +132,21 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
   // as Executioner above).
   Mongrel: {
     placeholder: `${MECHS_DIR}/mongrel-prime.glb`,
-    models: { Prime: `${MECHS_DIR}/mongrel-prime.glb` },
+    // Real user finding (MechLab): "Prime" doesn't exist in this
+    // catalog's own Mongrel entries (MGL-T1/MGL-T2) — the chassis itself
+    // WAS eventually added to the catalog (this comment used to say the
+    // whole chassis was missing), just under different variant codes.
+    // Anchored to the catalog's actual baseline variant instead.
+    models: { 'MGL-T1': `${MECHS_DIR}/mongrel-prime.glb` },
   },
-  // The catalog's "Rifleman IIC" variant codes are just bare numbers
-  // ('2'..'10', '(Standard)') with no confident match to this asset's
-  // filename (rfl-iic1) — registered chassis-only, no specific model.
+  // Real user finding (MechLab): an empty `models` here meant NO model
+  // ever showed up for this chassis once MechLab started requiring an
+  // exact match (its own model dropdown used to just fall back to the
+  // placeholder silently) — anchored to the catalog's "(Standard)"
+  // baseline variant instead of leaving it unmatched.
   'Rifleman IIC': {
     placeholder: `${MECHS_DIR}/rifleman-iic-1.glb`,
-    models: {},
+    models: { '(Standard)': `${MECHS_DIR}/rifleman-iic-1.glb` },
   },
   'Shadow Hawk': {
     placeholder: `${MECHS_DIR}/shadowhawk-shd-2h.glb`,

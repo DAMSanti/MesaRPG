@@ -6,16 +6,92 @@ import { CuboidCollider, RigidBody, type RapierRigidBody } from '@react-three/ra
 import { Select } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import type {
-  AttackResult, HexTileData, MapData, Unit,
+  AttackResult, HexTileData, MapData, Mech, MechAnnotation, Unit,
 } from '../api'
+import { listMechAnnotations } from '../api'
 import { Mech3D } from './Mech3D'
 import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
 import { terrainColor, terrainRotation, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
-import { hexToWorld, mapCenter } from '../hexMath'
-import { MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
+import { hexToWorld, mapCenter, worldToHex } from '../hexMath'
+import { jumpFlight, type JumpPhase } from '../jumpFlight'
+import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
+import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
+
+// Real user request: "no es muy largo hacer que las armas disparen de esas
+// zonas y los impactos se hagan en esos puntos?" — MechLab's own
+// mech_model_annotations only ever get written by that editor; loaded
+// once per mounted view (GMView/TableView/FirstPersonView each hold their
+// own copy) since they change rarely and this only needs to be "close
+// enough," not live-reactive to someone editing MechLab in another tab.
+export function useMechAnnotationsCache() {
+  const [annotations, setAnnotations] = useState<MechAnnotation[]>([])
+  useEffect(() => {
+    listMechAnnotations().then(setAnnotations).catch(() => {})
+  }, [])
+  return annotations
+}
+
+/** The local point (Mech3D's own normalized space, pre-MODEL_SCALE — see
+ * normalizeMechInstance) an attack should visually originate from/land
+ * on for `unit`, real user-annotated data where it exists. `kind`/
+ * `location` pick which annotation: 'weapon' + the firing weapon's own
+ * location for the attacker, 'hit' + the target's struck location for
+ * the target, 'cockpit' for the pilot's own eye point (location is
+ * ignored — MechLab only ever saves one cockpit point per model, with
+ * `location: null` — real user request: "la posicion que selecciono de
+ * 'cabina' es donde tiene que estar la camara en FPV"). `index` picks
+ * WHICH of possibly several weapon points at that same location (real
+ * user report: two lasers in the same arm both collapsed onto the
+ * first-saved point) — MechLab itself has no better source of truth for
+ * "which physical weapon is which annotated point" than insertion order
+ * (see mech_annotations.py's own save_annotations docstring), so this
+ * assumes the attacker's own weapons array is in the same order
+ * MechLab's weapon-slot UI was in in when it saved them — true whenever
+ * nobody's hand-edited that mech's weapon list out of the order the
+ * chassis template originally gave it. Out-of-range clamps to the last
+ * real point rather than null, so a mech with fewer annotated points
+ * than actual weapons still gets SOME real point instead of falling back
+ * to the generic chest guess. null whenever the mech isn't annotated at
+ * all (the common case today) or has no point for that location/kind —
+ * callers fall back to their own generic guess (MODEL_CHEST_FRACTION for
+ * weapons/hits, the old fixed eye-height formula for cockpit) in that
+ * case, so an unannotated mech looks exactly like it always has. */
+export function findAnnotatedLocalPoint(
+  annotations: MechAnnotation[], unit: Unit, kind: 'weapon' | 'hit' | 'cockpit', location: string | null, index = 0,
+): [number, number, number] | null {
+  if (kind !== 'cockpit' && !location) return null
+  const modelUrl = resolveMechModelUrl(unit.mech_chassis, unit.mech_model)
+  const matches = annotations.filter(
+    (a) => a.model_url === modelUrl && a.kind === kind && (kind === 'cockpit' || a.location === location),
+  )
+  if (matches.length === 0) return null
+  const point = matches[Math.min(index, matches.length - 1)]
+  return [point.x, point.y, point.z]
+}
+
+/** Rotates a local point (already scaled by MODEL_SCALE) by a world yaw
+ * in radians, same convention UnitMarker's own facingRotationY/animatedRot
+ * use (0 rad = world +X … Math.PI/2 - facing_deg*π/180 for a static
+ * facing) — the offset to add on top of hexToWorld(q, r) and
+ * groundYAt(q, r) to place it correctly in the world. Split out from
+ * rotateLocalOffset below so a caller already tracking its own live yaw
+ * (FirstPersonView's WalkingFirstPersonCam, mid-turn) doesn't have to
+ * round-trip it back through degrees every frame. */
+export function rotateLocalOffsetByYaw(local: [number, number, number], yawRadians: number) {
+  const vec = new THREE.Vector3(local[0] * MODEL_SCALE, local[1] * MODEL_SCALE, local[2] * MODEL_SCALE)
+  vec.applyAxisAngle(new THREE.Vector3(0, 1, 0), yawRadians)
+  return vec
+}
+
+/** Rotates a local point by a unit's own static facing_deg — see
+ * rotateLocalOffsetByYaw above for the actual math and the live-yaw
+ * variant. */
+function rotateLocalOffset(local: [number, number, number], facingDeg: number) {
+  return rotateLocalOffsetByYaw(local, Math.PI / 2 - (facingDeg * Math.PI) / 180)
+}
 
 // FIXED, not a floor that yields to a taller natural elevation — two
 // earlier versions of this (elevation 2's own 0.74, then elevation
@@ -48,6 +124,17 @@ export interface ActiveAttackVfx {
   targetR: number
   weaponName: string
   hit: boolean
+  /** Real user request: "no es muy largo hacer que las armas disparen de
+   * esas zonas y los impactos se hagan en esos puntos?" — the attacker's
+   * own weapon-mount point (kind='weapon') and the target's own
+   * struck-location point (kind='hit'), both from MechLab's real
+   * annotations, already rotated by each unit's own facing_deg into a
+   * world-space OFFSET (not yet added to hexToWorld/groundYAt — the
+   * consumer still owns that, same as the plain hex-coordinate fields
+   * above). null on either one falls back to the old MODEL_CHEST_FRACTION
+   * guess for THAT side specifically. */
+  attackerOffset: THREE.Vector3 | null
+  targetOffset: THREE.Vector3 | null
 }
 
 /** Turns a raw `lastAttack` broadcast into a QUEUED sequence of
@@ -66,23 +153,57 @@ export interface ActiveAttackVfx {
  * advances to the next one — every attack's full VFX plays out in
  * server-resolution order instead of the newest one clobbering
  * whatever came before it. */
-export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, units: Unit[]) {
+export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, units: Unit[], mechs: Mech[]) {
   const seq = useRef(0)
   const queueRef = useRef<ActiveAttackVfx[]>([])
   const activeRef = useRef<ActiveAttackVfx | null>(null)
   const [activeAttack, setActiveAttackState] = useState<ActiveAttackVfx | null>(null)
+  const annotations = useMechAnnotationsCache()
 
   const setActive = (vfx: ActiveAttackVfx | null) => {
     activeRef.current = vfx
     setActiveAttackState(vfx)
   }
 
+  // Real user report: FirstPersonView remounts this hook fresh every time
+  // it's reopened, but `lastAttack` itself is a parent-held prop that
+  // just keeps holding whatever the most recent attack WAS — with no
+  // guard, this effect's dependency-array still fires once on that fresh
+  // mount (React always runs a new effect instance on mount, changed or
+  // not) and replays a stale attack's VFX. seenRef captures whatever
+  // `lastAttack` already was the moment this hook was created, so the
+  // mount-time run is treated as "already known," not new; only a
+  // genuinely different object arriving afterward counts as new.
+  const seenRef = useRef(lastAttack)
   useEffect(() => {
+    if (lastAttack === seenRef.current) return
+    seenRef.current = lastAttack
     if (!lastAttack || lastAttack.attacker_unit_id == null || lastAttack.target_unit_id == null) return
     const attackerUnit = units.find((u) => u.id === lastAttack.attacker_unit_id)
     const targetUnit = units.find((u) => u.id === lastAttack.target_unit_id)
     if (!attackerUnit || !targetUnit) return
     seq.current += 1
+
+    // Which LOCATION the firing weapon actually mounts at, AND which of
+    // possibly several weapons at that same location it is — match by
+    // weapon_id (a specific instance), not weapon_name (real user report:
+    // two lasers in the same arm both fired from the same visual point,
+    // because matching by name alone can't tell identical weapons apart).
+    // The index is this weapon's own position among same-location
+    // weapons in the attacker's OWN weapons array — see
+    // findAnnotatedLocalPoint's own doc comment for why that's assumed to
+    // line up with MechLab's own insertion order.
+    const attackerMech = mechs.find((m) => m.id === attackerUnit.mech_id)
+    const firingWeapon = attackerMech?.weapons.find((w) => w.id === lastAttack.weapon_id) ?? null
+    const weaponLocation = firingWeapon?.location ?? null
+    const weaponIndexAtLocation = firingWeapon && attackerMech
+      ? attackerMech.weapons.filter((w) => w.location === weaponLocation).findIndex((w) => w.id === firingWeapon.id)
+      : 0
+    const attackerLocal = findAnnotatedLocalPoint(
+      annotations, attackerUnit, 'weapon', weaponLocation, Math.max(0, weaponIndexAtLocation),
+    )
+    const targetLocal = findAnnotatedLocalPoint(annotations, targetUnit, 'hit', lastAttack.location)
+
     const vfx: ActiveAttackVfx = {
       id: `${seq.current}`,
       attackerQ: attackerUnit.q,
@@ -91,6 +212,8 @@ export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, u
       targetR: targetUnit.r,
       weaponName: lastAttack.weapon_name ?? '',
       hit: lastAttack.hit,
+      attackerOffset: attackerLocal ? rotateLocalOffset(attackerLocal, attackerUnit.facing_deg) : null,
+      targetOffset: targetLocal ? rotateLocalOffset(targetLocal, targetUnit.facing_deg) : null,
     }
     if (activeRef.current === null) {
       setActive(vfx)
@@ -133,28 +256,45 @@ export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, u
 }
 
 // World units per second a unit visually walks between hexes at — hex
-// center-to-center spacing is √3 (hexMath.ts's hexToWorld), so this is
-// roughly one hex every ~0.5s, brisk enough not to stall the table but
-// slow enough to actually read as a mech stepping rather than a blur.
-const WALK_SPEED = 3.5
+// center-to-center spacing is √3 (hexMath.ts's hexToWorld). Real user
+// report: "el movimiento de los mechs ahora mismo es MUUUUY rapido" —
+// cut to well under half its old value (was 3.5, ~one hex every 0.5s)
+// so a multi-hex path actually reads as a mech stepping across the
+// board instead of a blur.
+export const WALK_SPEED = 1.4
 // Below this distance (world units) a move is considered "arrived" —
 // small enough to be visually indistinguishable from exact, avoids the
 // interpolation asymptotically crawling the last fraction of a unit
 // forever.
-const ARRIVE_EPSILON = 0.01
+export const ARRIVE_EPSILON = 0.01
 // Radians/sec the mech's model turns at while walking a real path — a
 // mech pivots to face each leg of its route before advancing along it,
 // not just at the destination, so a dogleg path visibly reads as a turn
 // then a step rather than a diagonal slide.
-const TURN_SPEED = Math.PI * 2.2
+export const TURN_SPEED = Math.PI * 2.2
+// A turn bigger than this (radians) before the first leg of a fresh walk
+// counts as "basically turning in place" for fog-reveal purposes — see
+// UnitMarker's/WalkingFirstPersonCam's own firstStepFiredEarlyRef.
+export const BIG_TURN_THRESHOLD = Math.PI / 2
+
+/** Shortest signed angular difference from `from` to `to` (radians), in
+ * (-π, π] — e.g. 350°→10° comes out as +20°, not -340°. The delta
+ * lerpAngle below steps by; also exported standalone so a caller can ask
+ * "how much turn would this be" without actually stepping toward it (see
+ * UnitMarker's/WalkingFirstPersonCam's own big-turn fog-reveal check). */
+export function angleDelta(from: number, to: number): number {
+  const twoPi = Math.PI * 2
+  return ((to - from + Math.PI) % twoPi + twoPi) % twoPi - Math.PI
+}
 
 /** Shortest-path interpolation between two angles (radians), so turning
  * from e.g. 350° to 10° goes the short way through 0° instead of the
- * long way around through 180°. */
-function lerpAngle(from: number, to: number, t: number): number {
-  const twoPi = Math.PI * 2
-  let diff = ((to - from + Math.PI) % twoPi + twoPi) % twoPi - Math.PI
-  return from + diff * t
+ * long way around through 180°. Exported — FirstPersonView's own walking
+ * camera (real user request: "el movimiento paso a paso... tambien en
+ * FPV") reuses this same turn math so the cockpit's own view of the
+ * world turns at the same rate everyone else sees the mech's body turn. */
+export function lerpAngle(from: number, to: number, t: number): number {
+  return from + angleDelta(from, to) * t
 }
 
 /** Pure-Y-axis angle -> quaternion, for Rapier's setNextKinematicRotation
@@ -227,8 +367,9 @@ type TileProps = {
    * (blue) and activeMoverHighlighted (amber) so the three never read as
    * the same kind of hex. */
   targetableHighlighted: boolean
-  /** This tile is currently under a FogTile (HexMap's own teamVisibleHexes
-   * computation) — real user request: "que no se muestren las
+  /** This tile is currently under the merged fog-of-war volume (HexMap's
+   * own teamVisibleHexes computation, see buildFogRegions) — real user
+   * request: "que no se muestren las
    * decoraciones de tile que esten cubiertas por niebla". Terrain/groove
    * still render underneath (fog needs real ground to sit on, and
    * TableView's physics collider shouldn't disappear just because a tile
@@ -503,6 +644,7 @@ function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<Un
     && prev.terrain === next.terrain
     && prev.physics === next.physics
     && prev.walkPath === next.walkPath
+    && prev.movementType === next.movementType
     && prev.heightAt === next.heightAt
     && prev.outlined === next.outlined
     && prev.heat === next.heat
@@ -557,6 +699,13 @@ type UnitMarkerProps = {
    * `target`, identical to this component's behavior before walkPath
    * existed. */
   walkPath?: { q: number; r: number }[]
+  /** Which chain of clips this walk actually plays (real user request:
+   * proper Walk/Run/Jump animations, not the same Idle/Walk crossfade for
+   * every move) — threaded down from HexMap's own walkMovementTypes prop,
+   * itself populated straight off unit_walked's own movement_type.
+   * Undefined/omitted (no route data for this move, same case walkPath's
+   * own doc comment describes) defaults to 'walk'. */
+  movementType?: 'walk' | 'run' | 'jump'
   /** Resolves any hex's own resting height (HexMap's own heightAt) — used
    * to look up each intermediate walkPath waypoint's elevation so the
    * mech's Y can interpolate through the path leg by leg instead of
@@ -606,12 +755,23 @@ type UnitMarkerProps = {
    * out of unitMarkerPropsEqual, same as onPointerDown/onPointerUp above —
    * a fresh closure every render is fine since it's never compared. */
   onWalkDone?: () => void
+  /** Fires each time this unit's walk animation ARRIVES at one waypoint
+   * of a real path (before advancing to the next) — real user request:
+   * "la niebla se tiene que ir disipando con cada movimiento... cada
+   * paso del mech tiene que actualizar la niebla, tanto en TableView
+   * como en FPV. Ahora mismo calcula la de la posicion final nada mas
+   * empezar el movimiento". `index` is this waypoint's 0-based position
+   * in the ORIGINAL walkPath array, letting the caller look up the
+   * matching fog_steps/cockpit_fog_steps entry from the same
+   * unit_walked broadcast walkPath itself came from. Same
+   * unitMarkerPropsEqual exclusion as onWalkDone above. */
+  onWalkStep?: (index: number) => void
 }
 
 const UnitMarker = memo(function UnitMarker({
-  unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, heightAt, outlined, heat, prone, shutdown,
-  destroyedReason,
-  onPointerDown, onPointerUp, onWalkDone,
+  unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
+  prone, shutdown, destroyedReason,
+  onPointerDown, onPointerUp, onWalkDone, onWalkStep,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
   // 'building' matches Tile's own fixed platform height (BUILDING_MIN_
@@ -622,6 +782,11 @@ const UnitMarker = memo(function UnitMarker({
   // not 0.3+2*0.22).
   const restY = terrainSinkY(terrain) ?? (terrain === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + elevation * 0.22)
   const baseY = restY + (dragPosition ? 0.5 : 0)
+  // Forces one extra render once this marker's own Mech3D mesh actually
+  // exists — see Mech3D's own onLoaded doc comment for the <Select>
+  // outline race this closes (real user report: FPV's red enemy outline
+  // sometimes didn't show until "algo lo actualiza más adelante").
+  const [, forceMeshRegistered] = useState(0)
   // Ghosts stay red regardless of faction — before reveal, "hidden threat"
   // is the point, not who it turns out to be.
   const baseColor = unit.is_ghost
@@ -635,11 +800,13 @@ const UnitMarker = memo(function UnitMarker({
   // read as black/dark grey, period, not orange. Reused for shutdown too
   // (real user request: "los mechs sobrecalentados deberían tener el
   // color de los muertos pero con menos opacidad"), just lerped back
-  // toward the faction color instead of applied at full strength.
-  const DEAD_CHAR_COLOR = '#17140f'
+  // toward the faction color instead of applied at full strength. Shared
+  // with MechLabView's own broken-limb pieces via Mech3D's exported
+  // DEAD_MECH_CHAR_COLOR — one source of truth for "what charred looks
+  // like" on this rig.
   const color =
-    destroyedReason != null ? DEAD_CHAR_COLOR
-      : shutdown ? new THREE.Color(DEAD_CHAR_COLOR).lerp(new THREE.Color(baseColor), 0.45).getStyle()
+    destroyedReason != null ? DEAD_MECH_CHAR_COLOR
+      : shutdown ? new THREE.Color(DEAD_MECH_CHAR_COLOR).lerp(new THREE.Color(baseColor), 0.45).getStyle()
         : baseColor
   // Real user follow-up: even with the dark `color` above actually
   // applying (see tintStrength below), a lingering emissive glow on the
@@ -649,8 +816,14 @@ const UnitMarker = memo(function UnitMarker({
   // once it's a cold wreck (the one-shot MechExplosionOnce below already
   // covers the "this just happened" flash for 1.3s); only shutdown
   // (still hot, still running) keeps a real, modest ember glow.
-  const glowEmissive = shutdown ? '#e35d2a' : undefined
-  const glowEmissiveIntensity = shutdown ? 0.18 : undefined
+  // Real user report: a mech that died WHILE shutdown kept the shutdown
+  // look (ember glow + steam, see SteamPuffs' own render condition below)
+  // forever after — is_shutdown never gets cleared by death, so `shutdown`
+  // alone stayed true. Dead has to win outright once destroyedReason is
+  // set, matching what the comment above already assumed but the code
+  // never actually checked.
+  const glowEmissive = destroyedReason == null && shutdown ? '#e35d2a' : undefined
+  const glowEmissiveIntensity = destroyedReason == null && shutdown ? 0.18 : undefined
   // Real user follow-up: "el color de los muertos... tiene que ser negro
   // o gris oscuro POR ENCIMA de su textura, como si estuviese
   // chamuscado" — Mech3D's own faction-tint wash is deliberately faint
@@ -662,7 +835,12 @@ const UnitMarker = memo(function UnitMarker({
   // "mostly its emissive glow's color" instead. Any of the three special
   // states below needs its OWN `color` applied at much closer to full
   // strength; only a plain living mech keeps the normal faint wash.
-  const tintStrength = destroyedReason != null || shutdown ? 0.9 : undefined
+  // Real user follow-up, the other direction this time: "el color de
+  // muerto es completamente negro, quiero que sea negro con opacidad
+  // sobre la textura real" — 0.9 overshot past "charred" into "solid
+  // color, texture gone". Dropped enough that the model's own panel
+  // lines/plating stay visibly readable underneath the char.
+  const tintStrength = destroyedReason != null || shutdown ? 0.55 : undefined
   // Real user request: "los mechs muertos caen al suelo como si
   // estuviesen en prone" — BOTH destruction reasons tilt over now, not
   // just pilot_killed (a structural kill still gets its own explosion +
@@ -690,6 +868,12 @@ const UnitMarker = memo(function UnitMarker({
   const [isMoving, setIsMoving] = useState(false)
   const canWalk = !dragPosition
 
+  // Turns to face the direction it's actually walking at each leg of a
+  // real path, not just at the final destination — see TURN_SPEED/
+  // lerpAngle above. Settles onto the unit's real commanded facing_deg
+  // (facingRotationY) once there's no more route left to walk.
+  const animatedRot = useRef<number>(facingRotationY)
+
   // The real route (ReachableHex.path from movement.py, threaded down
   // as walkPath) — a queue of world-space waypoints (each carrying its
   // own resting height, via heightAt) stepToward below walks through one
@@ -702,21 +886,72 @@ const UnitMarker = memo(function UnitMarker({
   // walkPath existed.
   const pathQueueRef = useRef<{ x: number; z: number; y: number }[]>([])
   const lastWalkPathRef = useRef<{ q: number; r: number }[] | undefined>(undefined)
+  // Real user request: real Despegar→Saltar→Aterrizar with the miniature
+  // actually rising and falling, not the same ground-hugging slide a
+  // walk/run uses — movement.py's own jump resolution never produces a
+  // real hex-by-hex route (RAW: a jump arcs over whatever's in between,
+  // terrain-blind), walkPath for a jump is just the single landing hex,
+  // so this is a completely separate stepping path from pathQueueRef
+  // above, driven by jumpFlight.ts's own time-based arc instead of
+  // WALK_SPEED distance-based stepping. Set (and cleared) by the walkPath
+  // effect below whenever a fresh jump move arrives; stepToward checks
+  // this FIRST, before the queue/direct-line fallback.
+  const jumpFlightRef = useRef<{ origin: [number, number, number]; destination: [number, number, number]; elapsed: number } | null>(null)
+  const [jumpPhase, setJumpPhase] = useState<Exclude<JumpPhase, 'done'> | null>(null)
+  // Real user report: turning to reach a hex well behind the mech (a big
+  // in-place-feeling rotation before much actual sliding) left fog stale
+  // through the whole turn — the matching fog_steps entry only ever
+  // applied on ARRIVAL at that hex, so it popped all at once right as the
+  // (short) slide finished, well after the turn had already played out.
+  // Set true below when the FIRST leg of a fresh walk needs a big turn
+  // from wherever the mech is actually facing right now — in that case
+  // its fog step fires immediately here instead of waiting for arrival;
+  // stepToward's own arrival branch then skips re-firing index 0. A small
+  // turn (the common case — already roughly facing that way) keeps the
+  // existing arrival-synced reveal, which stays visually accurate for it.
+  const firstStepFiredEarlyRef = useRef(false)
   useEffect(() => {
     if (walkPath && walkPath !== lastWalkPathRef.current) {
       lastWalkPathRef.current = walkPath
+      if (movementType === 'jump') {
+        // Real Despegar/Saltar/Aterrizar arc — see jumpFlightRef's own
+        // doc comment. A jump's own walkPath is always a single landing
+        // hex (movement.py never produces a real route for one), so
+        // there's no per-leg queue to build, just origin→destination.
+        pathQueueRef.current = []
+        const [ox, oz] = animatedPos.current
+        const dest = walkPath[walkPath.length - 1]
+        const [dx, dz] = hexToWorld(dest.q, dest.r)
+        jumpFlightRef.current = {
+          origin: [ox, animatedY.current, oz],
+          destination: [dx, heightAt(dest.q, dest.r), dz],
+          elapsed: 0,
+        }
+        firstStepFiredEarlyRef.current = false
+        return
+      }
+      jumpFlightRef.current = null
       pathQueueRef.current = walkPath.map((p) => {
         const [x, z] = hexToWorld(p.q, p.r)
         return { x, z, y: heightAt(p.q, p.r) }
       })
+      firstStepFiredEarlyRef.current = false
+      const first = pathQueueRef.current[0]
+      if (first) {
+        const [cx, cz] = animatedPos.current
+        const dx = first.x - cx
+        const dz = first.z - cz
+        if (Math.hypot(dx, dz) > ARRIVE_EPSILON) {
+          const heading = Math.atan2(dx, dz)
+          if (Math.abs(angleDelta(animatedRot.current, heading)) > BIG_TURN_THRESHOLD) {
+            onWalkStep?.(0)
+            firstStepFiredEarlyRef.current = true
+          }
+        }
+      }
     }
-  }, [walkPath, heightAt])
-
-  // Turns to face the direction it's actually walking at each leg of a
-  // real path, not just at the final destination — see TURN_SPEED/
-  // lerpAngle above. Settles onto the unit's real commanded facing_deg
-  // (facingRotationY) once there's no more route left to walk.
-  const animatedRot = useRef<number>(facingRotationY)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [walkPath, movementType, heightAt])
 
   const stepToward = (delta: number) => {
     if (!canWalk) {
@@ -724,7 +959,31 @@ const UnitMarker = memo(function UnitMarker({
       animatedY.current = baseY
       animatedRot.current = facingRotationY
       pathQueueRef.current = []
+      jumpFlightRef.current = null
+      if (jumpPhase !== null) setJumpPhase(null)
       if (isMoving) setIsMoving(false)
+      return
+    }
+    const jump = jumpFlightRef.current
+    if (jump) {
+      jump.elapsed += delta
+      const result = jumpFlight(jump.origin, jump.destination, jump.elapsed)
+      const [px, py, pz] = result.position
+      animatedPos.current = [px, pz]
+      animatedY.current = py
+      const [ox, , oz] = jump.origin
+      const [dx2, , dz2] = jump.destination
+      const heading = Math.hypot(dx2 - ox, dz2 - oz) > ARRIVE_EPSILON ? Math.atan2(dx2 - ox, dz2 - oz) : facingRotationY
+      animatedRot.current = lerpAngle(animatedRot.current, heading, Math.min(1, TURN_SPEED * delta))
+      if (result.phase === 'done') {
+        jumpFlightRef.current = null
+        setJumpPhase(null)
+        onWalkStep?.(0)
+        if (isMoving) { setIsMoving(false); onWalkDone?.() }
+      } else if (jumpPhase !== result.phase) {
+        setJumpPhase(result.phase)
+        if (!isMoving) setIsMoving(true)
+      }
       return
     }
     const queue = pathQueueRef.current
@@ -744,6 +1003,16 @@ const UnitMarker = memo(function UnitMarker({
       animatedPos.current = [immediateTarget.x, immediateTarget.z]
       animatedY.current = immediateTarget.y
       if (queue.length > 0) {
+        // queue.length here is BEFORE the slice below — still counts
+        // the waypoint just arrived at, so walkPath.length - queue.length
+        // is that waypoint's own 0-based index in the original array.
+        // Index 0 may have already fired early (see firstStepFiredEarlyRef
+        // above, for a big in-place-feeling turn) — skip it here so its
+        // fog step doesn't apply twice.
+        if (walkPath) {
+          const idx = walkPath.length - queue.length
+          if (!(idx === 0 && firstStepFiredEarlyRef.current)) onWalkStep?.(idx)
+        }
         pathQueueRef.current = queue.slice(1)
       } else if (isMoving) {
         setIsMoving(false)
@@ -802,30 +1071,26 @@ const UnitMarker = memo(function UnitMarker({
       <Select enabled={!!outlined}>
         {unit.mech_id != null ? (
           <>
-          {/* Prone tilts the whole model over onto its side instead of
-              standing it upright — pivots around the feet (Mech3D's own
-              local origin), so it swings down onto the tile rather than
-              sinking through it. */}
-          <group rotation={tiltProne ? [0, 0, Math.PI * 0.42] : [0, 0, 0]}>
-            {/* Real user report: placing a mech whose chassis/model glTF
-                hadn't loaded yet blanked the WHOLE map (every tile,
-                every other unit) for a beat — the single Suspense
-                boundary wrapping all of <HexMap> in TableView/GMView
-                unmounts everything under it while any one thing inside
-                suspends. An already-loaded chassis (drei's useGLTF
-                cache, keyed by URL) never suspends, which is why re-
-                placing a mech that had appeared before looked fine. A
-                boundary scoped to just this one marker's model isolates
-                the blip to itself. */}
-            <Suspense fallback={null}>
-              <Mech3D
-                color={color} chassis={unit.mech_chassis} model={unit.mech_model}
-                isMoving={isMoving && !tiltProne}
-                emissive={glowEmissive} emissiveIntensity={glowEmissiveIntensity}
-                tintStrength={tintStrength}
-              />
-            </Suspense>
-          </group>
+          {/* Real user report: placing a mech whose chassis/model glTF
+              hadn't loaded yet blanked the WHOLE map (every tile,
+              every other unit) for a beat — the single Suspense
+              boundary wrapping all of <HexMap> in TableView/GMView
+              unmounts everything under it while any one thing inside
+              suspends. An already-loaded chassis (drei's useGLTF
+              cache, keyed by URL) never suspends, which is why re-
+              placing a mech that had appeared before looked fine. A
+              boundary scoped to just this one marker's model isolates
+              the blip to itself. */}
+          <Suspense fallback={null}>
+            <Mech3D
+              color={color} chassis={unit.mech_chassis} model={unit.mech_model}
+              isMoving={isMoving} movementType={movementType === 'run' ? 'run' : 'walk'}
+              jumpPhase={jumpPhase} fallen={tiltProne} dead={destroyedReason != null}
+              emissive={glowEmissive} emissiveIntensity={glowEmissiveIntensity}
+              tintStrength={tintStrength}
+              onLoaded={() => forceMeshRegistered((n) => n + 1)}
+            />
+          </Suspense>
           {destroyedReason === 'structural' && (
             // Local space (this whole subtree already sits inside the
             // marker's own position-tracking group/RigidBody above) — NOT
@@ -855,8 +1120,12 @@ const UnitMarker = memo(function UnitMarker({
           during Heat, so this OR's in regardless of the `heat` prop
           (falls back to a fixed intensity — shutdown itself already
           implies serious heat, whatever phase-gated `heat` happens to
-          be right now). */}
-      {unit.mech_id != null && ((heat != null && heat > 0) || shutdown) && <SteamPuffs heat={heat ?? 20} />}
+          be right now). Real user report: a mech that died while
+          shutdown/overheated kept puffing forever after — destroyedReason
+          wins outright, same reasoning as glowEmissive above. */}
+      {unit.mech_id != null && destroyedReason == null && ((heat != null && heat > 0) || shutdown) && (
+        <SteamPuffs heat={heat ?? 20} />
+      )}
     </>
   )
 
@@ -1041,190 +1310,338 @@ function FootprintTrail({ marks }: { marks: FootprintMark[] }) {
   )
 }
 
-/** Baked once and reused for every fog puff — several overlapping soft
- * radial blobs at fixed offsets instead of one perfect circle (like
- * AttackEffects' getGlowTexture), so the silhouette reads as an
- * irregular cloud rather than a glowing disc. */
-let cloudTextureCache: THREE.Texture | null = null
-function getCloudTexture(): THREE.Texture {
-  if (cloudTextureCache) return cloudTextureCache
-  const size = 128
-  const canvas = document.createElement('canvas')
-  canvas.width = canvas.height = size
-  const ctx = canvas.getContext('2d')!
-  const blobs = [
-    { x: 0.5, y: 0.5, r: 0.42 },
-    { x: 0.3, y: 0.42, r: 0.28 },
-    { x: 0.7, y: 0.4, r: 0.3 },
-    { x: 0.42, y: 0.66, r: 0.3 },
-    { x: 0.64, y: 0.62, r: 0.26 },
-  ]
-  for (const b of blobs) {
-    const cx = b.x * size, cy = b.y * size, r = b.r * size
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r)
-    // Wider, gentler falloff than a typical glow sprite (getGlowTexture's
-    // own 0.4 stop) — real user request: neighboring tiles' puffs should
-    // visually merge into one continuous bank, not read as separate
-    // touching-but-distinct blobs. A big soft "skirt" reaching most of
-    // the way to full-transparent at the very edge is what lets two
-    // overlapping puffs blend smoothly instead of showing two ring-like
-    // edges next to each other.
-    grad.addColorStop(0, 'rgba(255,255,255,0.9)')
-    grad.addColorStop(0.35, 'rgba(255,255,255,0.6)')
-    grad.addColorStop(0.75, 'rgba(255,255,255,0.22)')
-    grad.addColorStop(1, 'rgba(255,255,255,0)')
-    ctx.fillStyle = grad
-    ctx.fillRect(0, 0, size, size)
-  }
-  const tex = new THREE.CanvasTexture(canvas)
-  cloudTextureCache = tex
-  return tex
+interface ImpactMark {
+  id: number
+  x: number
+  y: number
+  z: number
+  rot: number
 }
 
-const _fogScratchVec = new THREE.Vector3()
+const MAX_IMPACT_MARKS = 150
 
-/** One drifting billboard puff — always faces the camera, so the exact
- * same puff reads as a flat cloud patch from TableView's near-vertical
- * top-down camera and as a wall of mist from FirstPersonView's
- * eye-level one, with no view-specific code needed. Gentle looping
- * drift (position only, never fades out) — unlike SteamPuff/
- * FlameParticle, this isn't a one-shot effect, it's a standing fog
- * bank that just breathes slightly so it doesn't read as a static
- * decal.
+/** A single missed shot's scorch mark — real user request: "los disparos
+ * fallados deben golpear el suelo... y deben dejar marcas en el
+ * mapa/tile que golpean". Same "sit flush on TOP of the ground" reasoning
+ * as FootprintMesh above (the terrain mesh is a solid opaque cylinder,
+ * anything recessed below its top surface is just buried and invisible)
+ * — a dark, irregular scorch circle plus a couple of short radial
+ * scuff-marks so it reads as a blast, not a dropped coin. */
+function ImpactMarkMesh({ mark }: { mark: ImpactMark }) {
+  return (
+    <group position={[mark.x, mark.y + 0.012, mark.z]} rotation={[0, mark.rot, 0]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[0.34, 16]} />
+        <meshStandardMaterial color="#1a1512" roughness={1} transparent opacity={0.82} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
+        <ringGeometry args={[0.2, 0.34, 16]} />
+        <meshStandardMaterial color="#3a2a1c" roughness={1} transparent opacity={0.5} />
+      </mesh>
+    </group>
+  )
+}
+
+function ImpactMarkTrail({ marks }: { marks: ImpactMark[] }) {
+  return (
+    <group>
+      {marks.map((m) => <ImpactMarkMesh key={m.id} mark={m} />)}
+    </group>
+  )
+}
+
+// Real user request (asked repeatedly this week — "ya te he pedido esto
+// 3 veces"): "estas pintando niebla por cada tile... quiero que hagas 1
+// entero con la geometria de los 5 tiles conjuntos" — the whole fog
+// system below builds ONE merged polygon per CONNECTED region of fogged
+// hexes (via real boundary tracing, not one shape per tile glued/
+// overlapped against its neighbors), which is what actually eliminates
+// the seam/gap artifacts a per-tile approach kept producing regardless
+// of how the edges were softened — there's nothing left to collide with
+// once it's genuinely one shape. See buildFogRegions's own doc comment
+// for the algorithm.
+const FOG_HEIGHT = 1.7
+
+// Matches CylinderGeometry(radius, radius, height, 6)'s own real default
+// corner layout — verified directly against three.js's own source
+// (thetaStart=0, vertex i at theta = i * 60°, position
+// (radius*sin(theta), radius*cos(theta))), not assumed — so a boundary
+// polygon built from these corners lands EXACTLY on the real terrain
+// tiles' own hex outlines (Tile's own groove mesh, radius 1 — the true
+// seamless spacing), with zero misalignment against what's actually
+// rendered underneath.
+function fogHexCorner(cx: number, cz: number, i: number): [number, number] {
+  const theta = (i * Math.PI) / 3
+  return [cx + Math.sin(theta), cz + Math.cos(theta)]
+}
+
+// Axial neighbor offsets, matching hexToWorld's own convention — offset
+// k shares the edge between corners (k+1)%6 and (k+2)%6 (derived from
+// hexToWorld's own trigonometry: neighbor k's direction always points
+// exactly through the midpoint of that edge).
+const FOG_HEX_NEIGHBORS: [number, number][] = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]
+function fogEdgeCornerIndices(neighborIndex: number): [number, number] {
+  return [(neighborIndex + 1) % 6, (neighborIndex + 2) % 6]
+}
+
+function fogSignedArea(points: [number, number][]): number {
+  let sum = 0
+  for (let i = 0; i < points.length; i++) {
+    const [x0, y0] = points[i]
+    const [x1, y1] = points[(i + 1) % points.length]
+    sum += x0 * y1 - x1 * y0
+  }
+  return sum / 2
+}
+
+// Standard ray-casting point-in-polygon test.
+function fogPointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
+  let inside = false
+  const [px, py] = point
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const [xi, yi] = polygon[i]
+    const [xj, yj] = polygon[j]
+    const intersect = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi
+    if (intersect) inside = !inside
+  }
+  return inside
+}
+
+interface FogRegion {
+  shape: THREE.Shape
+  /** The LOWEST ground height among this region's own tiles — a single
+   * merged volume can't follow per-tile elevation without a much
+   * heavier custom geometry, and erring low (fully covering every tile,
+   * possibly sinking a little into a hill) reads far better than erring
+   * high (visibly floating over a lower neighbor). */
+  baseY: number
+}
+
+/** Traces the real outer boundary (and any holes — a visible tile fully
+ * enclosed by fog) of every CONNECTED region of fogged hexes, returning
+ * one polygon per region — see this section's own top comment for why.
  *
- * Opacity fades out at close range (real user report: FPV's low eye-
- * level camera standing right next to a fogged neighboring tile turned
- * the ENTIRE screen white — a puff barely a meter from the lens still
- * subtends most of the frame even at a modest size). TableView's
- * camera sits many units up regardless of tile, so it never trips this
- * — only a puff genuinely close to whichever camera is rendering it
- * gets dimmed, distant/unexplored terrain stays properly opaque. */
-function FogPuff({
-  dx, dz, y, size, baseOpacity, speed, seed,
-}: { dx: number; dz: number; y: number; size: number; baseOpacity: number; speed: number; seed: number }) {
-  const ref = useRef<THREE.Mesh>(null)
-  const matRef = useRef<THREE.MeshBasicMaterial>(null)
-  useFrame((state) => {
-    if (!ref.current) return
-    const t = state.clock.elapsedTime * speed + seed
-    ref.current.position.set(dx + Math.sin(t) * 0.1, y + Math.sin(t * 0.7) * 0.06, dz + Math.cos(t) * 0.1)
-    ref.current.quaternion.copy(state.camera.quaternion)
-    if (matRef.current) {
-      ref.current.getWorldPosition(_fogScratchVec)
-      const dist = state.camera.position.distanceTo(_fogScratchVec)
-      const fade = THREE.MathUtils.clamp((dist - 0.6) / 2.4, 0.12, 1)
-      matRef.current.opacity = baseOpacity * fade
+ * Standard grid-boundary-tracing algorithm, no separate flood-fill/
+ * clustering pass needed: for every fogged tile, each of its 6 edges is
+ * either INTERIOR (shared with another fogged tile — skip it) or a
+ * BOUNDARY edge (shared with a visible tile or the map's own edge — keep
+ * it, in this tile's own fixed corner-index winding). Chaining every
+ * kept edge by shared endpoints traces one or more closed loops on its
+ * own — disconnected fog blobs simply never produce edges that chain to
+ * each other, so they fall out as separate loops for free. Loops are
+ * then split into outer boundaries vs holes by signed area (fogHexCorner's
+ * own winding makes a real outer boundary trace negative and a hole
+ * trace positive — both are still explicitly re-oriented before handing
+ * them to THREE.Shape, rather than trusting that derivation alone), and
+ * each hole is assigned to whichever outer loop's area actually contains
+ * it. */
+function buildFogRegions(fogTiles: { q: number; r: number; groundY: number }[]): FogRegion[] {
+  if (fogTiles.length === 0) return []
+  const fogKeys = new Set(fogTiles.map((t) => `${t.q},${t.r}`))
+
+  interface Edge { p1: [number, number]; p2: [number, number] }
+  const edges: Edge[] = []
+  for (const tile of fogTiles) {
+    const [cx, cz] = hexToWorld(tile.q, tile.r)
+    for (let k = 0; k < FOG_HEX_NEIGHBORS.length; k++) {
+      const [dq, dr] = FOG_HEX_NEIGHBORS[k]
+      if (fogKeys.has(`${tile.q + dq},${tile.r + dr}`)) continue
+      const [i1, i2] = fogEdgeCornerIndices(k)
+      edges.push({ p1: fogHexCorner(cx, cz, i1), p2: fogHexCorner(cx, cz, i2) })
     }
+  }
+  if (edges.length === 0) return []
+
+  const keyOf = (p: [number, number]) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`
+  const startIndex = new Map<string, number>()
+  edges.forEach((e, idx) => startIndex.set(keyOf(e.p1), idx))
+  const used = new Array<boolean>(edges.length).fill(false)
+
+  const loops: [number, number][][] = []
+  for (let start = 0; start < edges.length; start++) {
+    if (used[start]) continue
+    const loop: [number, number][] = []
+    let current = start
+    // Safety cap, not an expected code path — a real closed loop on a
+    // real hex grid can never exceed the total edge count; this only
+    // guards against a malformed/open chain looping forever.
+    for (let guard = 0; guard < edges.length + 1; guard++) {
+      if (used[current]) break
+      used[current] = true
+      loop.push(edges[current].p1)
+      const next = startIndex.get(keyOf(edges[current].p2))
+      if (next === undefined || next === start) break
+      current = next
+    }
+    if (loop.length >= 3) loops.push(loop)
+  }
+
+  const outerLoops: [number, number][][] = []
+  const holeLoops: [number, number][][] = []
+  for (const loop of loops) {
+    if (fogSignedArea(loop) < 0) outerLoops.push(loop)
+    else holeLoops.push(loop)
+  }
+
+  const regions = outerLoops.map((points) => {
+    const ccw = fogSignedArea(points) < 0 ? [...points].reverse() : points
+    const shape = new THREE.Shape(ccw.map(([x, z]) => new THREE.Vector2(x, z)))
+    return { shape, outerPoints: ccw, baseY: Infinity }
+  })
+
+  for (const hole of holeLoops) {
+    const cw = fogSignedArea(hole) > 0 ? [...hole].reverse() : hole
+    const owner = regions.find((r) => fogPointInPolygon(hole[0], r.outerPoints))
+    if (owner) owner.shape.holes.push(new THREE.Path(cw.map(([x, z]) => new THREE.Vector2(x, z))))
+  }
+
+  for (const tile of fogTiles) {
+    const [cx, cz] = hexToWorld(tile.q, tile.r)
+    const region = regions.find((r) => fogPointInPolygon([cx, cz], r.outerPoints))
+    if (region) region.baseY = Math.min(region.baseY, tile.groundY)
+  }
+
+  return regions.filter((r) => Number.isFinite(r.baseY)).map((r) => ({ shape: r.shape, baseY: r.baseY }))
+}
+
+// Real user follow-up, across three rounds of real feedback: "no hay una
+// iluminacion homogenea... se ven los tiles discretos de niebla" (flat
+// unlit cylinder + billboard puffs) -> "bordes muy definidos... desde
+// arriba el interior lo veo... no tiene animacion" (a per-tile shader
+// volume, still one shape per tile under the hood) -> "estas pintando
+// niebla por cada tile... y en top down hay artefactos de colision"
+// (confirmed: overlapping per-tile geometry was still the root cause of
+// the visible seams, no amount of shader tuning was ever going to fix
+// that). This shader now runs on the SINGLE merged region geometry from
+// buildFogRegions — there is no neighbor to collide with anymore, so
+// this only needs height falloff + animated noise, no radial/edge
+// falloff logic at all. `vCapFactor` (1 on the flat top/bottom, ~0 on
+// the extruded side walls) is what actually softens the region's own
+// outer silhouette now — the side walls read as noticeably thinner than
+// the top face instead of an equally-solid vertical curtain, which is
+// what a hard polygon boundary alone would otherwise still look like
+// from any oblique angle.
+const fogVertexShader = /* glsl */ `
+  varying vec3 vWorldPosition;
+  varying float vCapFactor;
+  void main() {
+    vec4 worldPos = modelMatrix * vec4(position, 1.0);
+    vWorldPosition = worldPos.xyz;
+    vCapFactor = abs(normal.y);
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
+  }
+`
+const fogFragmentShader = /* glsl */ `
+  uniform float uTime;
+  uniform vec3 uColor;
+  uniform float uBaseY;
+  uniform float uTopY;
+  uniform float uOpacity;
+  varying vec3 vWorldPosition;
+  varying float vCapFactor;
+
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  }
+  float valueNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+  }
+  float fbm(vec2 p) {
+    float value = 0.0;
+    float amplitude = 0.55;
+    for (int i = 0; i < 3; i++) {
+      value += amplitude * valueNoise(p);
+      p *= 2.05;
+      amplitude *= 0.5;
+    }
+    return value;
+  }
+
+  void main() {
+    float heightT = clamp((vWorldPosition.y - uBaseY) / max(0.0001, uTopY - uBaseY), 0.0, 1.0);
+    // Dense near the ground, thinning toward the top — but with a HIGH
+    // floor: TableView's own camera looks almost straight down, so it's
+    // mostly looking at this volume's own top cap face, and that face
+    // must stay solid enough to actually hide the terrain under it.
+    float heightDensity = 1.0 - smoothstep(0.15, 1.0, heightT) * 0.28;
+    // Side walls read noticeably thinner than the top/bottom caps — see
+    // vCapFactor's own doc comment above.
+    float capSoftness = mix(0.4, 1.0, vCapFactor);
+    vec2 flow = vec2(uTime * 0.03, uTime * 0.021);
+    float n = fbm(vWorldPosition.xz * 0.5 + flow) * 0.65 + fbm(vWorldPosition.xz * 1.15 - flow * 1.5) * 0.35;
+    float density = heightDensity * capSoftness * (0.88 + n * 0.5);
+    vec3 tint = mix(uColor * 0.72, uColor * 1.32, n);
+    gl_FragColor = vec4(tint, clamp(density, 0.0, 1.0) * uOpacity);
+  }
+`
+
+/** One real merged region's own body — see this section's own top
+ * comment and buildFogRegions's doc comment for the "why" and the
+ * boundary-tracing algorithm. `shape` already sits in real world (x, z)
+ * coordinates (buildFogRegions builds it straight from hexToWorld), so
+ * this only needs to extrude it upward and place it at the right
+ * height — no further per-tile positioning. */
+function FogRegionMesh({ shape, baseY, seed }: { shape: THREE.Shape; baseY: number; seed: number }) {
+  const materialRef = useRef<THREE.ShaderMaterial>(null)
+  const geometry = useMemo(() => {
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: FOG_HEIGHT, bevelEnabled: false, curveSegments: 1 })
+    // ExtrudeGeometry lays the shape's own local (x, y) in the XY plane
+    // and extrudes along LOCAL +Z from 0 to `depth` (confirmed directly
+    // against three.js's own source, not assumed, after an earlier
+    // sign mistake here). rotateX(+90°) turns that into "flat footprint
+    // in world (x, z), extruded along world Y" with NO mirroring on
+    // either axis (+90°, not -90° — that direction previously flipped
+    // Z) — the tradeoff is local Y then runs from 0 down to -depth, so
+    // the mesh itself gets positioned from its TOP (baseY + FOG_HEIGHT)
+    // rather than its bottom to compensate, see the mesh position below.
+    geo.rotateX(Math.PI / 2)
+    geo.computeVertexNormals()
+    return geo
+  }, [shape])
+  const uniforms = useMemo(
+    () => ({
+      uTime: { value: seed },
+      uColor: { value: new THREE.Color('#7d8589') },
+      uBaseY: { value: baseY },
+      uTopY: { value: baseY + FOG_HEIGHT },
+      uOpacity: { value: 0.94 },
+    }),
+    // seed only used to desync each region's own animation phase at
+    // mount — never meant to reset uTime on every re-render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [baseY],
+  )
+  useFrame((state) => {
+    if (materialRef.current) materialRef.current.uniforms.uTime.value = seed + state.clock.elapsedTime
   })
   return (
-    <mesh ref={ref}>
-      <planeGeometry args={[size, size]} />
-      <meshBasicMaterial ref={matRef} map={getCloudTexture()} color="#6b7478" transparent opacity={baseOpacity} depthWrite={false} />
+    <mesh position={[0, baseY + FOG_HEIGHT, 0]} geometry={geometry}>
+      <shaderMaterial
+        ref={materialRef}
+        vertexShader={fogVertexShader}
+        fragmentShader={fogFragmentShader}
+        uniforms={uniforms}
+        transparent
+        depthWrite={false}
+        side={THREE.DoubleSide}
+      />
     </mesh>
-  )
-}
-
-// Same radius Tile's own groove mesh uses to fill the seam left by its
-// slightly-undersized (0.95) terrain top — confirmed (by that mesh's own
-// doc comment) to be the exact "reaches the true shared edge with the
-// neighboring hex, no gap" size for this grid's spacing. Fog reuses it
-// for the same reason: two adjacent fogged tiles' pucks need to butt up
-// PERFECTLY, or the seam between them reads as two separate patches
-// again — precisely what "cubrirlos de niebla completos... en lugar de
-// puffs individuales con offsets" (real user follow-up, after the
-// randomly-offset billboard-only version still looked like discrete
-// blobs even overlapping) was asking to fix.
-const FOG_PUCK_RADIUS = 1
-const FOG_PUCK_HEIGHT = 0.6
-
-// Standard axial pointy-top neighbor offsets, matching hexToWorld's own
-// q/r convention — used only to find each fogged tile's own "am I on
-// the edge of the fog mass" boundary check (see FogTile's `edge` prop).
-const HEX_NEIGHBOR_OFFSETS: [number, number][] = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]
-
-/** Real user request: "niebla de guerra real en el table view. Debe
- * mostrar literalmente niebla como nubes en las casillas que el equipo
- * jugador no ve" — one of these per hex HexMap's own fog computation
- * (see teamVisibleHexes prop below) decides is currently unknown.
- *
- * Two-part design after two rounds of real user feedback: an initial
- * billboard-only version read as separate blobs even when enlarged and
- * overlapped, since each puff's own soft circular edge always shows
- * *some* falloff right where it meets its neighbor. The actual fix
- * needed geometry, not more/bigger sprites:
- *
- * - A solid, HARD-edged hex "puck" (same radius/shape as the terrain
- *   tile underneath) is the primary cover layer. Because it exactly
- *   matches the tile's own footprint, adjacent fogged tiles' pucks tile
- *   together with zero gap or visible seam automatically — the same way
- *   the terrain hexes themselves already tile seamlessly — with no
- *   flood-fill/cluster computation needed to get a continuous shape:
- *   uniform edge-to-edge tiles inherently produce one.
- * - A couple of the original drifting cloud billboards still float on
- *   top, purely for texture/character (so it still reads as "niebla
- *   como nubes", not a flat colored slab) and to keep FirstPersonView's
- *   higher eye-level obstructed too — the puck alone tops out well
- *   below head height.
- *
- * `y` is the tile's own real ground height (HexMap's own heightAt) so
- * the puck sits on the actual terrain surface instead of a flat
- * assumed-0 baseline — matters on elevated/building tiles, which
- * otherwise would leave the puck either buried in the hill or floating
- * above a low neighbor.
- *
- * `edge` (real user follow-up: "podemos hacer que la niebla sea mas
- * organica? ahora tiene la forma regular muy definida") marks a tile
- * that borders a visible hex or the map's own edge — i.e. one whose
- * puck actually contributes to the fog mass's OUTER silhouette. Only
- * those get extra oversized, softly-overlapping puffs spilling past the
- * hex's own straight edge (into the neighboring visible tile's airspace
- * a little, fading via getCloudTexture's own falloff) — an interior
- * fogged tile's edges are already invisible (covered by its neighbors'
- * own pucks on every side), so there's nothing to soften there. */
-function FogTile({ x, z, y, seed, edge }: { x: number; z: number; y: number; seed: number; edge: boolean }) {
-  const wisps = useMemo(
-    () => Array.from({ length: 2 }, (_, i) => ({
-      dx: (Math.random() - 0.5) * 0.5,
-      dz: (Math.random() - 0.5) * 0.5,
-      y: y + FOG_PUCK_HEIGHT * 0.55 + i * 0.4 + Math.random() * 0.15,
-      size: 1.7 + Math.random() * 0.4,
-      baseOpacity: 0.4 + Math.random() * 0.12,
-      speed: 0.08 + Math.random() * 0.08,
-      seed: seed + i * 4.1 + Math.random(),
-    })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [seed, y],
-  )
-  const edgePuffs = useMemo(
-    () => (edge ? Array.from({ length: 3 }, (_, i) => ({
-      dx: (Math.random() - 0.5) * 1.7,
-      dz: (Math.random() - 0.5) * 1.7,
-      y: y + FOG_PUCK_HEIGHT * (0.2 + Math.random() * 0.5),
-      size: 1.3 + Math.random() * 0.8,
-      baseOpacity: 0.32 + Math.random() * 0.14,
-      speed: 0.06 + Math.random() * 0.06,
-      seed: seed + i * 5.3 + Math.random() + 20,
-    })) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [edge, seed, y],
-  )
-  return (
-    <group position={[x, 0, z]}>
-      <mesh position={[0, y + FOG_PUCK_HEIGHT / 2 + 0.04, 0]}>
-        <cylinderGeometry args={[FOG_PUCK_RADIUS, FOG_PUCK_RADIUS, FOG_PUCK_HEIGHT, 6]} />
-        <meshBasicMaterial color="#585f62" transparent opacity={0.72} depthWrite={false} />
-      </mesh>
-      {wisps.map((w, i) => <FogPuff key={i} {...w} />)}
-      {edgePuffs.map((p, i) => <FogPuff key={`e${i}`} {...p} />)}
-    </group>
   )
 }
 
 export function HexMap({
   map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
-  moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, outlineUnitIds, heatByUnitId, proneUnitIds, shutdownUnitIds,
+  moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, walkMovementTypes, outlineUnitIds, heatByUnitId,
+  proneUnitIds, shutdownUnitIds,
   destroyedReasonByUnitId,
-  teamVisibleHexes, physics, activeAttack, onAttackEffectDone, onUnitWalkDone,
+  teamVisibleHexes, physics, activeAttack, onAttackEffectDone, onUnitWalkDone, onUnitWalkStep,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
 }: {
   map: MapData
@@ -1267,6 +1684,12 @@ export function HexMap({
    * just walk a direct line to their new q/r, same as before this
    * existed. */
   walkPaths?: Map<number, { q: number; r: number }[]>
+  /** Which chain of clips each currently-walking unit actually plays
+   * (real user request: proper Walk/Run/Jump animations) — keyed by unit
+   * id, same population pattern as walkPaths above (straight off
+   * unit_walked's own movement_type). A unit with no entry defaults to
+   * 'walk' (UnitMarker's own movementType prop doc comment). */
+  walkMovementTypes?: Map<number, 'walk' | 'run' | 'jump'>
   /** Unit ids to claim for the caller's own <Selection>'s <Outline>
    * effect — a real-time edge-detected silhouette outline around the
    * actual 3D model (FirstPersonView's detected enemies; real user
@@ -1331,6 +1754,14 @@ export function HexMap({
    * this into rounds.ts's useAnimationHeldMover-style hold hook instead
    * of trusting activeMoverPilotId raw. */
   onUnitWalkDone?: (unitId: number) => void
+  /** Fires each time a unit's walk animation arrives at one waypoint of
+   * a real path (UnitMarker's own onWalkStep, per its doc comment) —
+   * real user request: "la niebla se tiene que ir disipando con cada
+   * movimiento... cada paso del mech tiene que actualizar la niebla".
+   * `index` is the waypoint's 0-based position in walkPaths.get(unitId)
+   * — callers look up the matching fog_steps/cockpit_fog_steps entry
+   * from the same unit_walked broadcast that array came from. */
+  onUnitWalkStep?: (unitId: number, index: number) => void
   /** A unit was clicked/tapped without being dragged to another hex — screen coords come straight off the native pointer event, for positioning an HTML context menu. */
   onUnitClick?: (unit: Unit, clientX: number, clientY: number) => void
   /** A tile was clicked with no drag in progress — the map's own free-standing "pick a hex" gesture (used by both attack-target and move-destination picking; the caller decides what a bare tile click means). clientX/clientY come straight off the native pointer event, same as onUnitClick/onUnitDragEnd, for anchoring a facing picker at the click point. */
@@ -1369,6 +1800,19 @@ export function HexMap({
     const elev = elevationAt.get(`${q},${r}`) ?? 0
     return terrainSinkY(t) ?? (t === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + elev * 0.22)
   }, [terrainAt, elevationAt])
+  // One merged polygon per connected cluster of fogged hexes — see
+  // buildFogRegions's own doc comment for why this replaced a shape-per-
+  // tile approach (real, repeated user request). heightAt (not
+  // groundYAt) is used here for the same reason the old per-tile fog
+  // did: a fogged 'water'/'building' tile's own sink/platform height,
+  // not the flat elevation-only formula.
+  const fogRegions = useMemo(() => {
+    if (!teamVisibleHexes) return []
+    const fogTiles = map.tiles
+      .filter((tile) => !teamVisibleHexes.has(`${tile.q},${tile.r}`))
+      .map((tile) => ({ q: tile.q, r: tile.r, groundY: heightAt(tile.q, tile.r) }))
+    return buildFogRegions(fogTiles)
+  }, [teamVisibleHexes, map.tiles, heightAt])
   // A hex's own ground/platform height — matches Tile's rendering
   // exactly, including 'building's fixed platform (BUILDING_MIN_HEIGHT,
   // not the elevation formula; see its own doc comment) — used for the
@@ -1459,6 +1903,35 @@ export function HexMap({
   const footprintSideRef = useRef<Map<number, number>>(new Map())
   const footprintSeqRef = useRef(0)
   const [footprints, setFootprints] = useState<FootprintMark[]>([])
+  // Scorch marks for missed shots — real user request: "los disparos
+  // fallados deben golpear el suelo... y deben dejar marcas en el
+  // mapa/tile que golpean" (see ImpactMarkTrail above and AttackEffect's
+  // own onMissGround, wired in at this component's render site below).
+  // Same stable-id-ref/capped-state pattern as the footprint trail.
+  const impactMarkSeqRef = useRef(0)
+  const [impactMarks, setImpactMarks] = useState<ImpactMark[]>([])
+  const addImpactMark = (pos: [number, number, number]) => {
+    // Real user report: the mark floated slightly above the ground, and
+    // one landing off the edge of the map got drawn anyway (shown
+    // hovering over the bare table). Both trace back to the same cause —
+    // `pos`'s own Y is the ORIGINAL TARGET hex's ground height (all
+    // AttackEffect has to work with), but the miss's lateral offset can
+    // land it on a genuinely different hex — a neighboring one at a
+    // different elevation, or no real hex at all. Re-deriving the real
+    // (q, r) under the actual (x, z) landing point and using THAT hex's
+    // own ground height fixes the float; a hex with no tile data at all
+    // (off the map) just isn't a real place to leave a mark, so it's
+    // skipped entirely instead of drawn floating over empty background.
+    const { q, r } = worldToHex(pos[0], pos[2])
+    const key = `${q},${r}`
+    if (!terrainAt.has(key)) return
+    impactMarkSeqRef.current += 1
+    const y = groundYAt(q, r)
+    setImpactMarks((old) => [
+      ...old,
+      { id: impactMarkSeqRef.current, x: pos[0], y, z: pos[2], rot: Math.random() * Math.PI * 2 },
+    ].slice(-MAX_IMPACT_MARKS))
+  }
   useEffect(() => {
     const prevTiles = prevUnitTileRef.current
     const sides = footprintSideRef.current
@@ -1565,7 +2038,13 @@ export function HexMap({
     const dropR = drag ? (hover?.r ?? drag.startR) : r
     endDrag()
     if (drag) {
-      if (dropQ !== drag.startQ || dropR !== drag.startR) {
+      const moved = dropQ !== drag.startQ || dropR !== drag.startR
+      // Real user request: "no podemos mover a una casilla ocupada por un
+      // mech" — a drag released on a hex some OTHER unit already occupies
+      // just snaps back to the start hex (treated as a plain click there,
+      // same as dropping back on the origin) instead of moving there.
+      const occupied = moved && units.some((u) => u.id !== drag.unit.id && u.q === dropQ && u.r === dropR)
+      if (moved && !occupied) {
         onUnitDragEndRef.current?.(drag.unit, dropQ, dropR, e.nativeEvent.clientX, e.nativeEvent.clientY)
       } else {
         onUnitClickRef.current?.(drag.unit, e.nativeEvent.clientX, e.nativeEvent.clientY)
@@ -1578,6 +2057,7 @@ export function HexMap({
   return (
     <group position={[-centerX, 0, -centerZ]}>
       <FootprintTrail marks={footprints} />
+      <ImpactMarkTrail marks={impactMarks} />
       {map.tiles.map((tile) => (
         <Tile
           key={`${tile.q},${tile.r}`} tile={tile} lookup={lookup}
@@ -1591,7 +2071,13 @@ export function HexMap({
           fogged={teamVisibleHexes ? !teamVisibleHexes.has(`${tile.q},${tile.r}`) : false}
           physics={physics}
           onPointerMove={(e) => {
-            if (!dragRef.current) return
+            // No onUnitDragEnd means this HexMap is passive (TableView,
+            // FirstPersonView) — a unit can still be clicked (dragRef is
+            // still set on pointer-down for click detection below) but
+            // must never visually follow the cursor. Real user report:
+            // "me deja en FPV pinchar y arrastrar un mech, no debería
+            // poder hacerse eso."
+            if (!dragRef.current || !onUnitDragEnd) return
             setHover({ q: tile.q, r: tile.r })
             // e.point is world-space; this group is offset by
             // [-centerX,0,-centerZ], so add that back to land in the same
@@ -1601,24 +2087,9 @@ export function HexMap({
           onPointerUp={(e) => resolveAt(tile.q, tile.r, e)}
         />
       ))}
-      {teamVisibleHexes && map.tiles
-        .filter((tile) => !teamVisibleHexes.has(`${tile.q},${tile.r}`))
-        .map((tile) => {
-          const [x, z] = hexToWorld(tile.q, tile.r)
-          // Borders a visible hex or the map's own edge — see FogTile's
-          // own `edge` doc comment for why only these get the extra
-          // organic-silhouette puffs.
-          const isEdge = HEX_NEIGHBOR_OFFSETS.some(([dq, dr]) => {
-            const key = `${tile.q + dq},${tile.r + dr}`
-            return !elevationAt.has(key) || teamVisibleHexes.has(key)
-          })
-          return (
-            <FogTile
-              key={`fog-${tile.q},${tile.r}`} x={x} z={z} y={heightAt(tile.q, tile.r)}
-              seed={tile.q * 7.13 + tile.r * 3.7} edge={isEdge}
-            />
-          )
-        })}
+      {fogRegions.map((region, i) => (
+        <FogRegionMesh key={`fog-region-${i}`} shape={region.shape} baseY={region.baseY} seed={i * 7.13} />
+      ))}
       {visibleUnits.map((unit) => (
         <UnitMarker
           key={unit.id}
@@ -1629,6 +2100,7 @@ export function HexMap({
           physics={physics}
           worldOffset={[centerX, centerZ]}
           walkPath={walkPaths?.get(unit.id)}
+          movementType={walkMovementTypes?.get(unit.id)}
           heightAt={heightAt}
           outlined={outlineUnitIds?.has(unit.id) ?? false}
           heat={heatByUnitId?.get(unit.id)}
@@ -1636,6 +2108,7 @@ export function HexMap({
           shutdown={shutdownUnitIds?.has(unit.id) ?? false}
           destroyedReason={destroyedReasonByUnitId?.get(unit.id) ?? null}
           onWalkDone={() => onUnitWalkDone?.(unit.id)}
+          onWalkStep={(index) => onUnitWalkStep?.(unit.id, index)}
           onPointerDown={() => {
             dragRef.current = { unit, startQ: unit.q, startR: unit.r }
             setHover({ q: unit.q, r: unit.r })
@@ -1644,20 +2117,43 @@ export function HexMap({
           onPointerUp={(e) => resolveAt(unit.q, unit.r, e)}
         />
       ))}
-      {activeAttack && (
+      {activeAttack && (() => {
+        // Real user request: "no es muy largo hacer que las armas disparen
+        // de esas zonas y los impactos se hagan en esos puntos?" — when
+        // MechLab has a real weapon/hit annotation for this specific mech,
+        // use its own rotated-by-facing offset instead of the generic
+        // MODEL_CHEST_FRACTION guess; falls back to the old behavior per
+        // side whenever that mech (or this exact weapon/location) isn't
+        // annotated yet.
+        const [ahx, ahz] = hexToWorld(activeAttack.attackerQ, activeAttack.attackerR)
+        const [thx, thz] = hexToWorld(activeAttack.targetQ, activeAttack.targetR)
+        const attackerPos: [number, number] = activeAttack.attackerOffset
+          ? [ahx + activeAttack.attackerOffset.x, ahz + activeAttack.attackerOffset.z]
+          : [ahx, ahz]
+        const targetPos: [number, number] = activeAttack.targetOffset
+          ? [thx + activeAttack.targetOffset.x, thz + activeAttack.targetOffset.z]
+          : [thx, thz]
+        const attackerY = groundYAt(activeAttack.attackerQ, activeAttack.attackerR)
+          + (activeAttack.attackerOffset ? activeAttack.attackerOffset.y : MODEL_SCALE * MODEL_CHEST_FRACTION)
+        const targetY = groundYAt(activeAttack.targetQ, activeAttack.targetR)
+          + (activeAttack.targetOffset ? activeAttack.targetOffset.y : MODEL_SCALE * MODEL_CHEST_FRACTION)
+        return (
         <AttackEffect
           key={activeAttack.id}
           data={{
-            attackerPos: hexToWorld(activeAttack.attackerQ, activeAttack.attackerR),
-            targetPos: hexToWorld(activeAttack.targetQ, activeAttack.targetR),
-            attackerY: groundYAt(activeAttack.attackerQ, activeAttack.attackerR) + MODEL_SCALE * MODEL_CHEST_FRACTION,
-            targetY: groundYAt(activeAttack.targetQ, activeAttack.targetR) + MODEL_SCALE * MODEL_CHEST_FRACTION,
+            attackerPos,
+            targetPos,
+            attackerY,
+            targetY,
+            groundY: groundYAt(activeAttack.targetQ, activeAttack.targetR),
             weaponName: activeAttack.weaponName,
             hit: activeAttack.hit,
           }}
           onDone={() => onAttackEffectDone?.()}
+          onMissGround={addImpactMark}
         />
-      )}
+        )
+      })()}
     </group>
   )
 }

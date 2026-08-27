@@ -33,12 +33,18 @@ export const GM_LINKS: readonly NavLink[] = [
  */
 export function NavBar({
   campaignId,
+  campaignName,
   current,
   variant = 'bar',
   links = LINKS,
   children,
 }: {
   campaignId: number
+  /** Real user request: this link showed the literal word "campaña"
+   * regardless of which one was open — should show the actual campaign's
+   * name instead. Optional so a caller that hasn't loaded the campaign
+   * yet (or never fetches it at all) still gets the old generic label. */
+  campaignName?: string
   current: NavPath
   variant?: 'bar' | 'overlay'
   links?: readonly NavLink[]
@@ -60,7 +66,7 @@ export function NavBar({
         </a>
       ))}
       {children}
-      <a className="nav-campaign" href="/campaigns?next=/hub">↺ campaña</a>
+      <a className="nav-campaign" href="/campaigns?next=/hub">↺ {campaignName ?? 'campaña'}</a>
     </nav>
   )
 }

@@ -46,41 +46,62 @@
   color: var(--accent-2);
 }
 
-.reveal-badge {
-  background: var(--wood-dark);
-  color: var(--accent-2);
-  font-weight: 600;
-}
-
-/* Real user request: phase indicator centered at the top of the screen
-   instead of tucked into the left-corner .hud strip, with the round
-   number alongside it (no initiative-roll listing — that moved out of
-   this shared screen entirely). */
-.phase-indicator {
+/* Real user request: this screen projects onto a physical table with
+   players seated all the way around it, not just one "front" — a single
+   centered indicator only reads right-side-up to whoever's on one
+   particular side. Four small copies, one per screen edge, each rotated
+   so its own text faces outward — upright for whoever is actually
+   sitting at that edge. */
+.phase-indicator-side {
   position: absolute;
-  top: 16px;
-  left: 50%;
-  transform: translateX(-50%);
   z-index: 10;
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
   font-family: 'Cascadia Mono', Consolas, ui-monospace, monospace;
   background: rgba(18, 33, 31, 0.75);
-  padding: 8px 18px;
-  border-radius: 6px;
+  padding: 4px 10px;
+  border-radius: 5px;
   border: 1px solid var(--accent);
   box-shadow: 0 0 6px rgba(127, 212, 200, 0.4);
+  pointer-events: none;
+}
+
+.phase-indicator-side.top {
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%) rotate(180deg);
+}
+
+.phase-indicator-side.bottom {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.phase-indicator-side.left {
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%) rotate(90deg);
+}
+
+.phase-indicator-side.right {
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%) rotate(-90deg);
 }
 
 .phase-indicator-phase {
-  font-size: 15px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--accent);
   letter-spacing: 0.03em;
+  white-space: nowrap;
 }
 
 .phase-indicator-round {
-  font-size: 12px;
+  font-size: 9px;
   color: var(--text-secondary);
+  white-space: nowrap;
 }

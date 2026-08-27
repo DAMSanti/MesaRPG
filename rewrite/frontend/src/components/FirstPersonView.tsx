@@ -4,7 +4,11 @@ import { useProgress } from '@react-three/drei'
 import { EffectComposer, Outline, Selection } from '@react-three/postprocessing'
 import { KernelSize } from 'postprocessing'
 import * as THREE from 'three'
-import { HexMap, useAttackVfxQueue } from './HexMap'
+import {
+  ARRIVE_EPSILON, BIG_TURN_THRESHOLD, HexMap, TURN_SPEED, WALK_SPEED, angleDelta, findAnnotatedLocalPoint, lerpAngle,
+  rotateLocalOffsetByYaw, useAttackVfxQueue, useMechAnnotationsCache,
+} from './HexMap'
+import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
 import { ARMOR_GEOMETRY, ARMOR_VIEWBOX, type MechLocationCode } from '../mechSheetGeometry'
 import { FacingPicker } from './FacingPicker'
@@ -16,7 +20,7 @@ import {
 } from '../api'
 import { activeMoverPilotId, currentPhase, useDisplayedPhase, useHeldActiveMover } from '../rounds'
 import { hexToWorld, mapCenter } from '../hexMath'
-import type { MeleeResult, UnitWalked } from '../ws'
+import type { FogWalkStep, MeleeResult, UnitWalked } from '../ws'
 import './FirstPersonView.css'
 
 // Derived from Mech3D's own scale/proportions rather than a hardcoded
@@ -28,19 +32,245 @@ const LOOK_DISTANCE = 4
 // more than that so two decluttered markers never touch.
 const MARKER_MIN_SEPARATION = 64
 
-/** Fixed, non-orbiting camera — a snapshot of what this mech sees right
- * now, facing where it's actually oriented (facing_deg), not a
- * free-look. Position/lookAt are recomputed by the caller whenever the
- * unit's own position/facing changes; this just applies them every
- * frame, same imperative pattern as KillReplay.tsx's OrbitCam. */
-function FixedFirstPersonCam({
-  position, lookAt,
-}: { position: [number, number, number]; lookAt: [number, number, number] }) {
-  useFrame((state) => {
-    state.camera.position.set(...position)
-    state.camera.lookAt(...lookAt)
+// How far (world units) the camera bobs vertically while actively
+// stepping, and how fast — small on purpose ("un pequeño bob", real user
+// request), just enough to read as footsteps rather than a smooth
+// glide. BOB_SMOOTH_RATE fades it in/out instead of snapping the instant
+// isMoving flips, so a step that's mid-leg when the path queue empties
+// doesn't cut the bob off abruptly.
+const BOB_AMPLITUDE = 0.035
+const BOB_FREQUENCY = 4
+const BOB_SMOOTH_RATE = 8
+
+/** The cockpit's own view of the world, non-orbiting but no longer a
+ * fixed snapshot either — animated hex-by-hex along the SAME real path
+ * (`path`, from walkPaths.get(unit.id), populated off the identical
+ * unit_walked broadcast every other view already uses) instead of
+ * jumping straight to wherever the server confirmed the move ended.
+ * Reuses HexMap's own per-frame stepping math (WALK_SPEED/TURN_SPEED/
+ * ARRIVE_EPSILON/lerpAngle) so this cockpit turns and steps at the exact
+ * same pace everyone else watches this mech's body do it — real user
+ * request: "el movimiento paso a paso [ya está en TableView y
+ * GMView]... tambien en FPV... debemos ver como gira, y da pasos, añade
+ * un pequeño bob a la cámara cuando anda, siguiendo el path calculado."
+ *
+ * Owns the cockpit floodlight too (rendered below) — it has to track
+ * this exact same animated position every frame, not the final one, or
+ * it visibly detaches from the camera mid-walk.
+ *
+ * Also closes a latent bug this same feature exposed: FirstPersonView
+ * never renders a UnitMarker for the player's OWN unit (it's excluded
+ * from sceneUnits — you don't see your own mech's body from inside it),
+ * so nothing was ever calling useHeldActiveMover's onUnitWalkDone for a
+ * self-initiated move — its "walking" hold stayed pinned to this pilot
+ * forever after their very first move of the session, since nothing
+ * ever cleared it. onWalkDone here is that missing call. */
+function WalkingFirstPersonCam({
+  q, r, facingDeg, path, movementType, eyeYAt, cockpitLocal, centerX, centerZ, lookYawDeg, onWalkDone, onWalkStep,
+}: {
+  q: number
+  r: number
+  facingDeg: number
+  path?: { q: number; r: number }[]
+  /** Real user request: real Despegar→Saltar→Aterrizar with the cockpit
+   * camera genuinely rising and falling during the player's OWN jump —
+   * this cockpit never renders its own body (see this component's own
+   * top doc comment), so it can't get the arc "for free" from Mech3D the
+   * way every OTHER visible unit's HexMap-rendered body does; it has to
+   * run the exact same jumpFlight math itself. 'walk'/'run'/undefined
+   * behave identically here (only jump changes the stepping shape). */
+  movementType?: 'walk' | 'run' | 'jump'
+  eyeYAt: (q: number, r: number) => number
+  /** Real user request: "la posicion que selecciono de 'cabina' es donde
+   * tiene que estar la camara en FPV" — MechLab's own saved cockpit
+   * annotation (Mech3D's normalized local space, pre-MODEL_SCALE), or
+   * null for a mech nobody's annotated yet (falls back to eyeYAt's own
+   * generic head-height guess, exactly the old behavior). Rotated by
+   * this cockpit's OWN live body yaw every frame (rotateLocalOffsetByYaw
+   * below) rather than the static facingDeg, so it stays glued to the
+   * mech's body through a turn instead of snapping at the end of one. */
+  cockpitLocal: [number, number, number] | null
+  centerX: number
+  centerZ: number
+  lookYawDeg: number
+  onWalkDone?: () => void
+  /** Fires when the camera ARRIVES at one waypoint of `path` (before
+   * advancing to the next) — same real user request as HexMap's own
+   * UnitMarker.onWalkStep, for this cockpit's own fog (cockpit_fog_
+   * steps): "la niebla se tiene que ir disipando con cada movimiento...
+   * tanto en TableView como en FPV". `index` is 0-based within `path`. */
+  onWalkStep?: (index: number) => void
+}) {
+  const [rawX, rawZ] = hexToWorld(q, r)
+  const target: [number, number] = [rawX - centerX, rawZ - centerZ]
+  const baseY = eyeYAt(q, r)
+  const facingRotationY = Math.PI / 2 - (facingDeg * Math.PI) / 180
+
+  const animatedPos = useRef<[number, number]>(target)
+  const animatedY = useRef<number>(baseY)
+  const animatedRot = useRef<number>(facingRotationY)
+  const [isMoving, setIsMoving] = useState(false)
+  const pathQueueRef = useRef<{ x: number; z: number; y: number }[]>([])
+  const lastPathRef = useRef<{ q: number; r: number }[] | undefined>(undefined)
+  // Real user request: same real jump arc HexMap.tsx's UnitMarker gets —
+  // see jumpFlightRef's own doc comment there for why this is a
+  // completely separate stepping path from pathQueueRef above (a jump's
+  // own path is always just the single landing hex, no real route).
+  const jumpFlightRef = useRef<{ origin: [number, number, number]; destination: [number, number, number]; elapsed: number } | null>(null)
+  const [jumpPhase, setJumpPhase] = useState<Exclude<JumpPhase, 'done'> | null>(null)
+  const bobPhaseRef = useRef(0)
+  const bobIntensityRef = useRef(0)
+  const lightRef = useRef<THREE.PointLight>(null)
+
+  // Same "replace the queue wholesale on a genuinely new path" pattern
+  // HexMap's own UnitMarker uses — see its own doc comment. UNLIKE
+  // UnitMarker's own version of this, centerX/centerZ have to be baked
+  // in here: UnitMarker lives inside HexMap's outer <group position=
+  // [-centerX, 0, -centerZ]>, so its own raw hexToWorld waypoints get
+  // re-centered for free by that parent transform — this component
+  // drives the THREE camera directly, with no such parent group, so a
+  // waypoint left in raw world space (like `target` below correctly
+  // avoids) sent the camera wandering off toward the map's uncentered
+  // origin on every intermediate step before finally snapping onto the
+  // correctly-centered final target (real user report: "se ha ido fuera
+  // del mapa y despues ha vuelto a la localizacion a la que tenia que ir").
+  // Same big-turn early fog-reveal fix as HexMap's own UnitMarker — see
+  // its doc comment for the real user report this addresses (a mech
+  // turning to reach a hex well behind it left cockpit_fog_steps stale
+  // through the whole turn, popping only once the short slide finished).
+  const firstStepFiredEarlyRef = useRef(false)
+  useEffect(() => {
+    if (path && path !== lastPathRef.current) {
+      lastPathRef.current = path
+      if (movementType === 'jump') {
+        pathQueueRef.current = []
+        const [ox, oz] = animatedPos.current
+        const dest = path[path.length - 1]
+        const [dx, dz] = hexToWorld(dest.q, dest.r)
+        jumpFlightRef.current = {
+          origin: [ox, animatedY.current, oz],
+          destination: [dx - centerX, eyeYAt(dest.q, dest.r), dz - centerZ],
+          elapsed: 0,
+        }
+        firstStepFiredEarlyRef.current = false
+        return
+      }
+      jumpFlightRef.current = null
+      pathQueueRef.current = path.map((p) => {
+        const [x, z] = hexToWorld(p.q, p.r)
+        return { x: x - centerX, z: z - centerZ, y: eyeYAt(p.q, p.r) }
+      })
+      firstStepFiredEarlyRef.current = false
+      const first = pathQueueRef.current[0]
+      if (first) {
+        const [cx, cz] = animatedPos.current
+        const dx = first.x - cx
+        const dz = first.z - cz
+        if (Math.hypot(dx, dz) > ARRIVE_EPSILON) {
+          const heading = Math.atan2(dx, dz)
+          if (Math.abs(angleDelta(animatedRot.current, heading)) > BIG_TURN_THRESHOLD) {
+            onWalkStep?.(0)
+            firstStepFiredEarlyRef.current = true
+          }
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [path, movementType, eyeYAt, centerX, centerZ])
+
+  useFrame((state, delta) => {
+    const jump = jumpFlightRef.current
+    if (jump) {
+      jump.elapsed += delta
+      const result = jumpFlight(jump.origin, jump.destination, jump.elapsed)
+      const [px, py, pz] = result.position
+      animatedPos.current = [px, pz]
+      animatedY.current = py
+      const [ox, , oz] = jump.origin
+      const [dx2, , dz2] = jump.destination
+      const heading = Math.hypot(dx2 - ox, dz2 - oz) > ARRIVE_EPSILON ? Math.atan2(dx2 - ox, dz2 - oz) : facingRotationY
+      animatedRot.current = lerpAngle(animatedRot.current, heading, Math.min(1, TURN_SPEED * delta))
+      if (result.phase === 'done') {
+        jumpFlightRef.current = null
+        setJumpPhase(null)
+        onWalkStep?.(0)
+        if (isMoving) { setIsMoving(false); onWalkDone?.() }
+      } else if (jumpPhase !== result.phase) {
+        setJumpPhase(result.phase)
+        if (!isMoving) setIsMoving(true)
+      }
+    } else {
+      const queue = pathQueueRef.current
+      const immediateTarget = queue.length > 0 ? queue[0] : { x: target[0], z: target[1], y: baseY }
+      const [cx, cz] = animatedPos.current
+      const cy = animatedY.current
+      const dx = immediateTarget.x - cx
+      const dz = immediateTarget.z - cz
+      const dist = Math.hypot(dx, dz)
+      const headingTarget = dist > ARRIVE_EPSILON ? Math.atan2(dx, dz) : facingRotationY
+      animatedRot.current = lerpAngle(animatedRot.current, headingTarget, Math.min(1, TURN_SPEED * delta))
+
+      if (dist <= ARRIVE_EPSILON) {
+        animatedPos.current = [immediateTarget.x, immediateTarget.z]
+        animatedY.current = immediateTarget.y
+        if (queue.length > 0) {
+          // queue.length here is BEFORE the slice below — still counts
+          // the waypoint just arrived at, same index math as HexMap's own
+          // UnitMarker.onWalkStep. Index 0 may have already fired early
+          // (see firstStepFiredEarlyRef above) — skip it here so its fog
+          // step doesn't apply twice.
+          if (path) {
+            const idx = path.length - queue.length
+            if (!(idx === 0 && firstStepFiredEarlyRef.current)) onWalkStep?.(idx)
+          }
+          pathQueueRef.current = queue.slice(1)
+        } else if (isMoving) {
+          setIsMoving(false)
+          onWalkDone?.()
+        }
+      } else {
+        const step = Math.min(1, (WALK_SPEED * delta) / dist)
+        animatedPos.current = [cx + dx * step, cz + dz * step]
+        animatedY.current = cy + (immediateTarget.y - cy) * step
+        if (!isMoving) setIsMoving(true)
+      }
+    }
+
+    // No footstep bob during a jump — the arc itself is the motion.
+    bobIntensityRef.current = THREE.MathUtils.lerp(
+      bobIntensityRef.current, isMoving && !jump ? 1 : 0, Math.min(1, BOB_SMOOTH_RATE * delta),
+    )
+    bobPhaseRef.current += delta * BOB_FREQUENCY
+    const bobY = Math.sin(bobPhaseRef.current * Math.PI * 2) * BOB_AMPLITUDE * bobIntensityRef.current
+
+    // lookYawDeg is SUBTRACTED, not added — same sign convention the old
+    // static formula used (Math.PI/2 - (facing_deg + lookYawDeg)*π/180),
+    // just with the walking-turn's own animatedRot standing in for the
+    // static facing_deg term.
+    const viewYaw = animatedRot.current - (lookYawDeg * Math.PI) / 180
+    const forward: [number, number] = [Math.sin(viewYaw), Math.cos(viewYaw)]
+    const [hexX, hexZ] = animatedPos.current
+    // Real user request: "la posicion que selecciono de 'cabina' es donde
+    // tiene que estar la camara en FPV" — rotated by this mech's own
+    // CURRENT body yaw (animatedRot, not the static facingDeg) so the
+    // cockpit point stays glued to the body through a mid-walk turn.
+    // eyeYAt already returned bare ground level (no generic head-height
+    // baked in) whenever cockpitLocal is set — see its own doc comment.
+    const cockpitOffset = cockpitLocal ? rotateLocalOffsetByYaw(cockpitLocal, animatedRot.current) : null
+    const ax = hexX + (cockpitOffset?.x ?? 0)
+    const az = hexZ + (cockpitOffset?.z ?? 0)
+    const ay = animatedY.current + (cockpitOffset?.y ?? 0) + bobY
+    state.camera.position.set(ax, ay, az)
+    state.camera.lookAt(ax + forward[0] * LOOK_DISTANCE, ay, az + forward[1] * LOOK_DISTANCE)
+    lightRef.current?.position.set(ax, ay, az)
   })
-  return null
+
+  // A cockpit-mounted floodlight at the camera's own position — the sun
+  // alone left mechs looking near-black at eye level, where the fixed
+  // overhead light from TableView/GMView barely reaches. Distance-
+  // limited so it lights what's actually in view without washing out
+  // the whole scene.
+  return <pointLight ref={lightRef} intensity={12} distance={14} decay={1.5} />
 }
 
 /** Projects each detected enemy's 3D position onto screen space every
@@ -628,6 +858,17 @@ export function FirstPersonView({
   const [map, setMap] = useState<MapData | null>(null)
   const [enemies, setEnemies] = useState<VisibleEnemy[]>([])
   const [visibleHexes, setVisibleHexes] = useState<VisibleHex[]>([])
+  // Real user request: "la niebla se tiene que ir disipando con cada
+  // movimiento... tanto en TableView como en FPV" — the getUnitVisible
+  // Hexes fetch below still fires on every visibility_update broadcast
+  // and resolves almost immediately, well before a multi-hex walk's own
+  // animation actually finishes; without this it would apply the TRUE
+  // final cockpit fog first, then visibly regress back to earlier/
+  // incomplete cockpit_fog_steps for the rest of the walk. Set true the
+  // moment a walk with real cockpit_fog_steps starts (below), cleared
+  // once onCockpitWalkStep applies that walk's own LAST step — same
+  // reasoning/pattern as TableView's own walkingFogUnitIdsRef.
+  const walkingCockpitFogRef = useRef(false)
   const [weaponCatalog, setWeaponCatalog] = useState<Record<string, WeaponStats>>({})
   const labelRefs = useRef<Record<number, HTMLDivElement | null>>({})
   // Edge-of-screen arrow for a detected enemy currently outside the
@@ -639,13 +880,13 @@ export function FirstPersonView({
   const offscreenRefs = useRef<Record<number, HTMLDivElement | null>>({})
 
   // Click-and-drag look — offset from the mech's own facing_deg, clamped
-  // to ±90° (LOOK_YAW_LIMIT_DEG) so the total sweep is exactly 180°,
-  // matching the server's own vision arc (units.py's _VISION_ARC_DEG —
-  // this cockpit was showing strictly less than what the mech can
-  // actually detect per the rules, since it only ever rendered dead
-  // ahead). Reset whenever the base facing actually changes (the unit
-  // turned/moved) — an old look offset relative to a new facing read as
-  // disorienting rather than useful.
+  // to ±LOOK_YAW_LIMIT_DEG so the total sweep (yaw range + the camera's
+  // own FOV at each extreme) is exactly 180°, matching the server's own
+  // vision arc (units.py's _VISION_ARC_DEG — this cockpit was showing
+  // strictly less than what the mech can actually detect per the rules,
+  // since it only ever rendered dead ahead). Reset whenever the base
+  // facing actually changes (the unit turned/moved) — an old look offset
+  // relative to a new facing read as disorienting rather than useful.
   const [lookYawDeg, setLookYawDeg] = useState(0)
   useEffect(() => {
     setLookYawDeg(0)
@@ -682,6 +923,7 @@ export function FirstPersonView({
   // rather than just the handful outside this unit's own facing-cone
   // LoS — see cockpitVisibleHexes below).
   useEffect(() => {
+    if (walkingCockpitFogRef.current) return
     let cancelled = false
     getUnitVisibleHexes(unit.id).then((h) => {
       if (!cancelled) setVisibleHexes(h)
@@ -701,7 +943,7 @@ export function FirstPersonView({
   // theirs (see the lastAttack prop's own doc comment above), queued
   // (see useAttackVfxQueue's own doc comment) so a fast attack resolving
   // while a slower one still animates doesn't cut the first one off.
-  const { activeAttack: activeAttackVfx, onAttackEffectDone, waitForDrain: waitForAttackVfxDrain } = useAttackVfxQueue(lastAttack, units)
+  const { activeAttack: activeAttackVfx, onAttackEffectDone, waitForDrain: waitForAttackVfxDrain } = useAttackVfxQueue(lastAttack, units, mechs ?? [])
 
   // Red screen-edge flash on a successful incoming hit (real user
   // request) — a monotonic counter, not a boolean, so two hits landing
@@ -710,7 +952,17 @@ export function FirstPersonView({
   // already mid-run for wouldn't restart it, but remounting the overlay
   // under a fresh `key` (below) always does.
   const [hitFlashId, setHitFlashId] = useState(0)
+  // Real user report: reopening FPV replayed the LAST hit's red flash —
+  // lastAttack is a parent-held prop that keeps whatever the most recent
+  // attack was, and this effect's dependency array still fires once on a
+  // fresh mount regardless of whether that value actually just changed.
+  // seenAttackRef pins down whatever lastAttack already was the moment
+  // THIS mount happened, so that first run is "already known," not new —
+  // same fix as useAttackVfxQueue's own seenRef.
+  const seenAttackRef = useRef(lastAttack)
   useEffect(() => {
+    if (lastAttack === seenAttackRef.current) return
+    seenAttackRef.current = lastAttack
     if (lastAttack?.hit && lastAttack.target_unit_id === unit.id) {
       setHitFlashId((n) => n + 1)
     }
@@ -819,13 +1071,51 @@ export function FirstPersonView({
   // unitWalked's own prop doc comment above for why no self-initiated
   // guard is needed here, unlike GMView/TableView.
   const [walkPaths, setWalkPaths] = useState<Map<number, { q: number; r: number }[]>>(new Map())
+  // Real user request: proper Walk/Run/Jump animation chains for every
+  // OTHER visible unit on this cockpit's own <HexMap> — same population
+  // pattern as walkPaths above. This cockpit's OWN unit never renders
+  // through HexMap (see this component's own doc comment), so this Map
+  // is purely for allies/enemies; the player's own jump arc is handled
+  // separately below (WalkingFirstPersonCam's own jumpPhase/jumpFlight).
+  const [walkMovementTypes, setWalkMovementTypes] = useState<Map<number, 'walk' | 'run' | 'jump'>>(new Map())
+  // This cockpit's own per-waypoint fog for its OWN walk — real user
+  // request: "la niebla se tiene que ir disipando con cada movimiento...
+  // tanto en TableView como en FPV". Only ever relevant for `unit.id`
+  // itself (cockpit_fog_steps is only ever sent for a player-faction
+  // walker, and this cockpit's own controlled unit is always one), so a
+  // flat array is enough — no need for TableView's per-unit Map.
+  const [cockpitFogSteps, setCockpitFogSteps] = useState<FogWalkStep[] | null>(null)
+  // Real user report: reopening FPV sometimes replayed the LAST unit's
+  // walk (this cockpit's own, or a visible ally/enemy's) — unitWalked is
+  // a parent-held prop that keeps whatever the most recent walk event
+  // WAS, and this effect's dependency array still fires once on a fresh
+  // mount regardless of whether that value actually just changed. Same
+  // seenRef fix as useAttackVfxQueue's/hitFlashId's own.
+  const seenWalkRef = useRef(unitWalked)
   useEffect(() => {
+    if (unitWalked === seenWalkRef.current) return
+    seenWalkRef.current = unitWalked
     if (!unitWalked || unitWalked.path.length === 0) return
     setWalkPaths((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.path))
+    setWalkMovementTypes((prev) => new Map(prev).set(unitWalked.unit_id, unitWalked.movement_type))
+    if (unitWalked.unit_id === unit.id) {
+      const steps = unitWalked.cockpit_fog_steps ?? null
+      setCockpitFogSteps(steps)
+      if (steps && steps.length > 0) walkingCockpitFogRef.current = true
+    }
     const walkedUnit = units.find((u) => u.id === unitWalked.unit_id)
     heldMover.onUnitWalkStart(unitWalked.unit_id, walkedUnit?.pilot_id ?? null)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [unitWalked])
+
+  const onCockpitWalkStep = (index: number) => {
+    const step = cockpitFogSteps?.[index]
+    if (step) setVisibleHexes(step.visible_hexes)
+    // The last waypoint's own step IS the true final answer — safe to
+    // let the ordinary getUnitVisibleHexes fetch resume on the next
+    // visibility_update.
+    if (cockpitFogSteps && index === cockpitFogSteps.length - 1) walkingCockpitFogRef.current = false
+  }
 
   const startFpvMovement = async (movementType: MovementType) => {
     setShowMoveSubmenu(false)
@@ -991,26 +1281,38 @@ export function FirstPersonView({
     setSelectedTargetId(null)
   }
 
-  const camera = useMemo(() => {
-    if (!map) return null
-    const [centerX, centerZ] = mapCenter(map.tiles)
-    const [rawX, rawZ] = hexToWorld(unit.q, unit.r)
-    const elevation = map.tiles.find((t) => t.q === unit.q && t.r === unit.r)?.elevation ?? 0
-    const eyeY = 0.3 + elevation * 0.22 + EYE_HEIGHT
-    // Same facing→rotation convention HexMap's UnitMarker uses to orient
-    // the rendered Mech3D model — the camera looks the same way the
-    // mech's own model visibly faces, offset by however far the player
-    // has dragged their look within the ±90° limit.
-    const facingRotationY = Math.PI / 2 - ((unit.facing_deg + lookYawDeg) * Math.PI) / 180
-    const forward: [number, number] = [Math.sin(facingRotationY), Math.cos(facingRotationY)]
-    const position: [number, number, number] = [rawX - centerX, eyeY, rawZ - centerZ]
-    const lookAt: [number, number, number] = [
-      position[0] + forward[0] * LOOK_DISTANCE,
-      eyeY,
-      position[2] + forward[1] * LOOK_DISTANCE,
-    ]
-    return { centerX, centerZ, position, lookAt }
-  }, [map, unit.q, unit.r, unit.facing_deg, lookYawDeg])
+  // centerX/centerZ (the map's own world-space origin offset) stay
+  // static for as long as this map does — no per-frame cost in
+  // recomputing them, but no need either. eyeYAt mirrors HexMap's own
+  // elevation→eye-height math, now as a function of q/r instead of a
+  // single computed value, so WalkingFirstPersonCam below can look up
+  // each waypoint's own eye height while walking a real (possibly multi-
+  // elevation) path.
+  const [centerX, centerZ] = useMemo(() => (map ? mapCenter(map.tiles) : [0, 0]), [map])
+  // Real user request: "la posicion que selecciono de 'cabina' es donde
+  // tiene que estar la camara en FPV" — MechLab's own saved cockpit point
+  // for this unit's exact model, or null for a mech nobody's annotated
+  // yet. WalkingFirstPersonCam rotates it by the mech's own live body yaw
+  // every frame and adds it on top of eyeYAt's now-bare ground level.
+  const mechAnnotations = useMechAnnotationsCache()
+  const cockpitLocal = useMemo(
+    () => findAnnotatedLocalPoint(mechAnnotations, unit, 'cockpit', null),
+    // unit's own chassis/model, not the whole (frequently-changing, e.g.
+    // every q/r move) object reference — recomputing on every unit
+    // update would be harmless but pointless, this only ever changes
+    // when the mech itself does.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mechAnnotations, unit.mech_chassis, unit.mech_model],
+  )
+  const eyeYAt = (q: number, r: number) => {
+    const elevation = map?.tiles.find((t) => t.q === q && t.r === r)?.elevation ?? 0
+    const ground = 0.3 + elevation * 0.22
+    // Only the annotated cockpit case gets bare ground here — its own
+    // rotated Y offset supplies the real eye height instead (see
+    // WalkingFirstPersonCam's useFrame). An unannotated mech keeps the
+    // exact old fixed-head-height formula, unchanged.
+    return cockpitLocal ? ground : ground + EYE_HEIGHT
+  }
 
   // FacingPicker's own flower layout assumes GMView's fixed top-down
   // camera (screen-right = facing_deg 0, clockwise from there — see its
@@ -1059,14 +1361,14 @@ export function FirstPersonView({
   // indefinite wait: if a loader hasn't started by then, there's
   // genuinely nothing to load.
   useEffect(() => {
-    if (sceneSettled || !map || !camera) return
+    if (sceneSettled || !map) return
     if (assetsLoading) return
     if (!assetsStartedRef.current) {
       const t = setTimeout(() => setSceneSettled(true), LOAD_GRACE_MS)
       return () => clearTimeout(t)
     }
     setSceneSettled(true)
-  }, [map, camera, assetsLoading, sceneSettled])
+  }, [map, assetsLoading, sceneSettled])
 
   useEffect(() => {
     if (!sceneSettled || readyRef.current) return
@@ -1086,7 +1388,15 @@ export function FirstPersonView({
     }
   }, [sceneSettled])
 
-  const LOOK_YAW_LIMIT_DEG = 90
+  // Real user report: dragging all the way to a ±90° yaw limit let the
+  // player see well past the server's 180° total vision arc (units.py's
+  // _VISION_ARC_DEG) — the limit only accounted for where the camera
+  // POINTS, not how WIDE it sees. At max yaw the camera's own field of
+  // view still extends CAMERA_FOV_DEG/2 further out on top of that, so
+  // the yaw limit has to leave room for half the FOV on each side:
+  // total visible = 2*limit + fov ⇒ limit = (180 - fov) / 2.
+  const CAMERA_FOV_DEG = 70
+  const LOOK_YAW_LIMIT_DEG = 90 - CAMERA_FOV_DEG / 2
   const LOOK_DEG_PER_PIXEL = 0.15
   // Below this many pixels of movement, a press-release is a click, not
   // a look-drag — real user request (bug): capturing the pointer
@@ -1163,9 +1473,9 @@ export function FirstPersonView({
           <div className="fp-static" />
         </div>
       )}
-      {map && camera && (
-        // Mounted (invisible) the moment map/camera are ready rather
-        // than only once `booted` — the whole point is that its GLTF/
+      {map && (
+        // Mounted (invisible) the moment map is ready rather than only
+        // once `booted` — the whole point is that its GLTF/
         // texture loads (which useProgress above is watching) actually
         // START while the static plays, instead of only beginning once
         // the static already finished. Revealed in one cut, never a
@@ -1242,7 +1552,7 @@ export function FirstPersonView({
             onPointerCancel={onLookPointerUp}
             onContextMenu={(e) => e.preventDefault()}
           >
-            <Canvas shadows camera={{ fov: 70 }}>
+            <Canvas shadows camera={{ fov: CAMERA_FOV_DEG }}>
               {/* Selection + Outline (real user request, with a reference
                   image: "resalte el contorno del mech enemigo, del modelo
                   3D" — a real edge-detected silhouette outline around the
@@ -1266,13 +1576,22 @@ export function FirstPersonView({
                   shadow-camera-top={30} shadow-camera-bottom={-30}
                   shadow-camera-far={60}
                 />
-                {/* A cockpit-mounted floodlight at the camera's own position —
-                    the sun alone left mechs looking near-black at eye level,
-                    where the fixed overhead light from TableView/GMView barely
-                    reaches. Distance-limited so it lights what's actually in
-                    view without washing out the whole scene. */}
-                <pointLight position={camera.position} intensity={12} distance={14} decay={1.5} />
-                <FixedFirstPersonCam position={camera.position} lookAt={camera.lookAt} />
+                <WalkingFirstPersonCam
+                  q={unit.q} r={unit.r} facingDeg={unit.facing_deg}
+                  path={walkPaths.get(unit.id)} movementType={walkMovementTypes.get(unit.id)}
+                  eyeYAt={eyeYAt} cockpitLocal={cockpitLocal}
+                  centerX={centerX} centerZ={centerZ} lookYawDeg={lookYawDeg}
+                  onWalkDone={() => {
+                    // Safety net for onCockpitWalkStep's own last-index
+                    // clear — a walk that never actually reaches its
+                    // last waypoint (interrupted mid-flight for any
+                    // reason) would otherwise leave the cockpit's fog
+                    // stuck frozen forever.
+                    walkingCockpitFogRef.current = false
+                    heldMover.onUnitWalkDone(unit.id)
+                  }}
+                  onWalkStep={onCockpitWalkStep}
+                />
                 <Suspense fallback={null}>
                   <HexMap
                     map={map}
@@ -1289,6 +1608,7 @@ export function FirstPersonView({
                     onTileClick={onFpvTileClick}
                     onUnitClick={onFpvUnitClick}
                     walkPaths={walkPaths}
+                    walkMovementTypes={walkMovementTypes}
                     outlineUnitIds={visibleEnemyUnitIds}
                     heatByUnitId={heatByUnitId}
                     proneUnitIds={proneUnitIds}
@@ -1299,8 +1619,8 @@ export function FirstPersonView({
                 </Suspense>
                 <EnemyMarkersController
                   enemies={enemies}
-                  centerX={camera.centerX}
-                  centerZ={camera.centerZ}
+                  centerX={centerX}
+                  centerZ={centerZ}
                   elevationAt={elevationAt}
                   labelRefs={labelRefs}
                   offscreenRefs={offscreenRefs}

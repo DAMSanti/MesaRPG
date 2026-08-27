@@ -215,6 +215,81 @@ def _reconstruct_path(came_from: dict[_State, _State | None], state: _State) -> 
     return positions[1:]  # drop the origin
 
 
+def shortest_terrain_path(
+    map_id: int, from_q: int, from_r: int, to_q: int, to_r: int, avoid: set[tuple[int, int]] | None = None,
+) -> list[dict] | None:
+    """Plain terrain-cost-weighted shortest path between two hexes — no
+    MP budget, no turning cost (unlike _reachable_states' real movement-
+    phase search, which this deliberately doesn't reuse). Used by a GM's
+    free drag reposition (main.py's plain /units/{id}/move) — real user
+    request: "cuando el GM hace drag, el movimiento no contara MP, ni
+    pasara turno, sin embargo si que tiene que calcular el path mas
+    barato y seguirle" — not a real rules-constrained move, but the walk
+    should still animate along the actual cheapest terrain route instead
+    of a straight line through whatever's in between.
+
+    `avoid` (real user request: "no se puede atravesar un tile ocupado
+    por un mech") — hexes the route may never pass THROUGH, typically
+    every other unit's current position; the destination itself is
+    always allowed to be in `avoid` without effect (whether landing there
+    is actually legal is main.py/units.move_unit's own concern, not this
+    function's — it only shapes which ROUTE the walk animates along).
+
+    Returns waypoints from just after the origin through the destination
+    (origin excluded, same convention _reachable_states' own "path"
+    uses) — empty if origin and destination are the same hex (a rotate-
+    in-place/no-op reposition), None if the destination is unreachable
+    (off the map, cut off by hexes this map has no tile data for, or only
+    reachable by crossing an avoided hex) — the caller falls back to a
+    straight line in that case."""
+    m = get_map(map_id)
+    if m is None:
+        return None
+    grid_type = m["grid_type"]
+    tiles = {(t["q"], t["r"]): t for t in m["tiles"]}
+    origin, destination = (from_q, from_r), (to_q, to_r)
+    if origin not in tiles or destination not in tiles:
+        return None
+    neighbor_offsets = _SQUARE_NEIGHBORS if grid_type == "square" else _HEX_NEIGHBORS
+
+    best_cost: dict[tuple[int, int], int] = {origin: 0}
+    came_from: dict[tuple[int, int], tuple[int, int] | None] = {origin: None}
+    frontier: list[tuple[int, tuple[int, int]]] = [(0, origin)]
+    while frontier:
+        cost, pos = heapq.heappop(frontier)
+        if pos == destination:
+            break
+        if cost > best_cost.get(pos, float("inf")):
+            continue
+        for dq, dr in neighbor_offsets:
+            nxt = (pos[0] + dq, pos[1] + dr)
+            if avoid and nxt in avoid and nxt != destination:
+                continue
+            tile = tiles.get(nxt)
+            if tile is None:
+                continue
+            if tile["terrain"] == "road":
+                step_cost = 1
+            else:
+                elevation_gain = max(0, tile["elevation"] - tiles[pos]["elevation"])
+                step_cost = TERRAIN_MOVE_COST.get(tile["terrain"], 1) + elevation_gain
+            new_cost = cost + step_cost
+            if new_cost < best_cost.get(nxt, float("inf")):
+                best_cost[nxt] = new_cost
+                came_from[nxt] = pos
+                heapq.heappush(frontier, (new_cost, nxt))
+
+    if destination not in came_from:
+        return None
+    positions: list[tuple[int, int]] = []
+    current: tuple[int, int] | None = destination
+    while current is not None:
+        positions.append(current)
+        current = came_from.get(current)
+    positions.reverse()
+    return [{"q": q, "r": r} for q, r in positions[1:]]
+
+
 def _reachable_states(unit: dict, mech: dict, movement_type: MovementType) -> dict[_State, dict] | None:
     """{(q, r, facing_idx): {"mp_cost", "hexes", "path"}, ...} — every
     (position, ending facing) combination affordable within budget,
@@ -234,8 +309,16 @@ def _reachable_states(unit: dict, mech: dict, movement_type: MovementType) -> di
     tiles = {(t["q"], t["r"]): t for t in m["tiles"]}
     origin = (unit["q"], unit["r"])
 
+    # Real user request: "no se puede atravesar un tile ocupado por un
+    # mech cuando va de un sitio a otro, el pathfinding tiene que tenerlo
+    # en cuenta" — ANY other unit's hex blocks passing through, not just
+    # an enemy's (this app doesn't model stacking, so two mechs are never
+    # allowed to share a hex even mid-route, friend or foe). Landing on
+    # one is already blocked separately (reachable_hexes' own `occupied`
+    # filter over the final results, and execute_move's destination
+    # check) — this is what stops it being crossed along the way too.
     other_units = [u for u in units.list_units(unit["map_id"]) if u["id"] != unit["id"]]
-    occupied_by_enemy = {(u["q"], u["r"]) for u in other_units if u["pilot_faction"] != unit["pilot_faction"]}
+    occupied = {(u["q"], u["r"]) for u in other_units}
 
     neighbor_offsets = _SQUARE_NEIGHBORS if grid_type == "square" else _HEX_NEIGHBORS
     degrees = _facing_degrees(grid_type)
@@ -263,7 +346,7 @@ def _reachable_states(unit: dict, mech: dict, movement_type: MovementType) -> di
         dq, dr = neighbor_offsets[facing]
         ahead = (q + dq, r + dr)
         tile = tiles.get(ahead)
-        if tile is not None and ahead not in occupied_by_enemy:
+        if tile is not None and ahead not in occupied:
             if tile["terrain"] == "road":
                 step_cost = 1
             else:

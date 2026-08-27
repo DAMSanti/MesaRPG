@@ -92,6 +92,21 @@ def test_cannot_pass_through_an_enemy_occupied_hex(campaign, pilot):
     assert (2, 0) not in reachable, "the enemy at (1,0) blocks the only path further down the corridor"
 
 
+def test_cannot_pass_through_a_friendly_occupied_hex(campaign, pilot):
+    # Real user request: "no se puede atravesar un tile ocupado por un
+    # mech cuando va de un sitio a otro" — unlike the enemy-only check
+    # this app used to have, ANY other unit blocks passing through its
+    # hex, same faction included (this app doesn't model stacking).
+    m = maps.create_map(campaign["id"], "Corridor", width=10, height=1)
+    mech = _mech(campaign["id"], pilot["id"], walk_mp=3)
+    unit = units.create_unit(campaign["id"], m["id"], q=0, r=0, mech_id=mech["id"], pilot_id=pilot["id"])
+    ally_mech = _mech(campaign["id"], pilot["id"])
+    units.create_unit(campaign["id"], m["id"], q=1, r=0, mech_id=ally_mech["id"], pilot_id=pilot["id"])
+
+    reachable = {(h["q"], h["r"]) for h in movement.reachable_hexes(unit["id"], "walk")}
+    assert (2, 0) not in reachable, "the ally at (1,0) blocks the only path further down the corridor"
+
+
 def test_jump_ignores_terrain_but_respects_distance(campaign, pilot):
     m = maps.create_map(campaign["id"], "Woods", width=10, height=6)
     maps.update_tile(m["id"], 1, 0, terrain="forest")
@@ -398,3 +413,44 @@ def test_destroyed_leg_makes_the_mech_immobile(campaign, pilot):
     assert movement.reachable_hexes(unit["id"], "walk") == []
     assert movement.reachable_hexes(unit["id"], "run") == []
     assert movement.reachable_hexes(unit["id"], "jump") == []
+
+
+def test_shortest_terrain_path_straight_line_on_flat_ground(campaign):
+    m = maps.create_map(campaign["id"], "Flat", width=10, height=6)
+    path = movement.shortest_terrain_path(m["id"], 0, 0, 3, 0)
+    assert path == [{"q": 1, "r": 0}, {"q": 2, "r": 0}, {"q": 3, "r": 0}]
+
+
+def test_shortest_terrain_path_ignores_mp_budget_entirely(campaign):
+    # Real user request: a GM's free drag "no contara MP" — this has no
+    # budget concept at all, unlike reachable_hexes' own MP-limited search.
+    m = maps.create_map(campaign["id"], "Flat", width=20, height=6)
+    path = movement.shortest_terrain_path(m["id"], 0, 0, 15, 0)
+    assert path is not None
+    assert path[-1] == {"q": 15, "r": 0}
+    assert len(path) == 15
+
+
+def test_shortest_terrain_path_routes_around_expensive_terrain(campaign):
+    m = maps.create_map(campaign["id"], "Swamp", width=10, height=6)
+    maps.update_tile(m["id"], 1, 0, terrain="water_deep")  # cost 3
+    path = movement.shortest_terrain_path(m["id"], 0, 0, 2, 0)
+    # Straight through (1,0) costs 3 (water_deep) + 1 (plains) = 4;
+    # detouring (0,0)->(0,1)->(1,1)->(2,0), all plains, costs 1+1+1 = 3 —
+    # the strictly cheaper route should win.
+    assert {"q": 1, "r": 0} not in path
+    assert path is not None and path[-1] == {"q": 2, "r": 0}
+
+
+def test_shortest_terrain_path_same_hex_is_empty(campaign):
+    m = maps.create_map(campaign["id"], "Flat", width=10, height=6)
+    assert movement.shortest_terrain_path(m["id"], 3, 2, 3, 2) == []
+
+
+def test_shortest_terrain_path_off_map_destination_is_none(campaign):
+    m = maps.create_map(campaign["id"], "Flat", width=4, height=4)
+    assert movement.shortest_terrain_path(m["id"], 0, 0, 99, 99) is None
+
+
+def test_shortest_terrain_path_unknown_map_is_none():
+    assert movement.shortest_terrain_path(999999, 0, 0, 1, 0) is None

@@ -6,6 +6,7 @@ import { PlayerView } from './routes/PlayerView'
 import { CampaignsView } from './routes/CampaignsView'
 import { MapEditorView } from './routes/MapEditorView'
 import { HubView } from './routes/HubView'
+import { MechLabView } from './routes/MechLabView'
 
 export default function App() {
   return (
@@ -17,6 +18,7 @@ export default function App() {
       <Route path="/campaigns" element={<CampaignsView />} />
       <Route path="/mapeditor" element={<MapEditorView />} />
       <Route path="/hub" element={<HubView />} />
+      <Route path="/mechlab" element={<MechLabView />} />
     </Routes>
   )
 }
