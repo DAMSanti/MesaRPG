@@ -1,11 +1,13 @@
-import { useMemo, useRef } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useEffect, useMemo, useRef } from 'react'
+import { useFrame, useThree } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
-import { CuboidCollider, CylinderCollider, RigidBody } from '@react-three/rapier'
-import { SkeletonUtils } from 'three-stdlib'
+import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
-import { hashTile, buildingKind, plainsGroundVariant, terrainTexture } from '../terrain'
+import { hashTile, buildingKind, plainsGroundVariant } from '../terrain'
 import { GROUND_BASE_HEIGHT, HEX_SIZE } from '../hexMath'
+import {
+  getWaterDisturbers, MAX_WATER_DISTURBERS, WATER_DISTURB_RANGE,
+} from '../waterDisturbance'
 import { MODEL_SCALE } from './Mech3D'
 
 // MECH-factor multiplier — this file's tree/rock/building/decor scales
@@ -26,126 +28,6 @@ const MECH_FACTOR = MODEL_SCALE / 1.65
 // the actual downloaded model over a cheaper approximation; SkeletonUtils
 // clone (below) keeps each instance to just a new Object3D hierarchy,
 // not a duplicated geometry/texture upload.
-const TREE_MODEL_URL = '/models/realistic-tree.glb'
-
-// The model's own bounding-box height, normalized to 1 — computed once
-// from the shared source scene (not per clone/per tile). Box3
-// .setFromObject walks every vertex, and a map can have dozens of
-// forest tiles; doing that dozens of times per map load isn't worth it
-// when every tree instance is a clone of this same one source anyway.
-let treeUnitScale: number | null = null
-let treeRawOffset: { x: number; minY: number; z: number } | null = null
-
-// The source .glb's own materials ("trunk", "normal_leaves") carry no
-// baseColorTexture three.js's GLTFLoader recognizes — confirmed by
-// inspecting the loaded materials directly (mat.map was null on every
-// mesh despite the file visibly having real bark/leaf photos baked in,
-// however Sketchfab wired them — some non-standard slot/extension
-// GLTFLoader doesn't surface as .map). Rather than chase that further,
-// wire on the exact same diffuse images already extracted from this
-// same .glb for the earlier procedural-tree approach (public/textures/
-// CREDITS.md) directly by material name.
-const treeTextureLoader = new THREE.TextureLoader()
-function loadTreeTexture(url: string): THREE.Texture {
-  const tex = treeTextureLoader.load(url)
-  tex.colorSpace = THREE.SRGBColorSpace
-  // Same anisotropy fix as terrain.ts's own loadPhotoTexture, same
-  // reason (three.js defaults this to 1/off on every texture).
-  tex.anisotropy = 16
-  return tex
-}
-const barkTexture = loadTreeTexture('/textures/bark-branch.jpg')
-const leafTexture = loadTreeTexture('/textures/leaf-sprig.png')
-
-function normalizeTreeSceneOnce(scene: THREE.Group) {
-  if (treeUnitScale !== null) return
-  const box = new THREE.Box3().setFromObject(scene)
-  const size = new THREE.Vector3()
-  box.getSize(size)
-  treeUnitScale = size.y > 0 ? 1 / size.y : 1
-  const center = new THREE.Vector3()
-  box.getCenter(center)
-  // Rest the trunk base on the local origin, centered on X/Z — same
-  // "don't assume the source model's own pivot" defensiveness Mech3D.tsx
-  // applies to its own curated assets, rather than trusting this one
-  // Sketchfab export to already be authored that way. Stashed raw (NOT
-  // baked into scene.position at this module scale of 1) — RealTree
-  // scales each clone by its own per-tile sizeMultiplier, and Three.js
-  // doesn't itself scale an object's position by its own scale, so an
-  // offset baked in here would only cancel out correctly for a scale of
-  // exactly 1 (see RealRock's near-identical bug/fix below for the full
-  // explanation — a real user report on rocks, not (yet) trees, but the
-  // same latent bug either way).
-  treeRawOffset = { x: center.x, minY: box.min.y, z: center.z }
-  scene.traverse((obj) => {
-    if (obj instanceof THREE.Mesh) {
-      // NOT castShadow — a forest-biome map can put 1-2 of these
-      // ~20k-triangle trees on nearly every one of its ~100 tiles (all of
-      // it real, playable geometry, not a test artifact); shadow-mapping
-      // that many overlapping high-poly casters is what actually froze
-      // rendering during testing, not the plain (lit but shadowless)
-      // draw. Every other decoration in this file keeps its own
-      // castShadow — this is the one deliberate exception, and only
-      // because of how much geometry a single tree now carries.
-      const mat = obj.material as THREE.MeshStandardMaterial
-      if (mat.name === 'trunk') {
-        mat.map = barkTexture
-      } else if (mat.name === 'normal_leaves') {
-        mat.map = leafTexture
-      }
-      mat.needsUpdate = true
-      // The model's own leaf material uses real alpha BLEND, which needs
-      // correct back-to-front triangle order to look right — three.js
-      // only sorts per-OBJECT, not per-triangle, so a forest of
-      // overlapping tree instances in BLEND mode showed real "wrong leaf
-      // drawn in front of a nearer one" artifacts. alphaTest is a hard
-      // cutout instead — same trade this file's own (now-retired)
-      // procedural leaf cards already made.
-      if (mat.transparent) {
-        mat.transparent = false
-        mat.alphaTest = 0.5
-        mat.depthWrite = true
-      }
-    }
-  })
-}
-
-// Normalized-to-1-unit-tall → world-unit conversion, tuned to roughly
-// match this game's own hex/mech scale (Mech3D's MODEL_SCALE is its
-// equivalent for the mech model) — MECH-factor scaled.
-const TREE_BASE_SCALE = 2.2 * MECH_FACTOR
-
-/** One real tree instance. `sizeMultiplier` varies the final height per
- * tile (see the two TerrainDecor call sites below) so a forest doesn't
- * read as one model copy-pasted at a single fixed size. */
-function RealTree({ sizeMultiplier }: { sizeMultiplier: number }) {
-  const { scene } = useGLTF(TREE_MODEL_URL)
-  normalizeTreeSceneOnce(scene)
-  const instance = useMemo(() => {
-    const clone = SkeletonUtils.clone(scene) as THREE.Group
-    const finalScale = (treeUnitScale ?? 1) * TREE_BASE_SCALE * sizeMultiplier
-    clone.scale.setScalar(finalScale)
-    if (treeRawOffset) {
-      clone.position.set(-treeRawOffset.x * finalScale, -treeRawOffset.minY * finalScale, -treeRawOffset.z * finalScale)
-    }
-    return clone
-  }, [scene, sizeMultiplier])
-  return <primitive object={instance} />
-}
-useGLTF.preload(TREE_MODEL_URL)
-
-// Real .glb rock/debris-chunk models (public/models, CREDITS.md — Poly
-// Haven, CC0, no attribution required) for 'rough' and 'rubble' tiles'
-// decoration, per explicit request for "modelos de rocas"/"modelos 3d de
-// trozos grandes de escombros" rather than another procedural shape —
-// same reasoning the tree model above already established (a real scanned
-// mesh reads as genuinely rocky/ruined in a way procedural geometry
-// hasn't). Each already simplified offline (gltf-transform weld +
-// simplify) from a much heavier photogrammetry source down to roughly
-// 2.5k-5k triangles — a single rock/debris instance or two per tile,
-// scattered across however many 'rough'/'rubble' tiles a map has, not
-// the "dozens of trees per forest tile" scale that made the tree's own
-// cost (shadows, colliders) worth trimming so aggressively.
 const ROCK_BOULDER_URL = '/models/rock-boulder.glb' // Poly Haven "Rock 09" — rounded natural boulder
 const ROCK_FACE_URL = '/models/rock-face.glb' // Poly Haven "Rock Face 01" — angular broken-looking chunk; reused untinted for 'rough' and grey-tinted for 'rubble' (see RUBBLE_CHUNK_TINT below)
 const RUBBLE_BLOCK_URL = '/models/rubble-block.glb' // Poly Haven "Concrete Road Barrier" — an actual man-made concrete slab, the clearest "urban debris" read of the three
@@ -663,6 +545,20 @@ const SINK_DEPTH: Record<string, number> = {
  * much deeper-looking surface surrounds its ankles. `null` for anything
  * that doesn't sink — HexMap.tsx falls back to the normal elevation-based
  * resting height in that case. */
+/** The lowest y any tile's ground can ever reach: the deepest sinking
+ * terrain's own bed.
+ *
+ * Exported because anything drawn UNDER the board has to stay below it or it
+ * hides the bed instead of backing it. Real user report, looking into a
+ * river: the pale surface showing through the water was the wooden table,
+ * which sat at y=-0.05 while a deep-water bed sinks to roughly -3.8 — so the
+ * table was between the camera and the riverbed, and no amount of changing
+ * the bed's texture was ever going to fix it (one was tried). Derived from
+ * SINK_DEPTH rather than written down as a number so retuning how deep water
+ * is cannot silently put the table back in the way.
+ */
+export const DEEPEST_SUNK_Y = GROUND_FLUSH_TOP - Math.max(...Object.values(SINK_DEPTH))
+
 export function terrainSinkY(terrain: string): number | null {
   const depth = SINK_DEPTH[terrain]
   return depth == null ? null : GROUND_FLUSH_TOP - depth
@@ -678,47 +574,380 @@ export function terrainSinkY(terrain: string): number | null {
  * void. Only the TOP face's texture actually scrolls (see the useFrame
  * below) — the side walls stay a static tint, which is fine, they're
  * rarely the focus. */
-function WaterSurface({ terrain, q, r }: { terrain: string; q: number; r: number }) {
-  const matRef = useRef<THREE.MeshStandardMaterial>(null)
-  const texture = useMemo(() => {
-    // Cloned (not the shared base tile texture terrainTexture() itself
-    // returns) — cloning shares the same underlying image/canvas (cheap)
-    // but gives this surface its own `.offset`, so scrolling it doesn't
-    // drag the still lake-bed texture on the tile underneath along with it.
-    const tex = terrainTexture('water', q, r).clone()
-    tex.needsUpdate = true
-    return tex
-  }, [q, r])
-  // Seeded per-tile phase/direction (hashTile, not Math.random) so a
-  // whole lake's tiles don't all ripple in obvious lockstep unison.
-  const seed = hashTile(q, r, 'water-flow')
-  const dirX = ((seed >>> 4) % 100) / 100 - 0.5
-  const dirY = ((seed >>> 12) % 100) / 100 - 0.5
-  const phase = ((seed >>> 20) % 628) / 100
-  useFrame((state) => {
-    const t = state.clock.elapsedTime
-    texture.offset.set(dirX * t * 0.05, dirY * t * 0.05)
-    // Gentle brightness flicker — real water's surface isn't uniformly
-    // lit, it glints as ripples catch the light.
-    if (matRef.current) matRef.current.emissiveIntensity = 0.08 + Math.sin(t * 1.3 + phase) * 0.05
+/** A seamless ripple normal map, drawn once and shared by every water tile.
+ *
+ * Real user request: "quiero tambien que la textura del agua sea AGUA y
+ * condiciones." What was here before scrolled the RIVERBED PHOTO across the
+ * surface, which is why it never read as water: a translucent sheet of
+ * gravel sliding over gravel. Water does not have a colour texture worth
+ * speaking of — what makes it look like water is how its SURFACE bends the
+ * light, so what this paints is a normal map, not an image of water.
+ *
+ * Built from sine ridges at INTEGER frequencies across the canvas, which is
+ * what makes it tile seamlessly: every wave completes a whole number of
+ * cycles over the edge, so the left edge continues exactly into the right.
+ * A few crossing directions at different scales give the interference that
+ * makes real chop, and the whole thing costs one 256px canvas at startup
+ * (no CC0 water material exists to download — the note in
+ * public/textures/CREDITS.md already records that both ambientCG and Poly
+ * Haven were checked, because a real-time water surface is animation and
+ * lighting, not a photo). */
+let waterNormalMap: THREE.CanvasTexture | null = null
+function getWaterNormalMap(): THREE.CanvasTexture {
+  if (waterNormalMap) return waterNormalMap
+  const N = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = N
+  canvas.height = N
+  const ctx = canvas.getContext('2d')!
+  const image = ctx.createImageData(N, N)
+  // Frequency pairs are cycles-per-canvas, so integers keep it seamless.
+  // Mixed scales and directions, none of them parallel, so no single wave
+  // train dominates and the result reads as chop rather than as corduroy.
+  const WAVES: [number, number, number][] = [
+    [3, 1, 1.0], [1, 3, 0.85], [5, 2, 0.5], [2, -5, 0.45],
+    [7, 4, 0.28], [4, -7, 0.25], [11, 3, 0.14], [3, -11, 0.12],
+  ]
+
+  // Real user report: "la corriente del agua me gusta, pero ahora se ven las
+  // lineas rectas, podemos hacerlo algo mas turbulento y añadirle ruido para
+  // que no se vean las lineas rectas?"
+  //
+  // Sines alone can only ever make straight crests — eight of them crossing
+  // is still eight straight ridges, and scrolling that in one direction is
+  // exactly the corduroy the grass wind had. So the sines get a turbulence
+  // field laid over them, and it is the turbulence that decides where each
+  // crest actually is: no straight edge survives.
+  //
+  // The noise has to TILE, or the seam shows up as a hard line every time
+  // the map repeats across a hex — which would be trading one straight line
+  // for a worse one. Wrapping the lattice coordinates modulo the grid size
+  // is what makes it periodic; a plain hash of unbounded coordinates would
+  // not be.
+  const hash2 = (ix: number, iy: number, period: number) => {
+    const px = ((ix % period) + period) % period
+    const py = ((iy % period) + period) % period
+    const v = Math.sin(px * 127.1 + py * 311.7) * 43758.5453123
+    return v - Math.floor(v)
+  }
+  const valueNoise = (x: number, y: number, cells: number) => {
+    // `cells` is how many noise cells span the whole canvas, so it is also
+    // the period: an integer count means the right edge lands back on the
+    // left one.
+    const sx = (x / N) * cells
+    const sy = (y / N) * cells
+    const ix = Math.floor(sx)
+    const iy = Math.floor(sy)
+    const fx = sx - ix
+    const fy = sy - iy
+    const ux = fx * fx * (3 - 2 * fx)
+    const uy = fy * fy * (3 - 2 * fy)
+    const a = hash2(ix, iy, cells)
+    const b = hash2(ix + 1, iy, cells)
+    const c = hash2(ix, iy + 1, cells)
+    const d = hash2(ix + 1, iy + 1, cells)
+    return (a + (b - a) * ux) * (1 - uy) + (c + (d - c) * ux) * uy
+  }
+  const turbulence = (x: number, y: number) => (
+    valueNoise(x, y, 4) * 0.5
+    + valueNoise(x + 37, y + 11, 8) * 0.3
+    + valueNoise(x + 71, y + 53, 16) * 0.15
+    + valueNoise(x + 13, y + 97, 32) * 0.08
+  )
+
+  // Turbulence enters as a DOMAIN WARP as well as an added ripple: the sines
+  // are evaluated at coordinates the noise has already pushed around, so the
+  // ridges themselves bend and braid instead of being straight ridges with
+  // bumps on top. That is the difference between water and corrugated iron.
+  const WARP = 26
+  const heightAt = (x: number, y: number) => {
+    const wx = x + (turbulence(x, y) - 0.5) * WARP
+    const wy = y + (turbulence(x + 101, y + 149) - 0.5) * WARP
+    let h = 0
+    for (let i = 0; i < WAVES.length; i++) {
+      const [fx, fy, a] = WAVES[i]
+      h += a * Math.sin((2 * Math.PI * (fx * wx + fy * wy)) / N + i * 1.7)
+    }
+    // Plus the noise's own fine chop on top of the warped swell.
+    return h + (turbulence(x, y) - 0.5) * 2.6
+  }
+  // Slope by central difference, then the usual tangent-space encoding.
+  // STRENGTH sets how steep the encoded normals are. Too high and calm water
+  // turns into hammered metal; too low and the surface is effectively a
+  // mirror, which is how the first version ended up with the sun's
+  // reflection sitting on one hex as a single blown-out white blob instead
+  // of being scattered across the chop.
+  const STRENGTH = 0.2
+  // Sampled with wrapped coordinates so the derivative at the very edge
+  // reads across the seam rather than off the end of the pattern.
+  const wrap = (v: number) => ((v % N) + N) % N
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const dx = (heightAt(wrap(x + 1), y) - heightAt(wrap(x - 1), y)) * STRENGTH
+      const dy = (heightAt(x, wrap(y + 1)) - heightAt(x, wrap(y - 1))) * STRENGTH
+      const len = Math.hypot(dx, dy, 1)
+      const o = (y * N + x) * 4
+      image.data[o] = Math.round(((-dx / len) * 0.5 + 0.5) * 255)
+      image.data[o + 1] = Math.round(((-dy / len) * 0.5 + 0.5) * 255)
+      image.data[o + 2] = Math.round((1 / len * 0.5 + 0.5) * 255)
+      image.data[o + 3] = 255
+    }
+  }
+  ctx.putImageData(image, 0, 0)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  // A normal map is data, not colour — decoding it through sRGB would bend
+  // every normal it encodes.
+  tex.colorSpace = THREE.NoColorSpace
+  tex.anisotropy = 16
+  waterNormalMap = tex
+  return tex
+}
+
+/** A prefiltered environment map built from the sky photo, for the water to
+ * reflect.
+ *
+ * Real user request: "no parece agua, parece algo azul traslucido...
+ * necesito corriente y reflexion, refraccion, todo el combo." Reflection is
+ * most of what makes water read as water — a surface with nothing to reflect
+ * can only ever look like tinted glass, whatever its roughness.
+ *
+ * Built here rather than relying on the scene's own environment because only
+ * TableView has one (added for the dice), so water in GMView and the
+ * first-person view would have had nothing to reflect at all. PMREM is the
+ * prefiltering three.js needs to use an equirectangular photo as a real
+ * roughness-aware reflection source; the raw texture cannot be used directly.
+ * One per renderer, cached — it is a real GPU cost to build and none to
+ * reuse. */
+const waterEnvByRenderer = new WeakMap<THREE.WebGLRenderer, Promise<THREE.Texture>>()
+function loadWaterEnvMap(renderer: THREE.WebGLRenderer): Promise<THREE.Texture> {
+  const cached = waterEnvByRenderer.get(renderer)
+  if (cached) return cached
+  // Asynchronous, and it has to be: PMREM prefilters the IMAGE, and
+  // TextureLoader.load returns its Texture immediately with `image` still
+  // null. Calling PMREM on it synchronously throws ("Cannot read properties
+  // of null (reading 'width')") and takes every water tile on the board down
+  // with it — which is exactly what the first version of this did. The
+  // material starts with no envMap and gets one the moment the sky is ready.
+  const promise = new Promise<THREE.Texture>((resolve) => {
+    new THREE.TextureLoader().load('/textures/sky.jpg', (sky) => {
+      sky.mapping = THREE.EquirectangularReflectionMapping
+      sky.colorSpace = THREE.SRGBColorSpace
+      const pmrem = new THREE.PMREMGenerator(renderer)
+      const env = pmrem.fromEquirectangular(sky).texture
+      pmrem.dispose()
+      sky.dispose()
+      resolve(env)
+    })
   })
+  waterEnvByRenderer.set(renderer, promise)
+  return promise
+}
+
+/** How many times the ripple pattern repeats across one hex, for each of the
+ * two layers. Two different scales moving at two different speeds is what
+ * stops the surface reading as one texture being dragged: the interference
+ * between them never repeats, so the water keeps changing shape instead of
+ * sliding. */
+const WATER_RIPPLE_SCALE_A = 7
+const WATER_RIPPLE_SCALE_B = 11
+/** Metres per second the two layers travel. The slower, larger layer is the
+ * swell; the faster, finer one is the chop riding on it. */
+const WATER_SPEED_A = 0.055
+const WATER_SPEED_B = 0.085
+/** Multiplier on those speeds where there is a real current. Still water
+ * only ever drifts. */
+const WATER_CURRENT_SPEED = 3.4
+
+/** The visible surface of a water tile.
+ *
+ * `flow` is the tile's own current direction in world XZ (riverFlow.ts), or
+ * undefined for still water. It does two things: it aims both ripple layers
+ * downstream so the whole river moves as one body rather than as a grid of
+ * tiles each drifting its own way, and it drives the speed up, because a
+ * current you cannot see the direction of is not a current. */
+function WaterSurface({ terrain, q, r, flow }: {
+  terrain: string
+  q: number
+  r: number
+  flow?: [number, number]
+}) {
+  const uniforms = useMemo(() => ({
+    uOffsetA: { value: new THREE.Vector2() },
+    uOffsetB: { value: new THREE.Vector2() },
+    uScaleA: { value: WATER_RIPPLE_SCALE_A },
+    uScaleB: { value: WATER_RIPPLE_SCALE_B },
+    uTime: { value: 0 },
+    // xy = world position, z = strength, w unused. Zero strength means the
+    // slot is empty, which is how the shader skips it without branching on a
+    // separate count uniform.
+    uDisturb: {
+      value: Array.from({ length: MAX_WATER_DISTURBERS }, () => new THREE.Vector4()),
+    },
+  }), [])
+
+  // Per-tile phase so neighbouring tiles do not start their ripples in step,
+  // which would draw the hex grid onto the water.
+  const seed = hashTile(q, r, 'water-flow')
+  const phase = ((seed >>> 20) % 628) / 100
+
+  const renderer = useThree((state) => state.gl)
+  const deep = terrain === 'water_deep'
+  const material = useMemo(() => {
+    const mat = new THREE.MeshPhysicalMaterial({
+      normalMap: getWaterNormalMap(),
+      normalScale: new THREE.Vector2(1.5, 1.5),
+      // Water is a smooth dielectric. Near-zero roughness is what gives it
+      // sharp highlights and a real reflection instead of a haze; the old
+      // values here (roughness 0.25, metalness 0.1) are most of why it read
+      // as tinted plastic.
+      // Not mirror-smooth. Real water at this scale is never optically flat,
+      // and a perfect mirror concentrates the whole sky's brightest point
+      // into one small area that blows out to white.
+      roughness: deep ? 0.09 : 0.12,
+      metalness: 0,
+      // Real refraction: transmission renders what is behind the surface and
+      // bends it through the material, so the riverbed distorts under the
+      // ripples instead of just showing through a translucent sheet. This is
+      // what `opacity` could never do — an opacity fade is a blend, it has no
+      // idea there is a surface with a shape in front of it.
+      transmission: 1,
+      // Water's real index of refraction. Also what drives how strongly the
+      // surface reflects at a glancing angle, so the Fresnel falloff comes
+      // out right without being faked.
+      ior: 1.33,
+      // Colour comes from light being absorbed as it travels THROUGH the
+      // water, which is why deep water is darker and bluer than shallow over
+      // the same bed — not from painting the surface blue. `thickness` is how
+      // far light travels inside, so it tracks the tile's own real depth.
+      thickness: deep ? SINK_DEPTH.water_deep : SINK_DEPTH.water,
+      attenuationColor: new THREE.Color(deep ? '#0e3a52' : '#2a7f8c'),
+      attenuationDistance: deep ? 2.2 : 5.5,
+      color: '#ffffff',
+      // A thin, perfectly smooth coat over the top: real water has a
+      // specular sheen sharper than its own body, and this is what puts the
+      // sun glint on it.
+      clearcoat: 0.6,
+      clearcoatRoughness: 0.1,
+      envMapIntensity: 0.3,
+      // FrontSide, not DoubleSide. The water is a closed six-sided volume,
+      // and with both sides drawn its own INTERIOR walls render too — seen
+      // through the surface and refracted, they come out as hard-edged
+      // polygons with straight, stepped boundaries sitting inside the tile.
+      // A real user reported exactly that shape and could not name it ("no
+      // se que mierda es"); it is the far wall of the water looking back at
+      // the camera. `thickness` is what tells the material how deep the body
+      // of water is, so nothing is lost by not drawing the inside of it.
+      side: THREE.FrontSide,
+    })
+    mat.onBeforeCompile = (shader) => {
+      Object.assign(shader.uniforms, uniforms)
+      // The disturbance rings need to know where a fragment is in the WORLD,
+      // which the standard material does not otherwise provide here.
+      shader.vertexShader = shader.vertexShader
+        .replace('#include <common>', `#include <common>
+          varying vec3 vWaterWorld;`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>
+          vWaterWorld = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;`)
+      shader.fragmentShader = shader.fragmentShader
+        .replace('#include <common>', `#include <common>
+          uniform vec2 uOffsetA;
+          uniform vec2 uOffsetB;
+          uniform float uScaleA;
+          uniform float uScaleB;
+          uniform float uTime;
+          uniform vec4 uDisturb[${MAX_WATER_DISTURBERS}];
+          varying vec3 vWaterWorld;`)
+        // Two independent samples of the same ripple map, at different
+        // scales and travelling at different speeds, combined the standard
+        // way for blending normal maps (add the tangential components, keep
+        // the product of the vertical ones). One sample alone can only ever
+        // slide; two interfering never repeat.
+        .replace('#include <normal_fragment_maps>', `
+          vec3 nA = texture2D( normalMap, vNormalMapUv * uScaleA + uOffsetA ).xyz * 2.0 - 1.0;
+          vec3 nB = texture2D( normalMap, vNormalMapUv * uScaleB + uOffsetB ).xyz * 2.0 - 1.0;
+          vec3 mapN = normalize( vec3( nA.xy + nB.xy, nA.z * nB.z ) );
+          // Rings spreading from whatever is standing in the water. The wave
+          // travels outward (distance MINUS time), decays with distance so it
+          // dies out instead of ringing the whole river, and pushes the
+          // normal along the outward direction, which is what makes it read
+          // as a raised ring rather than as a stain.
+          for ( int i = 0; i < ${MAX_WATER_DISTURBERS}; i ++ ) {
+            vec4 d = uDisturb[ i ];
+            if ( d.z <= 0.0 ) continue;
+            vec2 rel = vWaterWorld.xz - d.xy;
+            float dist = length( rel );
+            if ( dist > ${WATER_DISTURB_RANGE}.0 ) continue;
+            // Held off the very centre: right where the leg is there is no
+            // ring, there is a leg, and a wave crest converging on a point
+            // reads as a spike.
+            float near = smoothstep( 1.2, 4.0, dist );
+            float fade = exp( -dist * 0.16 );
+            float wave = sin( dist * 1.15 - uTime * 3.4 ) * fade * near * d.z;
+            mapN.xy += normalize( rel + 1e-5 ) * wave * 0.85;
+          }
+          mapN = normalize( mapN );
+          mapN.xy *= normalScale;
+          normal = normalize( tbn * mapN );`)
+    }
+    return mat
+  }, [deep, uniforms, renderer])
+  useEffect(() => () => material.dispose(), [material])
+  useEffect(() => {
+    let alive = true
+    loadWaterEnvMap(renderer).then((env) => {
+      if (!alive) return
+      material.envMap = env
+      material.needsUpdate = true
+    })
+    return () => { alive = false }
+  }, [renderer, material])
+
+  // The tile's own position in SCENE space, read off the mesh rather than
+  // derived from q/r — the whole board sits inside an offset group, so a
+  // q/r-derived position is in board space and would not compare against the
+  // scene-space disturber list.
+  const meshRef = useRef<THREE.Mesh>(null)
+  const tileWorld = useMemo(() => new THREE.Vector3(), [])
+  useFrame((state) => {
+    if (meshRef.current) meshRef.current.getWorldPosition(tileWorld)
+    const t = state.clock.elapsedTime + phase
+    uniforms.uTime.value = state.clock.elapsedTime
+    // Only the disturbers close enough to this tile to be seen, nearest
+    // first — a river can hold more units than the shader has slots, and the
+    // ones that matter to THIS tile are the ones next to it.
+    const all = getWaterDisturbers()
+    const near = all.length <= 1 ? all : [...all].sort((a, b) => (
+      (a.x - tileWorld.x) ** 2 + (a.z - tileWorld.z) ** 2
+      - ((b.x - tileWorld.x) ** 2 + (b.z - tileWorld.z) ** 2)
+    ))
+    for (let i = 0; i < MAX_WATER_DISTURBERS; i++) {
+      const d = near[i]
+      const slot = uniforms.uDisturb.value[i]
+      const inRange = d != null
+        && Math.hypot(d.x - tileWorld.x, d.z - tileWorld.z) < WATER_DISTURB_RANGE + HEX_SIZE
+      if (inRange) slot.set(d.x, d.z, d.strength, 0)
+      else slot.set(0, 0, 0, 0)
+    }
+    // Downstream if this tile is part of a river; otherwise a slow drift on
+    // two different bearings, which is what still water does when the air
+    // moves over it.
+    const [fx, fz] = flow ?? [Math.cos(phase) * 0.35, Math.sin(phase) * 0.35]
+    const speed = flow ? WATER_CURRENT_SPEED : 1
+    // Texture space runs opposite to world travel: scrolling the sample
+    // point one way moves the pattern the other.
+    uniforms.uOffsetA.value.set(-fx * t * WATER_SPEED_A * speed, -fz * t * WATER_SPEED_A * speed)
+    uniforms.uOffsetB.value.set(
+      -fx * t * WATER_SPEED_B * speed + 0.37,
+      -fz * t * WATER_SPEED_B * speed - 0.21,
+    )
+  })
+
   const depth = SINK_DEPTH[terrain] ?? SINK_DEPTH.water
   const bottomY = GROUND_FLUSH_TOP - depth
   return (
-    <mesh position={[0, (GROUND_FLUSH_TOP + bottomY) / 2, 0]}>
+    <mesh ref={meshRef} position={[0, (GROUND_FLUSH_TOP + bottomY) / 2, 0]} material={material}>
       <cylinderGeometry args={[0.98 * HEX_SIZE, 0.98 * HEX_SIZE, depth, 6]} />
-      <meshStandardMaterial
-        ref={matRef}
-        map={texture}
-        transparent
-        opacity={terrain === 'water_deep' ? 0.72 : 0.6}
-        color={terrain === 'water_deep' ? '#1c4152' : '#3f7f92'}
-        emissive="#bfe8f0"
-        emissiveIntensity={0.08}
-        roughness={0.25}
-        metalness={0.1}
-        side={THREE.DoubleSide}
-      />
     </mesh>
   )
 }
@@ -833,12 +1062,16 @@ function MudSurface({ q, r }: { q: number; r: number }) {
  * reshuffle on every re-render) so a cluster of trees or buildings
  * doesn't look like one model copy-pasted. */
 export function TerrainDecor({
-  terrain, height, q, r, physics,
+  terrain, height, q, r, physics, riverFlow,
 }: {
   terrain: string
   height: number
   q: number
   r: number
+  /** Per-tile current directions for the whole board (riverFlow.ts). A
+   * current is a property of the shape the water makes across the map, not
+   * of one tile, so it has to be worked out once above and handed down. */
+  riverFlow?: Map<string, [number, number]>
   /** Real user request: dice should bounce off trees/buildings, not pass
    * straight through them. The full .glb models here are tens of
    * thousands of triangles each — a real hull collider per instance was
@@ -854,64 +1087,23 @@ export function TerrainDecor({
   physics?: boolean
 }) {
   if (terrain === 'forest' || terrain === 'light_forest') {
-    const dense = terrain === 'forest'
-    const seed = hashTile(q, r, 'forest-decor')
-    // Dense forest reads visibly bigger than light_forest, same
-    // proportions the earlier procedural trunk/canopy sizing used.
-    const sizeMultiplier = (dense ? 1.15 : 0.9) + ((seed >>> 3) % 100) / 100 * (dense ? 0.35 : 0.25)
-    // Position offsets from tile center — HEX-factor scaled (has to stay
-    // proportionate to the hex's own radius so a tree never jitters into
-    // a neighboring tile), NOT the MECH-factor the tree's own size uses.
-    const jitterX = (((seed >>> 8) % 100) / 100 - 0.5) * 0.3 * HEX_SIZE
-    const jitterZ = (((seed >>> 14) % 100) / 100 - 0.5) * 0.3 * HEX_SIZE
-    const rotY = ((seed >>> 20) % 628) / 100
-
-    // Dense forest gets a second, smaller tree offset from the first —
-    // the clearest way to read as genuinely denser canopy rather than
-    // "the same single tree, just bigger" like light_forest's one tree.
-    const seed2 = hashTile(q, r, 'forest-decor-2')
-    const sizeMultiplier2 = 0.55 + ((seed2 >>> 3) % 100) / 100 * 0.25
-    const jitterX2 = (((seed2 >>> 8) % 100) / 100 - 0.5) * 0.65 * HEX_SIZE
-    const jitterZ2 = (((seed2 >>> 14) % 100) / 100 - 0.5) * 0.65 * HEX_SIZE
-    const rotY2 = ((seed2 >>> 20) % 628) / 100
-
-    // Rough trunk approximation — TREE_BASE_SCALE is the model's own
-    // normalized-to-1-unit-tall → world-unit factor, so a tree's real
-    // height is ~TREE_BASE_SCALE * sizeMultiplier; the trunk itself only
-    // fills a fraction of that (the rest is canopy, which a die should be
-    // able to graze/tumble through same as it would real branches), so the
-    // collider itself is deliberately much shorter than the full model.
-    // MECH-factor scaled, same family as TREE_BASE_SCALE itself.
-    const trunkHalfHeight = 0.9 * MECH_FACTOR * sizeMultiplier
-    const trunkRadius = 0.18 * MECH_FACTOR * sizeMultiplier
+    // The trees themselves are GroundVegetation's job now: instanced across
+    // the whole board, several species out of one consistent set, moving in
+    // the wind. Rendering this file's own single tree as well put two
+    // unrelated tree systems on the same hex.
+    //
+    // Their dice colliders went with them, and that is a real loss worth
+    // naming: a die can now roll through a forest tile untouched. The
+    // colliders that used to be here were placed at THIS file's own tree
+    // positions, and those trees no longer exist, so keeping them would have
+    // left invisible cylinders scattered across the board — worse than
+    // nothing. Bringing collision back means having the component that
+    // actually places the trees place them, since it is the only thing that
+    // knows where they ended up.
     return (
-      <>
-        <group position={[jitterX, height, jitterZ]} rotation={[0, rotY, 0]}>
-          <RealTree sizeMultiplier={sizeMultiplier} />
-        </group>
-        {dense && (
-          <group position={[jitterX2, height, jitterZ2]} rotation={[0, rotY2, 0]}>
-            <RealTree sizeMultiplier={sizeMultiplier2} />
-          </group>
-        )}
-        <group position={[0, height, 0]}>
-          <LeafLitter q={q} r={r} />
-        </group>
-        {physics && (
-          <RigidBody type="fixed" position={[jitterX, height + trunkHalfHeight, jitterZ]} colliders={false}>
-            <CylinderCollider args={[trunkHalfHeight, trunkRadius]} />
-          </RigidBody>
-        )}
-        {physics && dense && (
-          <RigidBody
-            type="fixed"
-            position={[jitterX2, height + trunkHalfHeight * 0.7, jitterZ2]}
-            colliders={false}
-          >
-            <CylinderCollider args={[trunkHalfHeight * 0.7, trunkRadius * 0.7]} />
-          </RigidBody>
-        )}
-      </>
+      <group position={[0, height, 0]}>
+        <LeafLitter q={q} r={r} />
+      </group>
     )
   }
   if (terrain === 'plains') {
@@ -1056,7 +1248,7 @@ export function TerrainDecor({
     )
   }
   if (terrain === 'water' || terrain === 'water_deep') {
-    return <WaterSurface terrain={terrain} q={q} r={r} />
+    return <WaterSurface terrain={terrain} q={q} r={r} flow={riverFlow?.get(`${q},${r}`)} />
   }
   if (terrain === 'swamp') {
     return <MudSurface q={q} r={r} />

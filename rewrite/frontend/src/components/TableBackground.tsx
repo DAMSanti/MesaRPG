@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
 import { HEX_SIZE } from '../hexMath'
+import { DEEPEST_SUNK_Y } from './TerrainDecor'
 
 // A real CC0 photo texture (ambientCG's Wood095 — see
 // public/textures/CREDITS.md), not a procedural canvas texture like
@@ -12,6 +13,19 @@ import { HEX_SIZE } from '../hexMath'
 // just starts blank and repaints once the image arrives, same as a
 // normal <img>.
 const WOOD_REPEAT = 14
+
+/** How far below the DEEPEST possible riverbed this surface sits.
+ *
+ * It used to be a flat -0.05, which is under every DRY tile but well above a
+ * sunken one: a deep-water bed reaches about -3.8, so the table was covering
+ * the riverbed and being mistaken for it (real user report — "no me gusta la
+ * textura esa de arena", which was this wood photo, not the bed). Measured
+ * from TerrainDecor's own DEEPEST_SUNK_Y rather than written as a number, so
+ * making water deeper can never quietly put it back in front of the bed
+ * again, and with real clearance on top because "debes dejar espacio
+ * suficiente incluso para agua profunda". */
+const TABLE_CLEARANCE = 1.2
+const TABLE_Y = DEEPEST_SUNK_Y - TABLE_CLEARANCE
 
 /** The physical gaming-table surface the hex board sits on — a large
  * wood-textured plane behind the map, visible in the gaps between/
@@ -42,7 +56,7 @@ export function TableBackground({ physics, hexScale }: { physics?: boolean; hexS
   // one giant smear under the (comparatively tiny) square board.
   const scale = hexScale ? HEX_SIZE : 1
   const plane = (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.05, 0]} receiveShadow>
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, TABLE_Y, 0]} receiveShadow>
       <planeGeometry args={[200 * scale, 200 * scale]} />
       <meshStandardMaterial map={texture} />
     </mesh>
@@ -70,7 +84,7 @@ export function TableBackground({ physics, hexScale }: { physics?: boolean; hexS
           proportionately thick catch zone, not the old few-centimeter
           slab (real user report: "no veo los dados" — same rescale as
           Die.tsx/BoardWalls.tsx). */}
-      <CuboidCollider args={[100 * scale, 0.25 * scale, 100 * scale]} position={[0, -0.3 * scale, 0]} />
+      <CuboidCollider args={[100 * scale, 0.25 * scale, 100 * scale]} position={[0, TABLE_Y - 0.25 * scale, 0]} />
       {plane}
     </RigidBody>
   )

@@ -10,22 +10,27 @@ import type {
 } from '../api'
 import { listMechAnnotations } from '../api'
 import { Mech3D } from './Mech3D'
-import { GROUND_FLUSH_TOP, TerrainDecor, terrainSinkY } from './TerrainDecor'
+import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
 import { GroundVegetation } from './GroundVegetation'
+import { computeRiverFlow } from '../riverFlow'
+import { setWaterDisturbers } from '../waterDisturbance'
 import { hashTile, terrainColor, terrainTexture } from '../terrain'
-import { grassDensityAt, GRASS_SHADE, GRASS_SHADE_STRENGTH } from '../grassPatches'
+import { grassShadeAt, isGrassTerrain, GRASS_SHADE, GRASS_SHADE_STRENGTH } from '../grassPatches'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import {
-  BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationBandRange, elevationToY, GROUND_BASE_HEIGHT, GROOVE_THICKNESS,
-  GROOVE_TOP_Y, HEX_SIZE, hexToWorld, mapCenter, WALK_SPEED, worldToHex,
+  BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationToY, GROUND_BASE_HEIGHT, HEX_SIZE,
+  hexToWorld, mapCenter, WALK_SPEED, worldToHex,
 } from '../hexMath'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
-import { buildBlendedHexGeometry, buildDrapedHexCap, buildEdgeBlendPatch, makeHexHeightAt } from '../hexTileGeometry'
+import {
+  buildBlendedHexGeometry, buildDrapedHexCap, buildEdgeBlendPatch, buildHexGrooveRing, makeHexHeightAt,
+} from '../hexTileGeometry'
 import { getStampVersion, RELIEF_SKIP_TERRAINS, stampDeformation } from '../terrainRelief'
+import { TILE_RAMP_FRACTION, tileHeightInputs } from '../tileHeightField'
 
 // Real user request: "no es muy largo hacer que las armas disparen de esas
 // zonas y los impactos se hagan en esos puntos?" — MechLab's own
@@ -312,6 +317,7 @@ function quaternionFromY(angle: number): { x: number; y: number; z: number; w: n
 function tilePropsEqual(prev: Readonly<TileProps>, next: Readonly<TileProps>) {
   return prev.tile === next.tile
     && prev.lookup === next.lookup
+    && prev.riverFlow === next.riverFlow
     && prev.losHighlighted === next.losHighlighted
     && prev.dragHighlighted === next.dragHighlighted
     && prev.needsInitiativeHighlighted === next.needsInitiativeHighlighted
@@ -326,6 +332,10 @@ function tilePropsEqual(prev: Readonly<TileProps>, next: Readonly<TileProps>) {
 type TileProps = {
   tile: HexTileData
   lookup: Map<string, HexTileData>
+  /** Current direction per water tile for the whole board — see
+   * riverFlow.ts. Passed down rather than derived here because whether a
+   * tile is a river or a pond depends on the shape of ALL the water. */
+  riverFlow: Map<string, [number, number]>
   losHighlighted: boolean
   dragHighlighted: boolean
   /** A unit standing on this tile has a pilot who hasn't rolled
@@ -385,7 +395,7 @@ type TileProps = {
 }
 
 const Tile = memo(function Tile({
-  tile, lookup, losHighlighted, dragHighlighted, needsInitiativeHighlighted, activeMoverHighlighted, moveHighlighted,
+  tile, lookup, riverFlow, losHighlighted, dragHighlighted, needsInitiativeHighlighted, activeMoverHighlighted, moveHighlighted,
   pathPreviewHighlighted, targetableHighlighted, physics, fogged,
   onPointerMove, onPointerUp,
 }: TileProps) {
@@ -411,12 +421,6 @@ const Tile = memo(function Tile({
   // three-way junctions from blobbing) now lives in hexTileGeometry as
   // CAP_EDGE_INSET, instead of a bare multiplier repeated at every call
   // site here.
-  const groove = (
-    <mesh position={[0, GROOVE_TOP_Y - GROOVE_THICKNESS / 2, 0]} receiveShadow>
-      <cylinderGeometry args={[HEX_SIZE, HEX_SIZE, GROOVE_THICKNESS, 6]} />
-      <meshStandardMaterial color="#241a10" roughness={0.9} />
-    </mesh>
-  )
   // Real user request: "vamos a eliminar los saltos entre hexes... no
   // suavices demasiado... se tiene que notar que son hexes de diferentes
   // alturas aunque sus fronteras coincidan en altura" — each of this
@@ -431,69 +435,13 @@ const Tile = memo(function Tile({
   // Texture variety costs nothing here anymore either way — the UVs are
   // world-space (hexTileGeometry's worldTextureUV), so every tile shows
   // a different crop with the mesh sitting still.
-  const neighborHeights = FOG_HEX_NEIGHBORS.map(([dq, dr]) => {
-    const neighbor = lookup.get(`${tile.q + dq},${tile.r + dr}`)
-    if (!neighbor) return null
-    if (RELIEF_SKIP_TERRAINS.has(tile.terrain) || RELIEF_SKIP_TERRAINS.has(neighbor.terrain)) return null
-    // Real user request: "entre tiles que pueden andar los mechs, las
-    // pendientes tienen que ser progresivas... para aquellas hexes
-    // juntas que no puedan caminar los mechs, por ejemplo altura 0
-    // junto altura 4, puedes hacer un 'barranco'" — movement.py's own
-    // step cost (`elevation_gain`, uncapped) makes a big jump merely
-    // very expensive rather than flatly illegal, so there's no single
-    // authoritative "walkable" cutoff to import; 2 levels matches the
-    // common real BattleTech read of "a mech can scramble up this" vs
-    // "this needs a real cliff." Past that, same flat wall every other
-    // opted-out edge gets — a big elevation gap misleadingly LOOKING
-    // walkable would be worse than the old flat cliff it replaced.
-    if (Math.abs(tile.elevation - neighbor.elevation) > 2) return null
-    return elevationToY(neighbor.terrain, neighbor.elevation)
-  })
-  // Real user observation, and the thing that finally located the bug:
-  // "funciona perfectamente con cambios de altura entre tiles de la misma
-  // altura, una colina la hace perfecta, pero entre un tile de altura 0 y
-  // uno de altura 1 hace un escalon." Within one BattleTech level the
-  // surface is nothing but one continuous world-space noise field, which is
-  // why it looks right; across levels the ramp took over AND switched that
-  // noise off, dropping a glassy, perfectly smooth band into otherwise
-  // rough ground. Keeping the noise on across a ramp needs the tile's own
-  // elevation BAND to travel with it (otherwise the clamp shears the noise
-  // flat), so each ramping neighbour's band comes along here for
-  // makeHexHeightAt to interpolate with the very same weights it uses for
-  // the heights themselves. A neighbour that ramps is never a flush/skipped
-  // terrain (those return null above), so its band is always the plain
-  // elevation band — no need to repeat the flush/building special cases the
-  // tile's own bandLow/bandHigh below still has to handle.
-  const neighborBands = FOG_HEX_NEIGHBORS.map(([dq, dr], k) => {
-    if (neighborHeights[k] == null) return null
-    const neighbor = lookup.get(`${tile.q + dq},${tile.r + dr}`)
-    return neighbor ? elevationBandRange(neighbor.elevation) : null
-  })
-  // Real user report: water/swamp tiles' own within-hex orography could
-  // bulge the ground mesh up ABOVE TerrainDecor.tsx's own WaterSurface/
-  // MudSurface — those render at a FIXED GROUND_FLUSH_TOP regardless of
-  // what this file does, so any relief here that isn't kept strictly
-  // below that line pokes the real ground up through the water, exactly
-  // backwards from "el agua nunca tiene que quedar por encima del agua."
-  // For a flush terrain (terrainSinkY non-null), the ground mesh's own
-  // band becomes that terrain's REAL depth range instead of an elevation
-  // band: from just under the water's own surface line down to its real
-  // BattleTech-tuned bed depth (same SINK_DEPTH a mech's own feet already
-  // sink to) — still gets its own within-hex variation (a real uneven
-  // lake-bed/mud floor), just one that can never break the surface.
-  const flushSinkY = terrainSinkY(tile.terrain)
-  const [elevBandLow, elevBandHigh] = elevationBandRange(tile.elevation)
-  const meshOwnHeight = flushSinkY ?? height
-  // 'building' has no SINK_DEPTH (terrainSinkY returns null for it) but
-  // is just as flush by design — elevationToY's own doc comment: a
-  // building's sidewalk platform stays flat "unconditionally", real
-  // orography would contradict that same reasoning. bandLow===bandHigh
-  // collapses the clamp below to a single value regardless of noise,
-  // the same trick the water/swamp case uses.
-  const bandLow = flushSinkY ?? (tile.terrain === 'building' ? height : elevBandLow)
-  const bandHigh = flushSinkY != null
-    ? GROUND_FLUSH_TOP - 0.05
-    : (tile.terrain === 'building' ? height : elevBandHigh)
+  // One shared derivation of this tile's real surface inputs — see
+  // tileHeightField.ts. It used to be duplicated here in full, which is
+  // exactly how the riverbed's own band ended up being fixed in one copy
+  // and not the other.
+  const {
+    meshOwnHeight, neighborHeights, neighborBands, bandLow, bandHigh,
+  } = useMemo(() => tileHeightInputs(tile, lookup), [tile, lookup])
   // Real user request: "quiero que JUSTO donde pisa el mech queden
   // huellas, quiero crateres" — a footprint/crater lands at any moment
   // during play (terrainRelief.ts's stampDeformation, called from this
@@ -533,14 +481,14 @@ const Tile = memo(function Tile({
   const subdivisions = stampVersion > 0 ? STAMP_DETAIL_SUBDIVISIONS : BASE_SUBDIVISIONS
   // Only terrain that actually grows grass gets the shading — see
   // grassPatches.ts. Everything else passes nothing and bakes plain white.
-  const groundTint = useMemo(() => (VEGETATED_TERRAINS.has(tile.terrain)
+  const groundTint = useMemo(() => (isGrassTerrain(tile.terrain)
     ? (wx: number, wz: number): [number, number, number] => {
-      const d = grassDensityAt(wx, wz) * GRASS_SHADE_STRENGTH
+      const d = grassShadeAt(tile.terrain, wx, wz) * GRASS_SHADE_STRENGTH
       return [1 + (GRASS_SHADE.r - 1) * d, 1 + (GRASS_SHADE.g - 1) * d, 1 + (GRASS_SHADE.b - 1) * d]
     }
     : undefined), [tile.terrain])
   const blendedGeometry = useMemo(
-    () => buildBlendedHexGeometry(HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, subdivisions, TERRAIN_RAMP_FRACTION, x, z, bandLow, bandHigh, groundTint),
+    () => buildBlendedHexGeometry(HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, subdivisions, TILE_RAMP_FRACTION, x, z, bandLow, bandHigh, groundTint),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion, groundTint],
   )
@@ -563,7 +511,7 @@ const Tile = memo(function Tile({
   const HIGHLIGHT_CAP_LIFT = HEX_SIZE * 0.02
   const drapedHighlightCap = useMemo(() => {
     if (!anyHighlighted) return null
-    const { heightAt, capBoundary } = makeHexHeightAt(HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TERRAIN_RAMP_FRACTION, x, z, bandLow, bandHigh)
+    const { heightAt, capBoundary } = makeHexHeightAt(HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TILE_RAMP_FRACTION, x, z, bandLow, bandHigh)
     return buildDrapedHexCap(heightAt, capBoundary, HIGHLIGHT_CAP_SUBDIVISIONS, HIGHLIGHT_CAP_LIFT)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyHighlighted, meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion])
@@ -571,7 +519,7 @@ const Tile = memo(function Tile({
   const blendStrips = useMemo(() => {
     if (TEXTURE_BLEND_SKIP_TERRAINS.has(tile.terrain)) return []
     const { heightAt, capBoundary } = makeHexHeightAt(
-      HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TERRAIN_RAMP_FRACTION, x, z, bandLow, bandHigh,
+      HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TILE_RAMP_FRACTION, x, z, bandLow, bandHigh,
     )
     const ownTexture = terrainTexture(tile.terrain, tile.q, tile.r)
     const ownColor = terrainColor(tile.terrain)
@@ -631,6 +579,23 @@ const Tile = memo(function Tile({
     return strips
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tile.terrain, tile.q, tile.r, meshOwnHeight, JSON.stringify(neighborHeights), JSON.stringify(neighborTerrains), x, z, bandLow, bandHigh, stampVersion])
+  // The dark groove between tiles. A RING along this tile's own border that
+  // follows the real ground height, not a slab under the whole tile — see
+  // buildHexGrooveRing for why the slab version kept surfacing through
+  // dipped ground and riverbeds however far down it was pushed, and why no
+  // terrain needs a special case for it any more.
+  const grooveGeometry = useMemo(() => {
+    const { heightAt, capBoundary } = makeHexHeightAt(
+      HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TILE_RAMP_FRACTION, x, z, bandLow, bandHigh,
+    )
+    return buildHexGrooveRing(HEX_SIZE, heightAt, capBoundary, GROOVE_SEGMENTS, GROOVE_DROP, GROOVE_SKIRT)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion])
+  const groove = (
+    <mesh geometry={grooveGeometry} receiveShadow>
+      <meshStandardMaterial color="#241a10" roughness={0.9} side={THREE.DoubleSide} />
+    </mesh>
+  )
   const terrainMesh = (
     <mesh
       position={[0, 0, 0]}
@@ -725,7 +690,7 @@ const Tile = memo(function Tile({
           model. The flat ground plane above still gets a (cheap,
           hex-shaped) collider for every tile regardless, so dice always
           land on the table correctly either way. */}
-      {!fogged && <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} physics={physics} />}
+      {!fogged && <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} physics={physics} riverFlow={riverFlow} />}
       {drapedHighlightCap && (
         <>
           {losHighlighted && <LosDebugOverlay geometry={drapedHighlightCap} color="#39ff8f" />}
@@ -1676,16 +1641,17 @@ const FOOTPRINT_DEPTH = 0.45
 // attempt needed — that attempt was ALSO fighting the scene-wide
 // near:far depth-precision bug (see GMView.tsx's own fix), not just
 // this strip's own z-fighting.
-// Fraction of the apothem each tile's own edge ramp occupies. 1.0 was
-// tried, to kill the flat plateau this leaves in every tile's middle (the
-// terraces a real user reported on hillsides), and reverted: it turns every
-// summit into a sharp pyramid instead. See makeHexHeightAt's own weight for
-// why the two cannot be traded off inside this scheme at all.
-const TERRAIN_RAMP_FRACTION = 0.8
 
-/** Terrain whose soil takes the grass-density shading, matching what
- * GroundVegetation actually plants on. */
-const VEGETATED_TERRAINS = new Set(['plains', 'hills'])
+/** Shape of the groove ring between tiles. DROP is how far under the tile's
+ * own surface its visible top sits — what makes the seam read as a groove
+ * the tiles are inset into rather than as a flat join. SKIRT is how far its
+ * outer wall carries on down, so the gap looks like a slot with depth
+ * instead of a ribbon floating in one. SEGMENTS only has to be enough to
+ * follow the ground's own curvature along an edge. */
+const GROOVE_SEGMENTS = 8
+const GROOVE_DROP = 0.35
+const GROOVE_SKIRT = 1.2
+
 const TEXTURE_BLEND_SKIP_TERRAINS = RELIEF_SKIP_TERRAINS
 // Real user follow-up on that first version: "quiero que los cambios de
 // textura no se aprecien tan bruscos... no tiene por que ser justo en la
@@ -2358,6 +2324,10 @@ export function HexMap({
   const elevationAt = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.elevation])), [map.tiles])
   const terrainAt = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.terrain])), [map.tiles])
   const lookup = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t])), [map.tiles])
+  // Which way the water runs, worked out from the shape of the whole board
+  // at once — a tile cannot tell on its own whether it is a river or a pond.
+  // See riverFlow.ts.
+  const riverFlow = useMemo(() => computeRiverFlow(map.tiles).direction, [map.tiles])
   // Same resting-height formula UnitMarker computes for itself (restY),
   // generalized to an arbitrary hex so a walking mech's Y can interpolate
   // through each intermediate waypoint's own elevation instead of
@@ -2416,6 +2386,30 @@ export function HexMap({
   // whenever its own current hex isn't in it right now. Only 'enemy'
   // faction is gated — a team's own units are always visible to
   // themselves.
+  // Units standing in water, handed to the water surface so it can throw
+  // rings off them ("el agua debe interactuar y colisionar con un mech
+  // hundido"). Deliberately NOT a prop: this changes while a unit walks, and
+  // as a prop it would re-render every water tile on the board every frame —
+  // see waterDisturbance.ts.
+  useEffect(() => {
+    const wading = units
+      .map((u) => ({ u, terrain: terrainAt.get(`${u.q},${u.r}`) }))
+      .filter(({ terrain }) => terrain === 'water' || terrain === 'water_deep')
+      .map(({ u, terrain }) => {
+        const [wx, wz] = hexToWorld(u.q, u.r)
+        // In SCENE space, not board space. Everything the tiles draw lives
+        // inside <group position={[-centerX, 0, -centerZ]}>, so the shader's
+        // own world position is offset by the board centre — registering raw
+        // q/r-derived coordinates put every ripple a whole board-width away
+        // from the mech making it, which is why nothing appeared to react.
+        const [cx, cz] = mapCenter(map.tiles)
+        // Deeper water means more of the mech is in it, so it pushes more
+        // of it around.
+        return { x: wx - cx, z: wz - cz, strength: terrain === 'water_deep' ? 1 : 0.62 }
+      })
+    setWaterDisturbers(wading)
+  }, [units, terrainAt, map.tiles])
+
   const visibleUnits = units.filter((u) => {
     if (!teamVisibleHexes) return true
     if (u.is_ghost && !u.revealed) return false
@@ -2584,7 +2578,7 @@ export function HexMap({
     <group position={[-centerX, 0, -centerZ]}>
       {map.tiles.map((tile) => (
         <Tile
-          key={`${tile.q},${tile.r}`} tile={tile} lookup={lookup}
+          key={`${tile.q},${tile.r}`} tile={tile} lookup={lookup} riverFlow={riverFlow}
           losHighlighted={losDebugHexes?.has(`${tile.q},${tile.r}`) ?? false}
           dragHighlighted={dragRef.current != null && hover?.q === tile.q && hover?.r === tile.r}
           needsInitiativeHighlighted={needsInitiativeTiles.has(`${tile.q},${tile.r}`)}

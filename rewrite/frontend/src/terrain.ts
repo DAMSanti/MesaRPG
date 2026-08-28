@@ -212,9 +212,17 @@ export function terrainColor(terrain: string): string {
     // light_forest gets a lighter multiply than forest's dense-canopy
     // shadow — thinner canopy, more daylight reaching the ground — while
     // still reading as the same photo terrain, not a distinct texture.
+    // Dense forest takes the SAME tint as light forest, not a darker one.
+    // Real user request: "quiero que las tiles de bosque denso tengan la
+    // misma textura que bosque normal, con todos los cambios han quedado muy
+    // oscuras." It was being darkened three times over — this canopy
+    // multiply, then the grass shading at full coverage (a dense forest floor
+    // is 100% carpeted), then the tree canopies themselves on top. Each of
+    // those was reasonable alone; stacked, the tile went nearly black. What
+    // now distinguishes a dense forest is what should distinguish it: how
+    // many trees are standing on it.
     const base =
-      terrain === 'forest' ? { r: 0x4a, g: 0x5c, b: 0x46 } :
-      terrain === 'light_forest' ? { r: 0x7a, g: 0x8c, b: 0x70 } :
+      terrain === 'forest' || terrain === 'light_forest' ? { r: 0x7a, g: 0x8c, b: 0x70 } :
       { r: 0xff, g: 0xff, b: 0xff }
     return `rgb(${base.r}, ${base.g}, ${base.b})`
   }
@@ -318,10 +326,15 @@ export function terrainTexture(terrain: string, q: number, r: number): THREE.Tex
   // model with its own materials (TerrainDecor.tsx's RealBuilding).
   if (terrain === 'building') return getSidewalkTexture()
   // Real riverbed photo — this is the tile's own floor, seen through the
-  // separate translucent WaterSurface TerrainDecor.tsx renders above it.
-  // water_deep reuses the same photo; the darker terrainColor() multiply
-  // (and its own deeper WaterSurface tint) is what distinguishes it, not
-  // a separate texture.
+  // separate refracting WaterSurface TerrainDecor.tsx renders above it.
+  // water_deep reuses the same photo; how much light its own greater depth
+  // absorbs is what distinguishes it, not a separate texture.
+  //
+  // This was briefly swapped for the grey broken-stone photo on a report of
+  // the riverbed looking like sand. That was a misdiagnosis on both sides:
+  // the sandy thing showing through the water was the WOODEN TABLE, which
+  // sits above the sunken bed and was hiding it entirely. The bed was never
+  // the problem and the swap is reverted; see TableBackground.tsx.
   if (terrain === 'water' || terrain === 'water_deep') return getWaterBedTexture()
   // Real rocky-ground / rubble-strewn-ground photos — replacing the flat
   // procedural stroke/speckle patterns (drawRough/drawRubble, both now

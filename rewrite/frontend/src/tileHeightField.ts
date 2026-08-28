@@ -4,6 +4,23 @@ import { RELIEF_SKIP_TERRAINS } from './terrainRelief'
 import { GROUND_FLUSH_TOP, terrainSinkY } from './components/TerrainDecor'
 import { makeHexHeightAt } from './hexTileGeometry'
 
+/** How much of a flush terrain's own depth its bed is allowed to vary over.
+ *
+ * This band used to run from the bed all the way up to just under the water
+ * line, so the same within-hex relief noise that gives dry ground its bumps
+ * was free to lift the riverbed to within centimetres of the surface across
+ * half a tile, and to bottom out against the clamp across the other half.
+ * Seen through the water that is not a bed at all — it is hard-edged blobs
+ * of nearly-dry shallows against sudden deeps, which is exactly what a real
+ * user reported: "se ve una forma diferente en el fondo de mi agua y no una
+ * textura continua... tiene que ver algo con la profundidad seguro."
+ *
+ * Confining the variation to the bottom quarter of the depth keeps a real
+ * uneven floor, at a scale you read as a floor rather than as shapes, and
+ * makes the old "can never break the surface" guarantee hold by a wide
+ * margin instead of by 5cm. */
+const FLUSH_BED_RELIEF = 0.25
+
 /** Axial neighbor offsets, in the order every piece of hex geometry in this
  * project indexes its edges by — offset k shares the edge between corners
  * (k+1)%6 and (k+2)%6. HexMap.tsx's own fog code and hexTileGeometry.ts both
@@ -60,7 +77,7 @@ export function tileHeightInputs(tile: HexTileData, lookup: Map<string, HexTileD
   const meshOwnHeight = flushSinkY ?? height
   const bandLow = flushSinkY ?? (tile.terrain === 'building' ? height : elevBandLow)
   const bandHigh = flushSinkY != null
-    ? GROUND_FLUSH_TOP - 0.05
+    ? flushSinkY + (GROUND_FLUSH_TOP - flushSinkY) * FLUSH_BED_RELIEF
     : (tile.terrain === 'building' ? height : elevBandHigh)
   return { height, meshOwnHeight, neighborHeights, neighborBands, bandLow, bandHigh }
 }

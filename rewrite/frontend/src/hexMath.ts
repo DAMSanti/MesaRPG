@@ -131,31 +131,17 @@ export function mapCenter(tiles: HexCoord[]): [number, number] {
 // which re-exports it) so TerrainDecor.tsx's own GROUND_FLUSH_TOP can
 // import the exact same value without a HexMap<->TerrainDecor import
 // cycle (HexMap.tsx already imports TerrainDecor.tsx).
-/** The dark slab every tile is inset into — HexMap.tsx's own `groove`
- * mesh — described by where its TOP face sits, which is the only part of
- * it anything else can ever see. TERRAIN_FLOOR_Y is the lowest a tile's
- * surface may ever end up, and the pair exists to make it structurally
- * impossible for the slab to show through the ground.
+/** The lowest y a tile's ground surface may ever reach, after within-hex
+ * noise, ramps and stamped craters alike.
  *
- * Real user report (with screenshots): black blobs scattered over the map,
- * "siempre en las mismas zonas, parecen como depresiones... puede ser que
- * bajen por debajo de la altura de las tiles." They did, by up to ~2.6
- * units, and what was showing was this slab's own flat top face. The root
- * cause is fixed in hexTileGeometry's `heightAt` (the within-hex noise
- * escaped its elevation band on any tile that happened to be ramping toward
- * a different-height neighbour); the floor here is the belt-and-braces half,
- * and it also stops a stamped impact crater from doing the same thing.
- *
- * The slab CANNOT simply be dropped further out of the way to buy margin:
- * TableBackground.tsx's wooden table sits at y = -0.05, so anything below
- * that stops being the dark groove between tiles and starts being a view
- * straight through to the table — tried, and the whole grid turned pale
- * wood-coloured. The 0.025 of clearance between them is therefore all there
- * is, and has always been enough in practice; if depth-buffer flicker ever
- * shows up along the grid at a very far zoom, the fix is to move the table
- * and this slab down TOGETHER, not this one alone. */
-export const GROOVE_TOP_Y = -0.025
-export const GROOVE_THICKNESS = 0.15
+ * Real user report: black blobs scattered over the map, "siempre en las
+ * mismas zonas, parecen como depresiones." They were exactly that, and what
+ * showed through them was the dark groove between tiles, which at the time
+ * was a slab sitting under every tile. The slab has since become a ring that
+ * only exists at the borders (hexTileGeometry's buildHexGrooveRing), so
+ * there is nothing under a tile left to surface through — but the floor
+ * stays, because ground that dives arbitrarily far below its own elevation
+ * band is wrong on its own terms, whatever happens to be underneath it. */
 export const TERRAIN_FLOOR_Y = 0
 
 export const GROUND_BASE_HEIGHT = 1

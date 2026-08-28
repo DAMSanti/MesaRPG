@@ -4,8 +4,8 @@ import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import type { HexTileData } from '../api'
 import { HEX_SIZE, hexToWorld } from '../hexMath'
-import { groundVariant, hashTile, type GroundVariant } from '../terrain'
-import { makeGrassDensitySampler } from '../grassPatches'
+import { groundVariant, hashTile, terrainColor, type GroundVariant } from '../terrain'
+import { GRASS_COVER, isGrassTerrain, makeGrassDensitySampler, treeGroveAt } from '../grassPatches'
 import { tileSurfaceAt } from '../tileHeightField'
 
 /** Real user request: "necesito que encuentres y descargues packs de
@@ -35,13 +35,34 @@ import { tileSurfaceAt } from '../tileHeightField'
  * result. */
 
 const VEG = '/models/vegetation/'
+const TREE = '/models/trees/'
 
-/** Plains and hills only — "empecemos con llanuras y colinas, que salvo la
- * altura seran iguales". Everything else keeps whatever TerrainDecor already
- * gives it. */
-const VEGETATED = new Set(['plains', 'hills'])
+/** Terrain that gets something other than grass, and only that.
+ *
+ * Real user request: "en el agua NO DEBE HABER parches de hierba... solo
+ * alguna que otra roca." A riverbed is not a lawn, but it is not bare
+ * either — there are stones in it. Listing the tiers explicitly (rather
+ * than reusing a grassland density and hoping) is what guarantees no grass
+ * tier can ever appear here by accident: anything not named simply does not
+ * get placed.
+ *
+ * Deep water gets fewer, because less of a deep channel's bed is close
+ * enough to the surface to read through it at all. */
+const TERRAIN_ONLY_TIERS: Record<string, Partial<Record<Tier, number>>> = {
+  water: { prop: 1.1 },
+  water_deep: { prop: 0.5 },
+}
 
-type Tier = 'cover' | 'grass' | 'herb' | 'shrub' | 'prop' | 'sapling'
+/** Which terrain grows ground cover, and how completely, is grassPatches.ts's
+ * GRASS_COVER — shared with the ground shading so the two cannot disagree
+ * about where the grass is. TERRAIN_ONLY_TIERS adds terrain that gets props
+ * WITHOUT grass; the carpet checks GRASS_COVER separately, so nothing here
+ * can put grass on water. */
+const VEGETATED = {
+  has: (terrain: string) => isGrassTerrain(terrain) || terrain in TERRAIN_ONLY_TIERS,
+}
+
+type Tier = 'cover' | 'grass' | 'herb' | 'shrub' | 'prop' | 'sapling' | 'tree' | 'hero'
 
 interface Species {
   /** Model file. Each holds several named variants (Poly Haven ships them
@@ -65,6 +86,22 @@ interface Species {
   /** How far the top of the plant travels in the wind, in world units. 0
    * for anything rigid (rocks, stumps, dead wood). */
   sway: number
+  /** Treat every mesh in the file as ONE model rather than as separate
+   * variants.
+   *
+   * The scanned plants each pack several independent specimens into one file,
+   * which is why a mesh is normally a variant. A tree is the opposite: its
+   * trunk, bark and leaves are separate meshes OF THE SAME TREE, and picking
+   * one of them would plant a bare trunk here and a floating canopy there. */
+  whole?: boolean
+  /** How far to bury the model, as a fraction of its height.
+   *
+   * These trees are modelled with their full root systems, which otherwise
+   * sit proud of the ground like a potted plant. Measured off the renders,
+   * the roots run about 18% of the total height below the trunk's flare, so
+   * burying that much puts the flare at ground level, which is where a real
+   * trunk meets the soil. */
+  sink?: number
 }
 
 const SPECIES: Record<string, Species> = {
@@ -87,6 +124,23 @@ const SPECIES: Record<string, Species> = {
   branches: { url: `${VEG}dry_branches_medium_01.glb`, tier: 'prop', height: 0.6, spread: 0.3, sway: 0 },
   stone: { url: `${VEG}stone_01.glb`, tier: 'prop', height: 0.7, spread: 0.4, sway: 0 },
   rocks: { url: `${VEG}rock_moss_set_01.glb`, tier: 'prop', height: 1.5, spread: 0.45, sway: 0 },
+
+  // --- Real trees, converted from the project's own archviz FBX set (see
+  // public/models/trees and the conversion notes in CREDITS.md). All five are
+  // members of ONE nine-variant set of European deciduous trees, which is
+  // where their consistency comes from; the variety comes from using several
+  // of them and from per-instance rotation and scale.
+  //
+  // They are expensive — around 100k triangles each, measured — so they are
+  // placed in ones and twos, not scattered. Filling a forest needs a cheaper
+  // canopy than real leaf cards can give.
+  treeA: { url: `${TREE}eu43-1-mass.glb`, tier: 'tree', height: 14, spread: 0.28, sway: 0.30, whole: true, sink: 0.18 },
+  treeB: { url: `${TREE}eu43-4-mass.glb`, tier: 'tree', height: 15, spread: 0.28, sway: 0.30, whole: true, sink: 0.18 },
+  treeC: { url: `${TREE}eu43-5-mass.glb`, tier: 'tree', height: 13, spread: 0.28, sway: 0.30, whole: true, sink: 0.18 },
+  treeD: { url: `${TREE}eu43-7-mass.glb`, tier: 'tree', height: 14, spread: 0.28, sway: 0.30, whole: true, sink: 0.18 },
+  // The two biggest, placed rarely, to break the canopy line.
+  heroA: { url: `${TREE}eu43-3.glb`, tier: 'hero', height: 29, spread: 0.2, sway: 0.24, whole: true, sink: 0.18 },
+  heroB: { url: `${TREE}eu43-5.glb`, tier: 'hero', height: 33, spread: 0.2, sway: 0.24, whole: true, sink: 0.18 },
 }
 
 type SpeciesKey = keyof typeof SPECIES
@@ -112,8 +166,9 @@ interface Variant {
  * recentred in XZ and dropped to y=0 at its base, which is what lets a
  * placement be "put this at this point on the ground" rather than needing to
  * know each model's own quirks. */
-function extractVariants(scene: THREE.Object3D, species: SpeciesKey): Variant[] {
+function extractVariants(scene: THREE.Object3D, species: SpeciesKey, whole: boolean): Variant[] {
   const out: Variant[] = []
+  const geometries: { geometry: THREE.BufferGeometry; material: THREE.Material }[] = []
   scene.updateWorldMatrix(true, true)
   scene.traverse((o) => {
     const mesh = o as THREE.Mesh
@@ -121,12 +176,40 @@ function extractVariants(scene: THREE.Object3D, species: SpeciesKey): Variant[] 
     const geometry = mesh.geometry.clone()
     geometry.applyMatrix4(mesh.matrixWorld)
     geometry.computeBoundingBox()
-    const bb = geometry.boundingBox!
-    geometry.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2)
-    geometry.computeBoundingBox()
-    const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
-    out.push({ species, index: out.length, geometry, material, height: Math.max(0.01, bb.max.y - bb.min.y) })
+    geometries.push({
+      geometry,
+      material: Array.isArray(mesh.material) ? mesh.material[0] : mesh.material,
+    })
   })
+  if (whole) {
+    // ONE origin for the whole model. Re-basing each mesh on its own bounds,
+    // which is right for a file of separate specimens, is wrong here and
+    // wrong twice over: it drops the canopy to ground level beside its own
+    // trunk, and it measures the model's height from the tallest PART rather
+    // than from the tree, which made every tree come out several times too
+    // big.
+    const union = new THREE.Box3()
+    for (const g of geometries) union.union(g.geometry.boundingBox!)
+    const dx = -(union.min.x + union.max.x) / 2
+    const dy = -union.min.y
+    const dz = -(union.min.z + union.max.z) / 2
+    const height = Math.max(0.01, union.max.y - union.min.y)
+    for (const g of geometries) {
+      g.geometry.translate(dx, dy, dz)
+      g.geometry.computeBoundingBox()
+      out.push({ species, index: out.length, geometry: g.geometry, material: g.material, height })
+    }
+    return out
+  }
+  for (const g of geometries) {
+    const bb = g.geometry.boundingBox!
+    g.geometry.translate(-(bb.min.x + bb.max.x) / 2, -bb.min.y, -(bb.min.z + bb.max.z) / 2)
+    g.geometry.computeBoundingBox()
+    out.push({
+      species, index: out.length, geometry: g.geometry, material: g.material,
+      height: Math.max(0.01, bb.max.y - bb.min.y),
+    })
+  }
   return out
 }
 
@@ -148,18 +231,26 @@ function extractVariants(scene: THREE.Object3D, species: SpeciesKey): Variant[] 
  * thousand plants sharing one material still each move on their own beat;
  * without it the entire field would sway as one rigid sheet. Two different
  * frequencies on x and z keep it from reading as a flat back-and-forth. */
-function makeWindMaterial(source: THREE.Material, height: number, sway: number) {
+function makeWindMaterial(source: THREE.Material, height: number, sway: number, tintSpread = 0) {
   const material = (source as THREE.MeshStandardMaterial).clone()
-  const uniforms = { uTime: { value: 0 }, uPlantHeight: { value: height }, uSway: { value: sway } }
+  const uniforms = {
+    uTime: { value: 0 },
+    uPlantHeight: { value: height },
+    uSway: { value: sway },
+    uTint: { value: tintSpread },
+  }
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime
     shader.uniforms.uPlantHeight = uniforms.uPlantHeight
     shader.uniforms.uSway = uniforms.uSway
+    shader.uniforms.uTint = uniforms.uTint
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         uniform float uTime;
         uniform float uPlantHeight;
-        uniform float uSway;`)
+        uniform float uSway;
+        uniform float uTint;
+        varying float vTreeTint;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         #ifdef USE_INSTANCING
           vec3 instOrigin = instanceMatrix[3].xyz;
@@ -178,7 +269,20 @@ function makeWindMaterial(source: THREE.Material, height: number, sway: number) 
         float g2 = sin(uTime * 0.24 - instOrigin.x * 0.0016 + instOrigin.z * 0.0034);
         float gust = 0.68 + 0.28 * (g1 * 0.6 + g2 * 0.4);
         transformed.x += sin(uTime * 1.7 + phase) * lean * uSway * gust;
-        transformed.z += cos(uTime * 1.3 + phase * 0.7) * lean * uSway * gust * 0.6;`)
+        transformed.z += cos(uTime * 1.3 + phase * 0.7) * lean * uSway * gust * 0.6;
+        // Per-instance tone. Real user report: a stand of the same model
+        // reads as one colour stamped over and over, however the geometry is
+        // varied. Hashing a shade out of the instance's own position costs
+        // nothing (no per-instance colour buffer, no extra draw call) and is
+        // what turns a repeated model into a mixed wood. The three channels
+        // are shifted by different amounts so it varies in hue as well as in
+        // brightness, which is how real foliage differs tree to tree.
+        vTreeTint = 1.0 + (fract(sin(dot(instOrigin.xz, vec2(41.13, 289.7))) * 24634.63) - 0.5) * uTint;`)
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying float vTreeTint;`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        diffuseColor.rgb *= vec3(vTreeTint, mix(1.0, vTreeTint, 0.72), mix(1.0, vTreeTint, 1.3));`)
   }
   // Scanned foliage has no business looking wet or plastic, and these
   // materials arrive with whatever the scan pipeline defaulted to.
@@ -198,7 +302,7 @@ function makeWindMaterial(source: THREE.Material, height: number, sway: number) 
  * hierba con alguna roca, las verdes oscuras estaran practicamente tapadas
  * con alguna roca, y las de tierra tendran poco arbusto disperso y mas
  * rocas." */
-const DENSITY: Record<GroundVariant, Record<Tier, number>> = {
+const DENSITY: Record<GroundVariant, Partial<Record<Tier, number>>> = {
   grassDark: { cover: 22, grass: 30, herb: 12, shrub: 2.6, prop: 0.8, sapling: 0.12 },
   grassLight: { cover: 10, grass: 11, herb: 5, shrub: 1.6, prop: 1.0, sapling: 0.10 },
   earth: { cover: 2, grass: 1.5, herb: 1.5, shrub: 1.2, prop: 2.6, sapling: 0.03 },
@@ -214,6 +318,28 @@ const DENSITY: Record<GroundVariant, Record<Tier, number>> = {
  * card they are affordable in the thousands per tile, where a scanned clump
  * is affordable in the dozens. */
 const CARPET_DENSITY: Record<GroundVariant, number> = { grassDark: 15000, grassLight: 6500, earth: 900 }
+
+/** Forest floors do not draw from the three ground photos, so their density
+ * is set by TERRAIN instead of by which photo the tile picked. Dense forest
+ * gets the same candidate count as the thickest grassland and then skips the
+ * patch field entirely (GRASS_COVER), which is what turns it into full
+ * cover; light forest is asked to be exactly the dark-grass plains case. */
+const CARPET_DENSITY_BY_TERRAIN: Record<string, number> = {
+  forest: 15000,
+  light_forest: 15000,
+}
+
+function carpetDensity(tile: HexTileData): number {
+  return CARPET_DENSITY_BY_TERRAIN[tile.terrain] ?? CARPET_DENSITY[groundVariant(tile.q, tile.r)]
+}
+
+/** Same idea for the scattered 3D plants: a forest floor is read as the
+ * lushest grassland case rather than as whatever the noise field would have
+ * called the ground under the trees. */
+const PLANT_DENSITY_TERRAIN: Record<string, GroundVariant> = {
+  forest: 'grassDark',
+  light_forest: 'grassDark',
+}
 
 /** Where the grass actually grows is decided by the shared patch field in
  * grassPatches.ts, not here — the ground mesh shades the soil under a mat
@@ -236,12 +362,75 @@ const TIER_SPECIES: Record<Tier, SpeciesKey[]> = {
   shrub: ['shrubLow', 'shrubMid', 'shrubBig'],
   prop: ['stone', 'rocks', 'branches', 'stump'],
   sapling: ['sapling'],
+  tree: ['treeA', 'treeB', 'treeC', 'treeD'],
+  hero: ['heroA', 'heroB'],
 }
+
+/** Tiers a terrain gets ON TOP of whatever its ground patch already grows.
+ *
+ * Trees belong to the terrain, not to the ground under it: a forest hex has
+ * trees because it is a forest, not because the noise field happened to call
+ * its soil dark. Kept separate from DENSITY for that reason, and so plains
+ * can never sprout a forest by accident.
+ *
+ * A dense hex now carries nine trees and a light one three or four, which is
+ * a wood rather than a garden. That only became affordable with the mass
+ * build's cluster canopy: same trunk and same leaf texture, but the canopy
+ * rebuilt as a few hundred cluster cards instead of thousands of individual
+ * leaves, which is 4-20k triangles against ~100k for the same tree's hero
+ * build. At the hero cost these counts would be tens of millions of
+ * triangles a frame.
+ *
+ * The heroes stay rare on purpose. They keep their real leaves, they are
+ * there to break the canopy line, and one of them still costs as much as
+ * twenty-five of its neighbours put together.
+ *
+ * They also have to be much TALLER than the mass trees, not slightly. Real
+ * user report: at similar heights they were indistinguishable, so the whole
+ * board read as one kind of tree and the expensive ones were paying for
+ * detail nobody could find. Standing head and shoulders over the canopy is
+ * what makes a hero legible as a hero. */
+const TERRAIN_EXTRA_TIERS: Record<string, Partial<Record<Tier, number>>> = {
+  // Candidates, not trees. The crown test below turns most of them away, and
+  // asking for far more than can fit is what makes the tile end up as full as
+  // its own geometry allows rather than as full as a guess.
+  forest: { tree: 90, hero: 1.2 },
+  light_forest: { tree: 16, hero: 0.35 },
+}
+
+/** Tiers whose placements are CANDIDATES, thinned by the grove field so trees
+ * land in stands with clearings between them rather than evenly spaced like
+ * an orchard (real user request: "quiero los arboles en grupos como lo que
+ * hicimos con la hierba"). Roughly 55% of candidates survive on average, so
+ * the counts above are set correspondingly higher than the trees actually
+ * wanted. */
+const GROUPED_TIERS = new Set<Tier>(['tree', 'hero'])
+
+/** How wide a tree's canopy is, as a fraction of its height, and how much of
+ * that width two neighbours may share.
+ *
+ * Real user request: "quiero esa cantidad de arboles pero que las copas no
+ * choquen, que se toquen." Purely random placement inside a tile has trees
+ * landing on top of each other, which from the ground reads as one confused
+ * green mass rather than as individual trees. Rejecting any candidate that
+ * lands too close to one already placed (dart throwing) spaces them out
+ * without imposing a grid, and it is self-regulating: ask for thirty, get
+ * however many genuinely fit.
+ *
+ * TOUCH under 1 is what makes the crowns touch rather than merely clear each
+ * other -- at 1 they would stand a full canopy apart, which is a park, not a
+ * wood. */
+const CANOPY_WIDTH = 0.55
+const CANOPY_TOUCH = 0.7
 
 /** Bare earth's props are stone, not deadfall — "las de tierra tendran poco
  * arbusto disperso y mas rocas". Weighted by repetition rather than by a
  * separate weight table, which keeps the pick a plain modulo. */
 const EARTH_PROPS: SpeciesKey[] = ['rocks', 'rocks', 'stone', 'stone', 'branches']
+
+/** A riverbed's own props: water-worn stone, no dead wood or stumps —
+ * those would be floating debris, not bed. */
+const WATER_PROPS: SpeciesKey[] = ['rocks', 'stone']
 
 /** Real user request: "quiero que sean procedurales y que sean pequeños
  * dioramas."
@@ -317,6 +506,10 @@ const DIORAMA_CHANCE = 0.13
  * kept inside the tile so nothing ever straddles a border and floats over a
  * neighbour that sits at a different height. */
 const SCATTER_RADIUS = HEX_SIZE * 0.72
+/** Trunks may stand almost to the tile's own edge, since only the trunk has
+ * to belong to the tile. Just short of the apothem so a trunk never lands in
+ * the groove between hexes. */
+const TRUNK_RADIUS = HEX_SIZE * Math.cos(Math.PI / 6) * 0.94
 
 interface Placement { species: SpeciesKey; variantPick: number; x: number; z: number; rotY: number; scale: number }
 
@@ -330,9 +523,22 @@ function rand(q: number, r: number, salt: string, i: number): number {
 
 function placeTile(tile: HexTileData): Placement[] {
   const { q, r } = tile
-  const variant = groundVariant(q, r)
-  const density = DENSITY[variant]
+  const variant = PLANT_DENSITY_TERRAIN[tile.terrain] ?? groundVariant(q, r)
+  // Terrain listed here gets ONLY the tiers it names — a riverbed's stones,
+  // and nothing else. Everything else takes the full grassland mix.
+  const only = TERRAIN_ONLY_TIERS[tile.terrain]
+  const empty: Record<Tier, number> = {
+    cover: 0, grass: 0, herb: 0, shrub: 0, prop: 0, sapling: 0, tree: 0, hero: 0,
+  }
+  const density: Record<Tier, number> = only
+    ? { ...empty, ...only }
+    : { ...empty, ...DENSITY[variant], ...(TERRAIN_EXTRA_TIERS[tile.terrain] ?? {}) }
   const out: Placement[] = []
+  // Crowns already claimed on this tile, so the next tree can be turned away
+  // if it would grow inside one. Tile-local: a tree just over the border in
+  // the next hex is not accounted for, which shows up as the occasional
+  // close pair at a seam and is not worth carrying neighbour state for.
+  const crowns: { x: number; z: number; r: number }[] = []
   let n = 0
 
   const push = (species: SpeciesKey, x: number, z: number, scaleMul: number) => {
@@ -355,23 +561,54 @@ function placeTile(tile: HexTileData): Placement[] {
   // rounding error: 1.4 shrubs means one for sure and a 40% chance of a
   // second, which across a map is what stops every tile looking equally
   // populated.
-  for (const tier of Object.keys(TIER_SPECIES) as Tier[]) {
+  // Heroes before the mass trees, deliberately. Both compete for the same
+  // ground through the crown test below, and whichever runs first wins it --
+  // so with the mass trees going first a hero, whose crown is the widest
+  // thing on the tile, was being turned away almost every time. Real user
+  // report: "los arboles heroe han desaparecido." They are the anchors of a
+  // stand; the rest fills in around them.
+  const tierOrder: Tier[] = ['hero', 'tree', 'cover', 'grass', 'herb', 'shrub', 'prop', 'sapling']
+  for (const tier of tierOrder) {
     const want = density[tier]
     const count = Math.floor(want) + (rand(q, r, `veg-frac-${tier}`, 0) < want % 1 ? 1 : 0)
-    const pool = tier === 'prop' && variant === 'earth' ? EARTH_PROPS : TIER_SPECIES[tier]
+    const pool = tier === 'prop'
+      ? (only ? WATER_PROPS : variant === 'earth' ? EARTH_PROPS : TIER_SPECIES[tier])
+      : TIER_SPECIES[tier]
     for (let i = 0; i < count; i++) {
       // Square root on the radius spreads points evenly over the disc
       // instead of bunching them at the centre, which is what a plain
       // uniform radius would do.
       const angle = rand(q, r, `veg-a-${tier}`, i) * Math.PI * 2
-      const dist = Math.sqrt(rand(q, r, `veg-d-${tier}`, i)) * SCATTER_RADIUS
+      // Trees stand anywhere on the tile; everything else keeps to the
+      // inscribed disc. Real user clarification: "lo que tiene que entrar en
+      // el patch es el tronco no la copa" -- a crown may hang over the border
+      // like a real one does, and confining the TRUNK to a disc inside the
+      // hex was leaving a bare ring around every tile.
+      const reach = GROUPED_TIERS.has(tier) ? TRUNK_RADIUS : SCATTER_RADIUS
+      const dist = Math.sqrt(rand(q, r, `veg-d-${tier}`, i)) * reach
+      const px = Math.cos(angle) * dist
+      const pz = Math.sin(angle) * dist
       const species = pool[hashTile(q, r, `veg-s-${tier}-${i}`) % pool.length]
-      push(species, Math.cos(angle) * dist, Math.sin(angle) * dist, 1)
+      if (GROUPED_TIERS.has(tier)) {
+        const [wx, wz] = hexToWorld(q, r)
+        if (rand(q, r, `veg-grove-${tier}`, i) > treeGroveAt(wx + px, wz + pz)) continue
+        const radius = SPECIES[species].height * CANOPY_WIDTH * CANOPY_TOUCH
+        let clash = false
+        for (const c of crowns) {
+          if (Math.hypot(px - c.x, pz - c.z) < radius + c.r) { clash = true; break }
+        }
+        if (clash) continue
+        crowns.push({ x: px, z: pz, r: radius })
+      }
+      push(species, px, pz, 1)
     }
   }
 
   // ...and, on a minority of tiles, one composed diorama on top of it.
-  if (rand(q, r, 'diorama-roll', 0) < DIORAMA_CHANCE) {
+  // Not on terrain with an explicit tier list: every diorama recipe is built
+  // out of grassland species, and a stump with weeds around it on a riverbed
+  // would be exactly the grass this terrain is not supposed to have.
+  if (!only && rand(q, r, 'diorama-roll', 0) < DIORAMA_CHANCE) {
     let pickWeight = rand(q, r, 'diorama-kind', 0) * DIORAMA_TOTAL_WEIGHT
     const diorama = DIORAMAS.find((d) => (pickWeight -= d.weight) < 0) ?? DIORAMAS[0]
     const centreAngle = rand(q, r, 'diorama-pos', 0) * Math.PI * 2
@@ -546,9 +783,27 @@ const CARD_MAX_HEIGHT = 0.95
  * of them close up the gaps between each other seen from above. */
 const CARD_WIDTH_RATIO = 1.9
 
-function makeCarpetMaterial() {
+/** Real user request: "quiero que la hierba en la casilla de bosque y bosque
+ * denso sea algo mas oscura que el resto, casi acorde con el color de la
+ * textura de su tile."
+ *
+ * The tint is `terrainColor()` itself — the exact multiply the tile's own
+ * ground texture is already drawn with (forest gets a dense-canopy darkening,
+ * light_forest a milder one, open ground none at all). Reusing it rather than
+ * picking a matching green by eye is what guarantees "acorde con el color de
+ * la textura de su tile" stays true if that shade is ever retuned, instead of
+ * drifting apart the first time someone adjusts one of them.
+ *
+ * Grass under a canopy is genuinely darker anyway, so this is not only a
+ * colour match — it is the same reason the canopy multiply exists at all. */
+function carpetTintFor(terrain: string): string {
+  return terrainColor(terrain)
+}
+
+function makeCarpetMaterial(tint: string) {
   const uniforms = { uTime: { value: 0 } }
   const material = new THREE.MeshStandardMaterial({
+    color: tint,
     map: getGrassCardTexture(),
     // alphaTest instead of transparency: a transparent material would have to
     // be depth-sorted, and half a million cards cannot be sorted per frame.
@@ -617,36 +872,89 @@ function makeCarpetMaterial() {
  * through Object3D. At this count that is not micro-optimisation: half a
  * million Object3D updates allocate and cost seconds, while a rotation about
  * Y with a scale is nine multiplies written directly into the array. */
+/** One batch per distinct grass tint. Splitting by tint rather than colouring
+ * each instance keeps the whole board at a handful of draw calls: a
+ * per-instance colour would be another three floats on every one of hundreds
+ * of thousands of cards, for a value that only ever takes two or three
+ * distinct settings. */
 function GrassCarpet({ tiles, tilesKey, lookup }: {
   tiles: HexTileData[]
   tilesKey: string
   lookup: Map<string, HexTileData>
 }) {
+  const groups = useMemo(() => {
+    const byTint = new Map<string, HexTileData[]>()
+    for (const t of tiles) {
+      // GRASS terrain only. VEGETATED is deliberately wider than this (water
+      // is in it, for its stones), and using it here would carpet a river.
+      if (!isGrassTerrain(t.terrain)) continue
+      const tint = carpetTintFor(t.terrain)
+      const list = byTint.get(tint)
+      if (list) list.push(t)
+      else byTint.set(tint, [t])
+    }
+    // The card budget is for the WHOLE board, so it has to be worked out
+    // across every group at once and handed down as one shared factor.
+    // Letting each group cap itself would multiply the ceiling by the number
+    // of tints and quietly undo the limit.
+    const wanted = tiles
+      .filter((t) => isGrassTerrain(t.terrain))
+      .reduce((n, t) => n + carpetDensity(t), 0) * CARPET_MEAN_KEEP
+    return {
+      groups: [...byTint.entries()],
+      budget: wanted > CARPET_MAX_CARDS ? CARPET_MAX_CARDS / wanted : 1,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tilesKey])
+
+  return (
+    <>
+      {groups.groups.map(([tint, group]) => (
+        <GrassCarpetBatch
+          key={tint} tint={tint} tiles={group} tilesKey={tilesKey}
+          lookup={lookup} budget={groups.budget}
+        />
+      ))}
+    </>
+  )
+}
+
+function GrassCarpetBatch({ tint, tiles, tilesKey, lookup, budget }: {
+  tint: string
+  tiles: HexTileData[]
+  tilesKey: string
+  lookup: Map<string, HexTileData>
+  /** Shared board-wide thinning factor — see GrassCarpet. */
+  budget: number
+}) {
   const ref = useRef<THREE.InstancedMesh>(null)
-  const { material, uniforms } = useMemo(() => makeCarpetMaterial(), [])
+  const { material, uniforms } = useMemo(() => makeCarpetMaterial(tint), [tint])
   useEffect(() => () => material.dispose(), [material])
 
   const matrices = useMemo(() => {
-    const live = tiles.filter((t) => VEGETATED.has(t.terrain))
-    // How far the board is over budget, applied uniformly so a big map thins
-    // out rather than dropping whole tiles (which would be visible as bald
-    // hexes, where a uniform thinning just reads as shorter grass).
-    // Candidates, before the patch field rejects most of them — its mean
-    // over a large area is what actually lands on the board, so the budget
-    // is measured against that rather than against the raw candidate count.
-    const wanted = live.reduce((n, t) => n + CARPET_DENSITY[groundVariant(t.q, t.r)], 0) * CARPET_MEAN_KEEP
-    const budget = wanted > CARPET_MAX_CARDS ? CARPET_MAX_CARDS / wanted : 1
-    const total = Math.min(CARPET_MAX_CARDS, Math.ceil(wanted * budget))
+    // Already filtered to one tint group by the caller; `budget` is the
+    // board-wide thinning factor, applied uniformly so a big map thins out
+    // rather than dropping whole tiles (bald hexes would be obvious, where a
+    // uniform thinning just reads as shorter grass). Counts here are
+    // CANDIDATES, most of which the patch field rejects, so the budget is
+    // measured against their mean survival rate.
+    const live = tiles
+    const total = Math.ceil(
+      live.reduce((n, t) => n + carpetDensity(t), 0) * CARPET_MEAN_KEEP * budget,
+    )
     const array = new Float32Array(total * 16)
     const apothem = HEX_SIZE * Math.cos(Math.PI / 6)
     let n = 0
     for (const tile of live) {
-      const count = Math.round(CARPET_DENSITY[groundVariant(tile.q, tile.r)] * budget)
+      const count = Math.round(carpetDensity(tile) * budget)
       if (count <= 0) continue
       const [wx, wz] = hexToWorld(tile.q, tile.r)
       const sampleY = makeTileHeightSampler(tile, lookup)
       const patchAt = makeGrassDensitySampler(wx, wz)
       const rnd = makeTileRng(tile.q, tile.r, 'carpet')
+      // A dense forest floor is undergrowth wall to wall, with no bare
+      // stretches for the patch field to carve out — see GRASS_COVER.
+      const fullyCovered = GRASS_COVER[tile.terrain]?.full ?? false
       for (let i = 0; i < count && n < total; i++) {
         // Rejection-sample the real hexagon rather than settling for its
         // inscribed circle, which would leave a bare ring around every tile
@@ -680,7 +988,7 @@ function GrassCarpet({ tiles, tilesKey, lookup }: {
         // The patch field decides whether this candidate becomes a plant at
         // all. Rejection sampling rather than a per-tile count, so the mats
         // land where the FIELD says and stay continuous across borders.
-        if (rnd() > patchAt(x, z)) continue
+        if (!fullyCovered && rnd() > patchAt(x, z)) continue
         const h = CARD_MIN_HEIGHT + rnd() * (CARD_MAX_HEIGHT - CARD_MIN_HEIGHT)
         const w = h * CARD_WIDTH_RATIO
         const a = rnd() * Math.PI
@@ -696,7 +1004,7 @@ function GrassCarpet({ tiles, tilesKey, lookup }: {
     }
     return { array, count: n }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tilesKey])
+  }, [tilesKey, tint, budget])
 
   useEffect(() => {
     const mesh = ref.current
@@ -763,7 +1071,7 @@ export function GroundVegetation({ tiles, lookup }: {
     const map = new Map<SpeciesKey, Variant[]>()
     for (const key of Object.keys(SPECIES) as SpeciesKey[]) {
       const gltf = byUrl.get(SPECIES[key].url)
-      if (gltf?.scene) map.set(key, extractVariants(gltf.scene, key))
+      if (gltf?.scene) map.set(key, extractVariants(gltf.scene, key, SPECIES[key].whole ?? false))
     }
     return map
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -783,15 +1091,32 @@ export function GroundVegetation({ tiles, lookup }: {
       for (const p of placeTile(tile)) {
         const pool = variants.get(p.species)
         if (!pool || pool.length === 0) continue
-        const variant = pool[p.variantPick % pool.length]
-        const bucketKey = `${p.species}:${variant.index}`
-        let bucket = out.get(bucketKey)
-        if (!bucket) { bucket = { variant, matrices: [] }; out.set(bucketKey, bucket) }
-        dummy.position.set(wx + p.x, surfaceAt(p.x, p.z), wz + p.z)
+        const species = SPECIES[p.species]
+        // A whole model's meshes are parts of ONE tree and every one of them
+        // takes the SAME matrix; anything else is a pool of separate
+        // specimens and one gets picked. Getting this wrong plants bare
+        // trunks in one place and floating canopies in another.
+        const parts = species.whole ? pool : [pool[p.variantPick % pool.length]]
+        // Measured against the TALLEST part, so a canopy mesh that never
+        // reaches the ground cannot scale its own tree to twice the size.
+        const modelHeight = species.whole
+          ? Math.max(...pool.map((v) => v.height))
+          : parts[0].height
+        const scale = p.scale / modelHeight
+        dummy.position.set(
+          wx + p.x,
+          surfaceAt(p.x, p.z) - p.scale * (species.sink ?? 0),
+          wz + p.z,
+        )
         dummy.rotation.set(0, p.rotY, 0)
-        dummy.scale.setScalar(p.scale)
+        dummy.scale.setScalar(scale)
         dummy.updateMatrix()
-        bucket.matrices.push(dummy.matrix.clone())
+        for (const variant of parts) {
+          const bucketKey = `${p.species}:${variant.index}`
+          let bucket = out.get(bucketKey)
+          if (!bucket) { bucket = { variant, matrices: [] }; out.set(bucketKey, bucket) }
+          bucket.matrices.push(dummy.matrix.clone())
+        }
       }
     }
     return [...out.entries()].map(([key, b]) => ({ key, ...b }))
@@ -813,9 +1138,13 @@ export function GroundVegetation({ tiles, lookup }: {
 function VegetationBatch({ variant, matrices }: { variant: Variant; matrices: THREE.Matrix4[] }) {
   const ref = useRef<THREE.InstancedMesh>(null)
   const sway = SPECIES[variant.species].sway
+  // Trees get a real per-instance tone spread; the small plants do not need
+  // one, being small and already varied across several species.
+  const tier = SPECIES[variant.species].tier
+  const tintSpread = tier === 'tree' || tier === 'hero' ? 0.34 : 0
   const { material, uniforms } = useMemo(
-    () => makeWindMaterial(variant.material, variant.height, sway),
-    [variant, sway],
+    () => makeWindMaterial(variant.material, variant.height, sway, tintSpread),
+    [variant, sway, tintSpread],
   )
   useEffect(() => () => material.dispose(), [material])
 

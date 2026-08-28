@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { TERRAIN_FLOOR_Y } from './hexMath'
-import { stampedDepthAt, terrainReliefAt, worldNoise01 } from './terrainRelief'
+import { RELIEF_AMPLITUDE, stampedDepthAt, terrainReliefAt, worldNoise01 } from './terrainRelief'
 
 /** Real user request: "vamos a eliminar los saltos entre hexes" — but
  * NOT by flattening the map ("no suavices demasiado... se tiene que
@@ -152,6 +152,24 @@ export function makeHexHeightAt(
 ): { heightAt: (x: number, z: number) => number } & HexEdgeGeometry {
   const { corner, capBoundary, edgeNormal, apothem } = hexEdgeGeometry(radius)
   const blendZoneWidth = apothem * blendFraction
+  // Scale the within-hex relief to whatever room its own band actually
+  // gives it, instead of running at full amplitude and being clipped.
+  //
+  // Clipping is not a gentle failure. Where the noise exceeds the band it
+  // flattens against it, so the surface becomes a plateau whose EDGE is
+  // wherever the noise happens to cross the limit — and since the mesh is
+  // only subdivided so far, that edge follows triangle boundaries and comes
+  // out as hard straight steps. Harmless on dry land, whose band is several
+  // metres and swallows the noise whole; ruinous on a riverbed, whose band
+  // is a fraction of a metre, where a real user saw exactly that: "se ve una
+  // forma diferente en el fondo de mi agua y no una textura continua...
+  // algo esta entorpeciendo, se glitchea."
+  //
+  // Scaled instead, nothing ever reaches the clamp, so there is no plateau
+  // and no edge to facet. A riverbed gets a gentle, continuous floor and dry
+  // ground is untouched (its scale works out to 1).
+  const bandRoom = Math.max(0, bandHigh - bandLow)
+  const noiseScale = Math.min(1, bandRoom / (2 * RELIEF_AMPLITUDE))
 
   const heightAt = (x: number, z: number): number => {
     let deltaSum = 0
@@ -225,7 +243,7 @@ export function makeHexHeightAt(
     // It costs nothing in cross-tile agreement: the noise is one continuous
     // function of world position, so both tiles sampling the same point
     // always get the same number, fade or no fade.
-    const noise = terrainReliefAt(tileWorldX + x, tileWorldZ + z)
+    const noise = terrainReliefAt(tileWorldX + x, tileWorldZ + z) * noiseScale
     const withNoise = base + noise
     // Real user report (with screenshots): black blobs on the map, "siempre
     // en las mismas zonas, parecen como depresiones... puede ser que bajen
@@ -763,6 +781,96 @@ export function buildEdgeBlendPatch(
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+/** The dark groove between tiles — as a RING that exists only at the tile's
+ * border, following the terrain's own height, instead of a slab under the
+ * whole tile.
+ *
+ * Real user report: "lo que se glitchea es el borde negro de las tiles, ese
+ * deberia estar SOLO en las fronteras, hasta la altura del terreno, pero no
+ * debajo del cuerpo de las tiles."
+ *
+ * Exactly right, and it is the root of a whole family of bugs. The groove
+ * used to be a solid hexagonal slab sitting under each tile at a FIXED
+ * height, visible only through the narrow gap left by the tile's own inset
+ * cap. That works right up until the ground goes lower than the slab —
+ * which it does wherever the terrain dips, wherever a crater is stamped, and
+ * always in water, whose bed sinks metres below it. Then the slab cuts up
+ * through the ground and its near-black top face shows through: the "zonas
+ * negras" reported on riverbeds, and the dark blotches reported across open
+ * ground before that. Both were patched by pushing the slab further down for
+ * particular terrain, which is treating symptoms of a slab that had no
+ * business being under the tile at all.
+ *
+ * A ring cannot have that problem. There is nothing underneath the tile to
+ * emerge from, and because its top is sampled from the SAME `heightAt` the
+ * cap is built from, it sits just under the real ground everywhere along the
+ * border however that ground ramps, bumps or is cratered.
+ *
+ * `dropBelow` is how far under the cap edge the visible top of the groove
+ * sits (what makes it read as a groove rather than as a flush seam), and
+ * `skirtDepth` how far its outer wall continues down, so the gap reads as a
+ * slot with depth rather than as a ribbon floating in it. */
+export function buildHexGrooveRing(
+  radius: number,
+  heightAt: (x: number, z: number) => number,
+  capBoundary: (w: number, t: number) => [number, number],
+  segments: number,
+  dropBelow: number,
+  skirtDepth: number,
+): THREE.BufferGeometry {
+  const { corner } = hexEdgeGeometry(radius)
+  const positions: number[] = []
+  const indices: number[] = []
+  let vertCount = 0
+  const push = (x: number, y: number, z: number) => {
+    positions.push(x, y, z)
+    return vertCount++
+  }
+  const n = Math.max(1, Math.floor(segments))
+  for (let w = 0; w < 6; w++) {
+    const [ax, az] = corner(w)
+    const [bx, bz] = corner(w + 1)
+    const innerTop: number[] = []
+    const outerTop: number[] = []
+    const outerBottom: number[] = []
+    for (let i = 0; i <= n; i++) {
+      const t = i / n
+      const [ix, iz] = capBoundary(w, t)
+      // The cap's own height at this point, so the groove tracks the real
+      // surface instead of a flat guess and can never rise through it.
+      const capY = heightAt(ix, iz)
+      // The INNER lip meets the tile's own edge, near enough to touch. It
+      // deliberately does NOT take the drop: doing that left a vertical hole
+      // between the tile's edge and the groove, and what showed through it
+      // was the lit inside of the tile — the grid came out as a pale line
+      // instead of a dark seam. Only the outer edge drops, which makes the
+      // groove a chamfer running down to the seam rather than a ledge with a
+      // gap above it.
+      innerTop.push(push(ix, capY - 0.02, iz))
+      const y = capY - dropBelow
+      // The outer edge is the TRUE hex corner line, which this tile shares
+      // exactly with its neighbour, so the two tiles' rings meet along it
+      // and the grid reads as one continuous groove rather than as six
+      // separate ones per tile.
+      const ox = ax + (bx - ax) * t
+      const oz = az + (bz - az) * t
+      outerTop.push(push(ox, y, oz))
+      outerBottom.push(push(ox, y - skirtDepth, oz))
+    }
+    for (let i = 0; i < n; i++) {
+      indices.push(innerTop[i], outerTop[i], innerTop[i + 1])
+      indices.push(innerTop[i + 1], outerTop[i], outerTop[i + 1])
+      indices.push(outerTop[i], outerBottom[i], outerTop[i + 1])
+      indices.push(outerTop[i + 1], outerBottom[i], outerBottom[i + 1])
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
   return geometry
