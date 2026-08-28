@@ -1810,6 +1810,10 @@ interface FogRegion {
    * possibly sinking a little into a hill) reads far better than erring
    * high (visibly floating over a lower neighbor). */
   baseY: number
+  /** Height difference between the lowest and highest ground the region
+   * covers, added on top of the fog's own thickness so the volume reaches
+   * over the high ground instead of ending below it. */
+  span: number
 }
 
 /** Traces the real outer boundary (and any holes — a visible tile fully
@@ -1881,7 +1885,7 @@ function buildFogRegions(fogTiles: { q: number; r: number; groundY: number }[]):
   const regions = outerLoops.map((points) => {
     const ccw = fogSignedArea(points) < 0 ? [...points].reverse() : points
     const shape = new THREE.Shape(ccw.map(([x, z]) => new THREE.Vector2(x, z)))
-    return { shape, outerPoints: ccw, baseY: Infinity }
+    return { shape, outerPoints: ccw, baseY: Infinity, topY: -Infinity }
   })
 
   for (const hole of holeLoops) {
@@ -1893,10 +1897,21 @@ function buildFogRegions(fogTiles: { q: number; r: number; groundY: number }[]):
   for (const tile of fogTiles) {
     const [cx, cz] = hexToWorld(tile.q, tile.r)
     const region = regions.find((r) => fogPointInPolygon([cx, cz], r.outerPoints))
-    if (region) region.baseY = Math.min(region.baseY, tile.groundY)
+    if (region) {
+      region.baseY = Math.min(region.baseY, tile.groundY)
+      // The HIGHEST ground in the region matters as much as the lowest. A
+      // region spanning two elevation levels has 12 world units between its
+      // floor and its ceiling, and a fixed-height volume raised from the
+      // floor simply ends below the high ground, which then stands out of
+      // the fog untouched. Real user report: "a veces el terreno elevado la
+      // clipea."
+      region.topY = Math.max(region.topY, tile.groundY)
+    }
   }
 
-  return regions.filter((r) => Number.isFinite(r.baseY)).map((r) => ({ shape: r.shape, baseY: r.baseY }))
+  return regions
+    .filter((r) => Number.isFinite(r.baseY))
+    .map((r) => ({ shape: r.shape, baseY: r.baseY, span: Math.max(0, r.topY - r.baseY) }))
 }
 
 // Real user follow-up, across three rounds of real feedback: "no hay una
@@ -2073,10 +2088,14 @@ const FOG_VARIANTS = {
  * uniforms/Y-offset differ), so this is still exactly one real mesh
  * object's worth of triangles per layer, not a heavier per-tile scheme. */
 function FogRegionMesh({
-  shape, baseY, seed, subtle,
+  shape, baseY, span, seed, subtle,
 }: {
   shape: THREE.Shape
   baseY: number
+  /** How far the ground climbs between the lowest and highest tile the
+   * region covers, added on top of the fog's own thickness so the volume
+   * reaches over the high ground instead of ending below it. */
+  span: number
   seed: number
   /** false (default): TableView/GMView's own opaque, vision-blocking
    * look. true: FirstPersonView's taller, fainter look — see
@@ -2084,9 +2103,11 @@ function FogRegionMesh({
   subtle?: boolean
 }) {
   const variant = FOG_VARIANTS[subtle ? 'subtle' : 'blocking']
+  // Its own thickness PLUS whatever the ground climbs across the region.
+  const height = variant.height + span
   const materialRefs = useRef<(THREE.ShaderMaterial | null)[]>([])
   const geometry = useMemo(() => {
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: variant.height, bevelEnabled: false, curveSegments: 1 })
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: height, bevelEnabled: false, curveSegments: 1 })
     // ExtrudeGeometry lays the shape's own local (x, y) in the XY plane
     // and extrudes along LOCAL +Z from 0 to `depth` (confirmed directly
     // against three.js's own source, not assumed, after an earlier
@@ -2101,7 +2122,7 @@ function FogRegionMesh({
     geo.computeVertexNormals()
     return geo
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shape, variant.height])
+  }, [shape, height])
   const color = useMemo(() => new THREE.Color(variant.color), [variant.color])
   useFrame((state) => {
     for (const mat of materialRefs.current) {
@@ -2112,7 +2133,7 @@ function FogRegionMesh({
     <>
       {FOG_LAYERS.map((layer, i) => {
         const layerBaseY = baseY + layer.yOffset
-        const layerTopY = layerBaseY + variant.height
+        const layerTopY = layerBaseY + height
         // The shader samples noise at worldPos.xz * uNoiseScale (real world
         // units, now HEX_SIZE times bigger for the same relative position
         // within a hex) — without dividing back down here, the noise
@@ -2120,12 +2141,26 @@ function FogRegionMesh({
         // of one smooth swirl, reading as flat/staticky instead of turbulent
         // cloud (real user report: no visible turbulence after the rescale).
         // flowDir gets the same correction so the animated drift still
-        // moves through noise-space at the same relative rate. Real user
-        // request: "aumentar la velocidad de movimiento del ruido de la
-        // niebla" — base rate bumped from 0.028 to 0.05 (~1.8x).
+        // moves through noise-space at the same relative rate.
+        //
+        // The constant is the fog's speed in METRES PER SECOND, which is
+        // worth writing down because it is not obvious from the shader. The
+        // fragment stage samples noise at `worldPos.xz * (0.5 * uNoiseScale)
+        // + uFlowDir * uTime`, so a feature holds still when
+        // `worldPos * scale + flow * t` is constant — its world velocity is
+        // `|uFlowDir| / scale`. With uNoiseScale = 1/HEX_SIZE, the HEX_SIZE
+        // divisions cancel and the constant below IS that velocity, near
+        // enough (0.5 vs the vertex stage's 0.35 aside).
+        //
+        // It used to be 0.05, which works out at ten centimetres a second:
+        // real, but far too slow to see, and reported as such ("el
+        // movimiento es imperceptible, quiero que sea relativamente
+        // rapido"). At 1.5 the layers drift at roughly 3, 1.9 and 4 metres a
+        // second, which reads as a real breeze rather than a still image.
+        const FOG_DRIFT_SPEED = 1.5
         const flowDir = [
-          Math.cos(layer.flowAngle) * 0.05 * layer.flowSpeed / HEX_SIZE,
-          Math.sin(layer.flowAngle) * 0.05 * layer.flowSpeed / HEX_SIZE,
+          Math.cos(layer.flowAngle) * FOG_DRIFT_SPEED * layer.flowSpeed / HEX_SIZE,
+          Math.sin(layer.flowAngle) * FOG_DRIFT_SPEED * layer.flowSpeed / HEX_SIZE,
         ]
         return (
           <mesh key={i} position={[0, layerTopY, 0]} geometry={geometry}>
@@ -2615,7 +2650,10 @@ export function HexMap({
           props are short enough that the fog volume covers them anyway. */}
       <GroundVegetation tiles={map.tiles} lookup={lookup} />
       {fogRegions.map((region, i) => (
-        <FogRegionMesh key={`fog-region-${i}`} shape={region.shape} baseY={region.baseY} seed={i * 7.13} subtle={fogSubtle} />
+        <FogRegionMesh
+          key={`fog-region-${i}`} shape={region.shape} baseY={region.baseY}
+          span={region.span} seed={i * 7.13} subtle={fogSubtle}
+        />
       ))}
       {visibleUnits.map((unit) => (
         <UnitMarker

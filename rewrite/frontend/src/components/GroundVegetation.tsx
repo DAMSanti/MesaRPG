@@ -1012,10 +1012,6 @@ function GrassCarpetBatch({ tint, tiles, tilesKey, lookup, budget }: {
     mesh.instanceMatrix = new THREE.InstancedBufferAttribute(matrices.array, 16)
     mesh.instanceMatrix.needsUpdate = true
     mesh.count = matrices.count
-    // Culled as one object against a single card's bounds at the origin
-    // otherwise, which makes the entire board's grass vanish the moment the
-    // camera looks away from its centre.
-    mesh.frustumCulled = false
   }, [matrices])
 
   useFrame((state) => { uniforms.uTime.value = state.clock.elapsedTime })
@@ -1027,6 +1023,17 @@ function GrassCarpetBatch({ tint, tiles, tilesKey, lookup, budget }: {
       args={[getGrassCardGeometry(), material, matrices.count]}
       receiveShadow
       castShadow={false}
+      // Declarative, NOT set in an effect. An instanced mesh is frustum-
+      // culled against the bounds of ONE instance sitting at the origin, so
+      // the whole batch vanishes the moment the camera looks away from the
+      // board's centre — and a batch spans the map by definition, so culling
+      // it as a unit is meaningless anyway. Doing it in an effect meant it
+      // only applied if the ref happened to be attached when that effect
+      // ran, which is the likely cause of a real user report of forest tiles
+      // with no trees in the first-person view (camera far from the origin)
+      // while the same tiles were fine from the top-down ones (camera over
+      // the centre, so the test passed by accident).
+      frustumCulled={false}
     />
   )
 }
@@ -1153,11 +1160,6 @@ function VegetationBatch({ variant, matrices }: { variant: Variant; matrices: TH
     if (!mesh) return
     matrices.forEach((m, i) => mesh.setMatrixAt(i, m))
     mesh.instanceMatrix.needsUpdate = true
-    // Instanced meshes are frustum-culled against the geometry of ONE
-    // instance sitting at the origin, so the whole batch pops out of view as
-    // soon as the camera looks away from the board's centre. The batch spans
-    // the map by definition, so culling it as a unit is meaningless anyway.
-    mesh.frustumCulled = false
   }, [matrices])
 
   useFrame((state) => { uniforms.uTime.value = state.clock.elapsedTime })
@@ -1168,6 +1170,8 @@ function VegetationBatch({ variant, matrices }: { variant: Variant; matrices: TH
       ref={ref}
       args={[variant.geometry, material, matrices.length]}
       receiveShadow
+      // See GrassCarpetBatch: declarative on purpose, never in an effect.
+      frustumCulled={false}
       // No castShadow on purpose. A shadow map re-renders every caster from
       // the light's point of view, so switching it on here would double the
       // cost of the single heaviest thing on the board for shadows that, at
