@@ -57,13 +57,16 @@ export interface HexEdgeGeometry {
 
 /** How far each tile's top surface is pulled in from the true hex edge, as
  * a fraction of the apothem — this is what leaves the dark groove visible
- * between neighbors. Real user request, twice: "el espacio entre tiles debe
- * ser mucho mas pequeño... un 40% o asi" (hence 2%, down from 5%), and later
- * "la grid se va a quedar, no me importa las lineas negras" — the grid is
- * wanted, so this stays. It used to live in HexMap.tsx as a bare `HEX_SIZE *
+ * between neighbors. Real user requests, in order: "el espacio entre tiles
+ * debe ser mucho mas pequeño... un 40% o asi" (5% -> 2%), then "la grid se
+ * va a quedar, no me importa las lineas negras" (so it stays at all), then
+ * the same trim again on the narrower line: "haz mas estrecha la frontera
+ * entre hexes, como menos de la mitad que ahora", and then "reducelo algo
+ * mas, la mitad que ahora" (2% -> 0.8% -> 0.4%, taking the gap from ~1.04 to
+ * ~0.21 world units at HEX_SIZE 30). It used to live in HexMap.tsx as a bare `HEX_SIZE *
  * 0.98` repeated at every call site; it belongs here, next to the outline
  * math that is the only thing which actually cares. */
-const CAP_EDGE_INSET = 0.02
+const CAP_EDGE_INSET = 0.004
 /* A corner TAPER on that inset was tried here and reverted at the user's
  * request: "reviertas lo que has hecho con las esquinas... has tocado algo
  * que no arregla el problema y deja la apariencia de las tiles peor."
