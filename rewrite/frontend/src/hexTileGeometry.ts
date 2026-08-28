@@ -301,3 +301,103 @@ export function buildDrapedHexCap(
   geometry.computeVertexNormals()
   return geometry
 }
+
+/** Real user request: "cuando dos tiles adyacentes tienen texturas
+ * diferentes, la transicion es brusca... quiero que se blendeen las
+ * texturas de tiles diferentes en el borde" — a thin strip of geometry
+ * along ONE specific edge of this tile, meant to be rendered ON TOP of
+ * the tile's own base mesh with the NEIGHBOR's texture and a per-vertex
+ * alpha fading from 1 (at the shared edge) to 0 (`blendWidth` inward),
+ * giving a real cross-fade of the two tiles' actual textures at their
+ * border. Deliberately NOT a custom shader (`onBeforeCompile`/hand-
+ * rolled GLSL already caused a real, visibly-broken regression earlier
+ * this project): an ordinary transparent MeshStandardMaterial mesh with
+ * vertex colors. `heightAt`/`corner` come from `makeHexHeightAt` — the
+ * SAME call already used for this tile's own base mesh — so the strip
+ * sits flush on the real surface.
+ *
+ * Two things this went through real, live-tested rounds to get right:
+ * `liftY` — a real user report traced the first version's dark/torn look
+ * to z-fighting against the near-coincident base mesh (worse at a
+ * distance, unreliable on slopes) — a small deliberate vertical gap
+ * fixes that FAR more reliably than depthTest/polygonOffset tricks alone
+ * (this was ALSO fighting a separate, scene-wide depth-precision bug —
+ * GMView/TableView's own camera near:far was 1:20000 — fixed
+ * separately; a much smaller lift should now be plenty). And corner
+ * tapering: a hex corner is shared by TWO of this tile's own edges, and
+ * under the one-edge-per-border ownership rule (see this function's own
+ * caller in HexMap.tsx) it's routine for THIS tile to own one of those
+ * edges while a DIFFERENT neighbor owns the other — both strips
+ * converge on the same physical corner from different tiles, and
+ * without tapering, both had real opaque coverage stacking right on top
+ * of each other there. Fading alpha to 0 at both t=0 and t=1 (this
+ * strip's own two corners), on top of the existing perpendicular fade,
+ * means no tile's strip ever has real coverage exactly at a shared
+ * corner — nothing left there to stack. */
+export function buildEdgeBlendStrip(
+  radius: number,
+  heightAt: (x: number, z: number) => number,
+  corner: (i: number) => [number, number],
+  edgeIndex: number,
+  blendWidth: number,
+  segments: number,
+  liftY: number,
+): THREE.BufferGeometry {
+  const [ax, az] = corner(edgeIndex + 1)
+  const [bx, bz] = corner(edgeIndex + 2)
+  // Unit vector from the edge's own midpoint back toward the hex center
+  // (the origin, in this tile-local space) — "inward," the direction the
+  // strip's OTHER (zero-alpha) row sits along.
+  const midX = (ax + bx) / 2, midZ = (az + bz) / 2
+  const midLen = Math.hypot(midX, midZ) || 1
+  const inwardX = -midX / midLen, inwardZ = -midZ / midLen
+
+  const positions: number[] = []
+  const uvs: number[] = []
+  const colors: number[] = []
+  const indices: number[] = []
+  let vertCount = 0
+  // Vertex color is RGBA: RGB always white (1,1,1) — no tint, only alpha
+  // carries the fade. Relies on ordinary three.js material behavior
+  // (`vertexColors` + a 4-component color attribute + `transparent:
+  // true`), no custom shader involved.
+  const pushVertex = (x: number, y: number, z: number, alpha: number): number => {
+    positions.push(x, y, z)
+    // Same tile-local planar UV formula the base mesh's own pushVertex
+    // uses — keeps the neighbor's texture reading at the same scale/
+    // orientation it would if this strip really were a sliver of that
+    // neighbor tile's own surface.
+    uvs.push(x / radius * 0.5 + 0.5, z / radius * 0.5 + 0.5)
+    colors.push(1, 1, 1, alpha)
+    return vertCount++
+  }
+
+  const CORNER_TAPER = 0.18
+  const outerRow: number[] = []
+  const innerRow: number[] = []
+  const n = Math.max(1, Math.floor(segments))
+  for (let i = 0; i <= n; i++) {
+    const t = i / n
+    const cornerFade = Math.min(1, t / CORNER_TAPER, (1 - t) / CORNER_TAPER)
+    const ex = ax + (bx - ax) * t
+    const ez = az + (bz - az) * t
+    outerRow.push(pushVertex(ex, heightAt(ex, ez) + liftY, ez, cornerFade))
+    const ix = ex + inwardX * blendWidth
+    const iz = ez + inwardZ * blendWidth
+    innerRow.push(pushVertex(ix, heightAt(ix, iz) + liftY, iz, 0))
+  }
+  for (let i = 0; i < n; i++) {
+    const o0 = outerRow[i], o1 = outerRow[i + 1]
+    const i0 = innerRow[i], i1 = innerRow[i + 1]
+    indices.push(o0, i0, o1)
+    indices.push(o1, i0, i1)
+  }
+
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 4))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return geometry
+}

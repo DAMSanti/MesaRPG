@@ -22,7 +22,7 @@ import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
-import { buildBlendedHexGeometry, buildDrapedHexCap, makeHexHeightAt } from '../hexTileGeometry'
+import { buildBlendedHexGeometry, buildDrapedHexCap, buildEdgeBlendStrip, makeHexHeightAt } from '../hexTileGeometry'
 import { getStampVersion, RELIEF_SKIP_TERRAINS, stampDeformation } from '../terrainRelief'
 
 // Real user request: "no es muy largo hacer que las armas disparen de esas
@@ -534,6 +534,48 @@ const Tile = memo(function Tile({
     return buildDrapedHexCap(heightAt, corner, HIGHLIGHT_CAP_SUBDIVISIONS, HIGHLIGHT_CAP_LIFT)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyHighlighted, meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion])
+  const neighborTerrains = FOG_HEX_NEIGHBORS.map(([dq, dr]) => lookup.get(`${tile.q + dq},${tile.r + dr}`)?.terrain ?? null)
+  const blendStrips = useMemo(() => {
+    if (TEXTURE_BLEND_SKIP_TERRAINS.has(tile.terrain)) return []
+    const { heightAt, corner } = makeHexHeightAt(
+      HEX_SIZE * 0.98, meshOwnHeight, neighborHeights, 0.8, x, z, bandLow, bandHigh,
+    )
+    const ownTexture = terrainTexture(tile.terrain, tile.q, tile.r)
+    const strips: { geometry: THREE.BufferGeometry; neighborTerrain: string; neighborQ: number; neighborR: number }[] = []
+    for (let k = 0; k < 6; k++) {
+      const neighborTerrain = neighborTerrains[k]
+      if (!neighborTerrain) continue
+      if (TEXTURE_BLEND_SKIP_TERRAINS.has(neighborTerrain)) continue
+      const [dq, dr] = FOG_HEX_NEIGHBORS[k]
+      const neighborQ = tile.q + dq
+      const neighborR = tile.r + dr
+      // Comparing the actual RESOLVED texture instance (not the
+      // `terrain` string) catches both cross-terrain AND same-terrain-
+      // different-variant borders (plains-grass next to plains-dirt is
+      // the same `terrain` string but a genuinely different texture) —
+      // terrainTexture() returns one shared, cached instance per real
+      // terrain+variant combination, so `!==` here means "these two
+      // tiles will genuinely render different pixels."
+      if (terrainTexture(neighborTerrain, neighborQ, neighborR) === ownTexture) continue
+      // Exactly one side owns a given shared border — without this,
+      // BOTH tiles independently build a strip toward each other, two
+      // overlapping fades meeting at the line instead of one clean
+      // transition. Arbitrary but fully consistent (q,r) comparison, so
+      // it agrees regardless of which of the two tiles evaluates it.
+      const ownsThisEdge = tile.q > neighborQ || (tile.q === neighborQ && tile.r > neighborR)
+      if (!ownsThisEdge) continue
+      strips.push({
+        geometry: buildEdgeBlendStrip(
+          HEX_SIZE * 0.98, heightAt, corner, k, TEXTURE_BLEND_WIDTH, TEXTURE_BLEND_SEGMENTS, TEXTURE_BLEND_LIFT,
+        ),
+        neighborTerrain,
+        neighborQ,
+        neighborR,
+      })
+    }
+    return strips
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tile.terrain, tile.q, tile.r, meshOwnHeight, JSON.stringify(neighborHeights), JSON.stringify(neighborTerrains), x, z, bandLow, bandHigh, stampVersion])
   const terrainMesh = (
     <mesh
       position={[0, 0, 0]}
@@ -562,10 +604,43 @@ const Tile = memo(function Tile({
       />
     </mesh>
   )
+  // Real, ordinary transparent meshes — see buildEdgeBlendStrip's own
+  // doc comment for why NOT a custom shader. depthWrite=false +
+  // polygonOffset both guard against z-fighting with the base terrain
+  // mesh underneath (which this sits just above via TEXTURE_BLEND_LIFT
+  // by design). Rendered AFTER terrainMesh (both in JSX order and
+  // three.js's own opaque-then-transparent pass) so the fade is visibly
+  // on top of the real base texture, not hidden behind it.
+  //
+  // Real bug found live (isolated with a strict bisection — solid color
+  // → visible, +vertexColors alone → visible white fade, +map on
+  // MeshStandardMaterial → completely invisible, same +map on
+  // MeshBasicMaterial → works): MeshStandardMaterial's own vertex-alpha
+  // handling doesn't combine correctly with a `map` in this three.js
+  // version, silently dropping the whole strip to zero alpha everywhere
+  // instead of just not lighting it. MeshBasicMaterial (unlit) has no
+  // such issue — an acceptable tradeoff for a thin blend strip, which
+  // was never trying to shade differently from the base texture anyway.
+  const blendOverlays = blendStrips.map((strip, i) => (
+    <mesh key={i} geometry={strip.geometry} receiveShadow={false} castShadow={false}>
+      <meshBasicMaterial
+        map={terrainTexture(strip.neighborTerrain, strip.neighborQ, strip.neighborR)}
+        color={terrainColor(strip.neighborTerrain, strip.neighborQ, strip.neighborR)}
+        vertexColors
+        transparent
+        depthWrite={false}
+        polygonOffset
+        polygonOffsetFactor={-4}
+        polygonOffsetUnits={-4}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  ))
   return (
     <group position={[x, 0, z]}>
       {groove}
       {physics ? <RigidBody type="fixed" colliders="hull">{terrainMesh}</RigidBody> : terrainMesh}
+      {blendOverlays}
       {tile.terrain === 'road' && !fogged && (
         <RoadMarkings q={tile.q} r={tile.r} height={height} lookup={lookup} gridType="hex" worldPos={hexToWorld} />
       )}
@@ -1518,6 +1593,24 @@ const FOOTPRINT_TERRAINS = new Set(['plains', 'hills', 'forest', 'light_forest',
 // local) since UnitMarker's own real-time footprint stamping needs it
 // too, not just the outer component's real-bone-tracked path.
 const FOOTPRINT_DEPTH = 0.45
+
+// Real user request: "cuando dos tiles adyacentes tienen texturas
+// diferentes, la transicion es brusca... quiero que se blendeen las
+// texturas de tiles diferentes en el borde... no habra blend entre
+// otras casillas y las casillas de agua... vamos con eso de momento" —
+// see Tile's own blendStrips useMemo for the full reasoning. Width is a
+// fraction of the hex's own apothem, deliberately narrow — a wide blend
+// would read as "this whole edge is a third texture," not a border
+// transition. Reuses RELIEF_SKIP_TERRAINS as the exclusion set (every
+// terrain in it already has its own fixed/flush surface treatment
+// elsewhere, not just water). LIFT is now much smaller than the first
+// attempt needed — that attempt was ALSO fighting the scene-wide
+// near:far depth-precision bug (see GMView.tsx's own fix), not just
+// this strip's own z-fighting.
+const TEXTURE_BLEND_SKIP_TERRAINS = RELIEF_SKIP_TERRAINS
+const TEXTURE_BLEND_WIDTH = HEX_SIZE * 0.12
+const TEXTURE_BLEND_SEGMENTS = 6
+const TEXTURE_BLEND_LIFT = HEX_SIZE * 0.04
 
 // Real user request (asked repeatedly this week — "ya te he pedido esto
 // 3 veces"): "estas pintando niebla por cada tile... quiero que hagas 1
