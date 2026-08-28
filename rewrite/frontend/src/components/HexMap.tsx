@@ -12,7 +12,7 @@ import { listMechAnnotations } from '../api'
 import { Mech3D } from './Mech3D'
 import { GROUND_FLUSH_TOP, TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
-import { terrainColor, terrainTexture } from '../terrain'
+import { hashTile, terrainColor, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import {
   BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationBandRange, elevationToY, GROUND_BASE_HEIGHT, HEX_SIZE, hexToWorld,
@@ -22,7 +22,7 @@ import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
-import { buildBlendedHexGeometry, buildDrapedHexCap, buildEdgeBlendStrip, makeHexHeightAt } from '../hexTileGeometry'
+import { buildBlendedHexGeometry, buildDrapedHexCap, buildEdgeBlendPatch, makeHexHeightAt } from '../hexTileGeometry'
 import { getStampVersion, RELIEF_SKIP_TERRAINS, stampDeformation } from '../terrainRelief'
 
 // Real user request: "no es muy largo hacer que las armas disparen de esas
@@ -405,7 +405,10 @@ const Tile = memo(function Tile({
   // are inset into it, instead of an empty seam. Real user request: "el
   // espacio entre tiles debe ser mucho mas pequeño... menos de la mitad
   // que ahora, un 40% o asi" — was 0.95 (5% gap), 0.98 leaves a 2% gap,
-  // ~40% of the old one.
+  // ~40% of the old one. That inset (and the corner taper that keeps
+  // three-way junctions from blobbing) now lives in hexTileGeometry as
+  // CAP_EDGE_INSET, instead of a bare multiplier repeated at every call
+  // site here.
   const groove = (
     <mesh position={[0, -0.1, 0]} receiveShadow>
       <cylinderGeometry args={[HEX_SIZE, HEX_SIZE, 0.15, 6]} />
@@ -419,13 +422,13 @@ const Tile = memo(function Tile({
   // flush terrain — water/mud/building — or the map's own edge opts a
   // side out, same flat vertical wall it always had), computed once in
   // plain JS by buildBlendedHexGeometry (see its own doc comment for the
-  // cross-tile coherence reasoning). NOT rotated by terrainRotation —
-  // unlike the old flat cylinder, this mesh's own vertex positions now
-  // encode WHICH real-world edge ramps toward which real neighbor, and
-  // rotating the whole mesh would silently point each ramp at the wrong
-  // neighbor (texture variety trades off against that; texture still
-  // varies by terrainColor/hashTile-picked variant, just not by rotation
-  // on this surface specifically).
+  // cross-tile coherence reasoning). Never rotated: unlike the old flat
+  // cylinder, this mesh's own vertex positions now encode WHICH
+  // real-world edge ramps toward which real neighbor, and rotating the
+  // whole mesh would silently point each ramp at the wrong neighbor.
+  // Texture variety costs nothing here anymore either way — the UVs are
+  // world-space (hexTileGeometry's worldTextureUV), so every tile shows
+  // a different crop with the mesh sitting still.
   const neighborHeights = FOG_HEX_NEIGHBORS.map(([dq, dr]) => {
     const neighbor = lookup.get(`${tile.q + dq},${tile.r + dr}`)
     if (!neighbor) return null
@@ -507,7 +510,7 @@ const Tile = memo(function Tile({
   const BASE_SUBDIVISIONS = 10
   const subdivisions = stampVersion > 0 ? STAMP_DETAIL_SUBDIVISIONS : BASE_SUBDIVISIONS
   const blendedGeometry = useMemo(
-    () => buildBlendedHexGeometry(HEX_SIZE * 0.98, meshOwnHeight, neighborHeights, subdivisions, 0.8, x, z, bandLow, bandHigh),
+    () => buildBlendedHexGeometry(HEX_SIZE, meshOwnHeight, neighborHeights, subdivisions, 0.8, x, z, bandLow, bandHigh),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion],
   )
@@ -530,17 +533,18 @@ const Tile = memo(function Tile({
   const HIGHLIGHT_CAP_LIFT = HEX_SIZE * 0.02
   const drapedHighlightCap = useMemo(() => {
     if (!anyHighlighted) return null
-    const { heightAt, corner } = makeHexHeightAt(HEX_SIZE * 0.98, meshOwnHeight, neighborHeights, 0.8, x, z, bandLow, bandHigh)
-    return buildDrapedHexCap(heightAt, corner, HIGHLIGHT_CAP_SUBDIVISIONS, HIGHLIGHT_CAP_LIFT)
+    const { heightAt, capBoundary } = makeHexHeightAt(HEX_SIZE, meshOwnHeight, neighborHeights, 0.8, x, z, bandLow, bandHigh)
+    return buildDrapedHexCap(heightAt, capBoundary, HIGHLIGHT_CAP_SUBDIVISIONS, HIGHLIGHT_CAP_LIFT)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyHighlighted, meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion])
   const neighborTerrains = FOG_HEX_NEIGHBORS.map(([dq, dr]) => lookup.get(`${tile.q + dq},${tile.r + dr}`)?.terrain ?? null)
   const blendStrips = useMemo(() => {
     if (TEXTURE_BLEND_SKIP_TERRAINS.has(tile.terrain)) return []
-    const { heightAt, corner } = makeHexHeightAt(
-      HEX_SIZE * 0.98, meshOwnHeight, neighborHeights, 0.8, x, z, bandLow, bandHigh,
+    const { heightAt, capBoundary } = makeHexHeightAt(
+      HEX_SIZE, meshOwnHeight, neighborHeights, 0.8, x, z, bandLow, bandHigh,
     )
     const ownTexture = terrainTexture(tile.terrain, tile.q, tile.r)
+    const ownColor = terrainColor(tile.terrain)
     const strips: { geometry: THREE.BufferGeometry; neighborTerrain: string; neighborQ: number; neighborR: number }[] = []
     for (let k = 0; k < 6; k++) {
       const neighborTerrain = neighborTerrains[k]
@@ -556,17 +560,38 @@ const Tile = memo(function Tile({
       // terrainTexture() returns one shared, cached instance per real
       // terrain+variant combination, so `!==` here means "these two
       // tiles will genuinely render different pixels."
-      if (terrainTexture(neighborTerrain, neighborQ, neighborR) === ownTexture) continue
-      // Exactly one side owns a given shared border — without this,
-      // BOTH tiles independently build a strip toward each other, two
-      // overlapping fades meeting at the line instead of one clean
-      // transition. Arbitrary but fully consistent (q,r) comparison, so
-      // it agrees regardless of which of the two tiles evaluates it.
-      const ownsThisEdge = tile.q > neighborQ || (tile.q === neighborQ && tile.r > neighborR)
-      if (!ownsThisEdge) continue
+      //
+      // The material COLOR has to be part of that test, not just the
+      // texture: forest and light_forest share one forest-floor photo
+      // and differ ONLY by their canopy-shadow multiply (terrainColor),
+      // so a texture-only check skipped those borders entirely — and
+      // they were among the harshest edges left on the board, a nearly
+      // black hex butted straight against a pale one. Two tiles render
+      // different pixels if EITHER half of (texture, color) differs.
+      if (terrainTexture(neighborTerrain, neighborQ, neighborR) === ownTexture
+        && terrainColor(neighborTerrain) === ownColor) continue
+      // Real user report (with screenshot): a single-owner-per-edge rule
+      // (an arbitrary (q,r) tiebreak deciding which of the two tiles gets
+      // to draw a strip at all) made every tile blend on some arbitrary
+      // subset of its 6 edges and hard-cut the rest — "los hex se estan
+      // degradando de forma diferente en los lados de la izquierda que en
+      // los de la derecha... las esquinas donde se juntan 3 hexes estan
+      // fatal": the owned edges tapered smoothly into a shared corner
+      // while the un-owned edge right next to it had nothing at all,
+      // reading as a broken/lopsided corner. Every tile now draws its OWN
+      // strip on EVERY differing-neighbor edge — fully symmetric, no
+      // ownership decision needed. This does NOT reintroduce the earlier
+      // "two-sided" bug: each strip lives entirely inside its OWNER's own
+      // hex (offset inward from that tile's own edge), so this tile's
+      // strip and the neighbor's own strip toward US occupy disjoint
+      // geometry in disjoint tiles — they only ever touch exactly at the
+      // shared edge line itself, never overlap.
+      const { width, noiseOffsetX, noiseOffsetZ, flipped } = blendBorderParams(tile.q, tile.r, neighborQ, neighborR)
       strips.push({
-        geometry: buildEdgeBlendStrip(
-          HEX_SIZE * 0.98, heightAt, corner, k, TEXTURE_BLEND_WIDTH, TEXTURE_BLEND_SEGMENTS, TEXTURE_BLEND_LIFT,
+        geometry: buildEdgeBlendPatch(
+          HEX_SIZE, heightAt, capBoundary, k, width,
+          TEXTURE_BLEND_SEGMENTS_ALONG, TEXTURE_BLEND_SEGMENTS_IN, TEXTURE_BLEND_LIFT,
+          x, z, noiseOffsetX, noiseOffsetZ, flipped,
         ),
         neighborTerrain,
         neighborQ,
@@ -598,13 +623,13 @@ const Tile = memo(function Tile({
       }}
     >
       <meshStandardMaterial
-        color={terrainColor(tile.terrain, tile.q, tile.r)}
+        color={terrainColor(tile.terrain)}
         map={terrainTexture(tile.terrain, tile.q, tile.r)}
         side={THREE.DoubleSide}
       />
     </mesh>
   )
-  // Real, ordinary transparent meshes — see buildEdgeBlendStrip's own
+  // Real, ordinary transparent meshes — see buildEdgeBlendPatch's own
   // doc comment for why NOT a custom shader. depthWrite=false +
   // polygonOffset both guard against z-fighting with the base terrain
   // mesh underneath (which this sits just above via TEXTURE_BLEND_LIFT
@@ -617,15 +642,24 @@ const Tile = memo(function Tile({
   // MeshStandardMaterial → completely invisible, same +map on
   // MeshBasicMaterial → works): MeshStandardMaterial's own vertex-alpha
   // handling doesn't combine correctly with a `map` in this three.js
-  // version, silently dropping the whole strip to zero alpha everywhere
-  // instead of just not lighting it. MeshBasicMaterial (unlit) has no
-  // such issue — an acceptable tradeoff for a thin blend strip, which
-  // was never trying to shade differently from the base texture anyway.
+  // version, silently dropping the whole strip to zero alpha everywhere.
+  //
+  // Second real bug, also only visible live (real user report + screenshot:
+  // "esto no es un blend, es un halo/aura brillante"): MeshBasicMaterial
+  // is UNLIT — it always renders at full raw texture*color brightness,
+  // regardless of the scene's ambient/directional lighting or shadows. The
+  // base terrain mesh right underneath is a real lit MeshStandardMaterial,
+  // dimmer wherever shaded. Alpha-fading a fully-bright unlit patch over
+  // dimmer lit terrain reads as a glowing highlight, not a material
+  // transition — true regardless of which texture got sampled.
+  // MeshLambertMaterial keeps the same simple (non-PBR) shading model that
+  // dodges the first bug, but still responds to the scene's real lights,
+  // so the strip now shades the same as the ground around it.
   const blendOverlays = blendStrips.map((strip, i) => (
     <mesh key={i} geometry={strip.geometry} receiveShadow={false} castShadow={false}>
-      <meshBasicMaterial
+      <meshLambertMaterial
         map={terrainTexture(strip.neighborTerrain, strip.neighborQ, strip.neighborR)}
-        color={terrainColor(strip.neighborTerrain, strip.neighborQ, strip.neighborR)}
+        color={terrainColor(strip.neighborTerrain)}
         vertexColors
         transparent
         depthWrite={false}
@@ -1608,9 +1642,60 @@ const FOOTPRINT_DEPTH = 0.45
 // near:far depth-precision bug (see GMView.tsx's own fix), not just
 // this strip's own z-fighting.
 const TEXTURE_BLEND_SKIP_TERRAINS = RELIEF_SKIP_TERRAINS
-const TEXTURE_BLEND_WIDTH = HEX_SIZE * 0.12
-const TEXTURE_BLEND_SEGMENTS = 6
-const TEXTURE_BLEND_LIFT = HEX_SIZE * 0.04
+// Real user follow-up on that first version: "quiero que los cambios de
+// textura no se aprecien tan bruscos... no tiene por que ser justo en la
+// frontera entre tiles, puedes hacer degradados de diferentes formas en
+// diferentes sitios." The old 0.12 was a hairline ribbon that just drew
+// the hex outline in the neighbor's texture; this is the widest the
+// transition may reach (~48% of the apothem, so two facing borders can
+// never meet in the middle of a tile), and buildEdgeBlendPatch's own
+// noise mask is what decides where inside that band the real boundary
+// actually lands — typically far short of it, in ragged patches.
+const TEXTURE_BLEND_MAX_WIDTH = HEX_SIZE * 0.55
+// Per-border share of that maximum, picked from a hash below: some
+// borders fade over the full band, others stay tight and abrupt.
+const TEXTURE_BLEND_MIN_WIDTH_FACTOR = 0.5
+// Enough to resolve buildEdgeBlendPatch's own FINE_WAVELENGTH (which is
+// tuned against this density in the other direction — the two numbers
+// have to be changed together or the mask aliases into speckle).
+const TEXTURE_BLEND_SEGMENTS_ALONG = 16
+const TEXTURE_BLEND_SEGMENTS_IN = 8
+// Much smaller than the first version's HEX_SIZE * 0.04: that lift was
+// invisible on a hairline ribbon, but a band this wide floating ~1.2
+// world units over the ground would read as a hovering decal from any
+// low camera (FirstPersonView's especially). polygonOffset on the
+// material carries most of the z-fighting defense; this is just the
+// belt-and-braces gap that a real user report showed was needed.
+const TEXTURE_BLEND_LIFT = HEX_SIZE * 0.012
+
+/** Per-BORDER (not per-tile) random parameters for a texture blend: how
+ * wide that particular transition is allowed to be, and where in the
+ * shared noise field its pattern is sampled from. Keyed on the two tile
+ * coordinates in a canonical order, so the tile on each side of a border
+ * independently computes the IDENTICAL values — that agreement is what
+ * lets both halves of one transition line up into a single continuous
+ * pattern instead of two unrelated ones meeting at the edge. */
+function blendBorderParams(
+  q: number, r: number, nq: number, nr: number,
+): { width: number; noiseOffsetX: number; noiseOffsetZ: number; flipped: boolean } {
+  const first = q < nq || (q === nq && r < nr)
+  const [aq, ar, bq, br] = first ? [q, r, nq, nr] : [nq, nr, q, r]
+  const h = hashTile(aq * 1024 + bq, ar * 1024 + br, 'texture-blend-border')
+  const t = (h % 1000) / 1000
+  return {
+    width: TEXTURE_BLEND_MAX_WIDTH * (TEXTURE_BLEND_MIN_WIDTH_FACTOR + (1 - TEXTURE_BLEND_MIN_WIDTH_FACTOR) * t),
+    // Arbitrary large-ish strides through the noise field — big enough
+    // that two different borders never sample overlapping neighborhoods
+    // of it and end up with visually twinned patterns.
+    noiseOffsetX: ((h >>> 10) % 977) * 6.13,
+    noiseOffsetZ: ((h >>> 20) % 983) * 7.41,
+    // Which half of this border we are. The two tiles derive it from the
+    // SAME canonical ordering, so exactly one of them gets `true` — see
+    // buildEdgeBlendPatch's own doc comment for why that is the whole
+    // reason the two halves compose into one crossfade.
+    flipped: !first,
+  }
+}
 
 // Real user request (asked repeatedly this week — "ya te he pedido esto
 // 3 veces"): "estas pintando niebla por cada tile... quiero que hagas 1

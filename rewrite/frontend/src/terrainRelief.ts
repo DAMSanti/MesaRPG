@@ -82,6 +82,32 @@ export function terrainReliefAt(worldX: number, worldZ: number): number {
   return (n - 0.5) * 2 * RELIEF_AMPLITUDE
 }
 
+/** Raw, normalized [0,1] sample of the SAME world-space noise field
+ * `terrainReliefAt` above is built on — exposed so anything else that
+ * needs a continuous, cross-tile-coherent random pattern (currently
+ * hexTileGeometry.ts's own texture-blend mask) shares one field instead
+ * of growing a second, independently-tuned copy of the same math. The
+ * caller scales its own coordinates (that's what picks the feature
+ * size) — this deliberately applies no frequency of its own, unlike
+ * `terrainReliefAt`, whose frequency IS part of what "orography" means.
+ *
+ * Same world-space (not tile-local) sampling reasoning as this file's
+ * own header: two neighboring tiles evaluating the same world point get
+ * the same answer, which is exactly what lets a blend pattern started in
+ * one hex continue correctly into the next. */
+export function worldNoise01(x: number, z: number, octaves = 3): number {
+  // fbm2's own amplitude series (0.55, halving) — total possible output,
+  // so this normalizes to [0,1] regardless of how many octaves a caller
+  // asks for, instead of hardcoding one octave count's own maximum.
+  let total = 0
+  let amp = 0.55
+  for (let i = 0; i < octaves; i++) {
+    total += amp
+    amp *= 0.5
+  }
+  return Math.max(0, Math.min(1, fbm2(x, z, octaves) / total))
+}
+
 /** Terrains that stay perfectly flat — same "flush surface" terrains
  * `terrainSinkY` (TerrainDecor.tsx) and `elevationToY`'s own building
  * override already special-case, for the same visual reasons documented

@@ -14,9 +14,11 @@ import * as THREE from 'three'
  * texture and material color multiply cleanly instead of double-tinting.
  * Procedural terrains get a few variants picked deterministically per
  * tile (a hash of its coordinates, not Math.random — stays stable across
- * re-renders) so neighboring tiles of the same type don't look identical;
- * the photo terrains get `terrainRotation()` instead (see below) since
- * there's only one photo each to vary. */
+ * re-renders) so neighboring tiles of the same type don't look identical.
+ * The photo terrains need no such trick: hexTileGeometry.ts maps every
+ * tile's texture by TRUE WORLD POSITION (`worldTextureUV`), so one photo
+ * covers the whole board as a continuous carpet — each tile shows a
+ * different part of it, and same-terrain neighbors join seamlessly. */
 
 const SIZE = 512
 const VARIANTS = 3
@@ -26,9 +28,10 @@ const VARIANTS = 3
 // it across every tile's own UV space); repeat is tuned by eye so
 // detail stays crisp up close without the seams repeating often enough
 // to be obvious at table-wide zoom. Only one photo per terrain (unlike
-// the procedural VARIANTS below) — terrainRotation() gives each tile a
-// different apparent orientation of the same tiling photo instead, so a
-// whole field of plains doesn't look like one image pasted in a grid.
+// the procedural VARIANTS below) — world-space UVs (see this file's own
+// header) give each tile a different part of the same tiling photo
+// instead, so a whole field of plains doesn't look like one image pasted
+// in a grid.
 const GRASS_REPEAT = 3
 const FOREST_FLOOR_REPEAT = 4
 const DIRT_REPEAT = 3
@@ -79,34 +82,24 @@ const getSidewalkTexture = () => loadPhotoTexture('/textures/sidewalk.jpg', SIDE
 // Not every plains tile is a uniform lawn — a minority (roughly 1 in 5)
 // render as bare, pebbly earth instead (dirt.jpg), so a field reads as
 // patchy ground rather than one photo tiled everywhere. Exported so
-// terrainColor()'s brightness-jitter tint and any decoration logic that
-// cares (fewer grass tufts on a dirt patch, say) can agree with the
-// texture on which tiles are which, instead of re-deriving the same
-// hash independently and risking the two disagreeing.
+// any decoration logic that cares (fewer grass tufts on a dirt patch,
+// say) can agree with the texture on which tiles are which, instead of
+// re-deriving the same hash independently and risking the two
+// disagreeing.
 export function plainsGroundVariant(q: number, r: number): 'grass' | 'dirt' {
   return hashTile(q, r, 'plains-ground') % 5 === 0 ? 'dirt' : 'grass'
 }
 
-/** Per-tile Y rotation (radians) for the photo terrains — cheap stand-in
- * for the procedural terrains' multiple baked variants: rotating the
- * whole tile mesh shows a different apparent crop/orientation of the
- * same repeating photo, breaking up the obvious grid-alignment a shared
- * texture would otherwise show across many tiles, without needing
- * multiple source images or cloning a Texture before its image has
- * actually loaded (a real hazard — a clone made too early never picks
- * up the async load, leaving that tile blank). Zero for every other
- * terrain, which already gets variety from its own baked variants.
- *
- * Snapped to 60° steps — the tile mesh is a 6-sided cylinder, so only
- * multiples of its own rotational symmetry keep its hex silhouette
- * aligned edge-to-edge with its neighbors; anything finer would open
- * visible gaps/overlaps at tile borders despite the texture itself
- * tiling seamlessly. */
-const ROTATED_PHOTO_TERRAINS = new Set(['plains', 'forest', 'light_forest', 'road', 'hills', 'water', 'water_deep', 'rough', 'rubble', 'swamp', 'snow', 'building'])
-export function terrainRotation(terrain: string, q: number, r: number): number {
-  if (!ROTATED_PHOTO_TERRAINS.has(terrain)) return 0
-  return (hashTile(q, r, 'photo-rotation') % 6) * (Math.PI / 3)
-}
+/* A per-tile Y rotation used to live here (`terrainRotation`), snapped to
+ * 60 degree steps, as a cheap way to keep a whole field of one photo
+ * terrain from reading as the same image pasted in a grid. It was
+ * already dead — the ground mesh stopped being rotated once its own
+ * vertices started encoding WHICH real edge ramps toward WHICH neighbor
+ * (see HexMap.tsx's Tile) — and hexTileGeometry.ts's `worldTextureUV`
+ * has now made the whole idea obsolete anyway: mapping every tile's
+ * texture by true world position means no two tiles show the same crop
+ * in the first place, AND same-terrain neighbors line up seamlessly,
+ * which no amount of per-tile rotation could ever achieve. */
 
 function mulberry32(seed: number) {
   let s = seed | 0
@@ -145,13 +138,17 @@ export function hashTile(q: number, r: number, salt: number | string = 0): numbe
  * hill-grass.jpg exists would just wash the real photo out unnaturally,
  * the same reasoning already applied to plains/forest.
  *
- * These photo terrains additionally get a small per-tile brightness
- * jitter (±6%) folded into this same color, since they only have one
- * source photo each (see terrainRotation above) — without it, every
- * plains/hills tile would be lit exactly alike despite sharing one
- * image; every non-photo terrain already varies via its own baked
- * texture variant, so no jitter is added there. */
-export function terrainColor(terrain: string, q = 0, r = 0): string {
+ * A small per-tile brightness jitter (±6%) used to be folded in here too,
+ * back when every tile of a terrain rendered the byte-identical crop of
+ * one photo and needed SOMETHING to tell them apart. Once
+ * hexTileGeometry.ts's `worldTextureUV` made the texture continuous
+ * across the board, that jitter inverted its own purpose: the crops
+ * differ on their own now, and a per-tile multiplier is the one thing
+ * left that still paints a visible hex-shaped brightness step across
+ * ground that is otherwise seamless — the exact "se aprecia el cambio de
+ * forma brusca" artifact this pass exists to remove. Real lighting and
+ * the photo's own variation carry the variety instead. */
+export function terrainColor(terrain: string): string {
   if (terrain === 'plains' || terrain === 'forest' || terrain === 'light_forest' || terrain === 'hills') {
     // light_forest gets a lighter multiply than forest's dense-canopy
     // shadow — thinner canopy, more daylight reaching the ground — while
@@ -160,9 +157,7 @@ export function terrainColor(terrain: string, q = 0, r = 0): string {
       terrain === 'forest' ? { r: 0x4a, g: 0x5c, b: 0x46 } :
       terrain === 'light_forest' ? { r: 0x7a, g: 0x8c, b: 0x70 } :
       { r: 0xff, g: 0xff, b: 0xff }
-    const jitter = 0.94 + (hashTile(q, r, 'photo-tint') % 1000 / 1000) * 0.12
-    const scale = (c: number) => Math.max(0, Math.min(255, Math.round(c * jitter)))
-    return `rgb(${scale(base.r)}, ${scale(base.g)}, ${scale(base.b)})`
+    return `rgb(${base.r}, ${base.g}, ${base.b})`
   }
   if (terrain === 'water_deep') return '#0c2530'
   return '#ffffff'
