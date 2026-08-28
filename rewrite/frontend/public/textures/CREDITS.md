@@ -115,3 +115,36 @@ the real downloaded model wasn't being used. `realistic-tree.glb` (this entry) i
 and texture-patched as described above; the procedural trunk/branch/leaf-card geometry it replaced
 (`TreeBillboard`, `LeafInstances`, `Branch`) was deleted, along with the now-unused `bark.jpg`,
 `leaf-fern.png` and `leaf-broad.png` that geometry used to render.
+
+## Vegetation models — CC0, no attribution required
+
+All from [Poly Haven](https://polyhaven.com/) (photogrammetry scans), fetched at their 1K glTF
+tier, welded + simplified with `gltf-transform` and with their source textures downscaled to
+256px (ground cover) or 512px (everything else) before packing to `.glb`. That last step is what
+keeps the whole set at 6.6MB instead of 30MB; `gltf-transform`'s own `resize`/`webp` commands
+could not do it in this environment (its bundled libvips fails with "colourspace: parameter space
+not set" on these JPEGs), so the source images were resized directly instead.
+
+Each file holds SEVERAL named variants laid out side by side in one scene — Poly Haven's own
+convention, and the reason `GroundVegetation.tsx` pulls every mesh out as an independent variant
+rather than treating a file as one model. Triangle counts below are per plant, after simplifying.
+
+- `vegetation/grass_bermuda_01.glb` — [Grass Bermuda 01](https://polyhaven.com/a/grass_bermuda_01), 21 variants, ~45 tris each.
+- `vegetation/moss_01.glb` — [Moss 01](https://polyhaven.com/a/moss_01), 12 variants, ~17 tris each.
+- `vegetation/grass_medium_01.glb` — [Grass Medium 01](https://polyhaven.com/a/grass_medium_01), 17 variants (small/mid/tall/large), ~436 tris each.
+- `vegetation/grass_medium_02.glb` — [Grass Medium 02](https://polyhaven.com/a/grass_medium_02), 5 variants, ~470 tris each.
+- `vegetation/weed_plant_02.glb` — [Weed Plant 02](https://polyhaven.com/a/weed_plant_02), 5 variants, ~399 tris each.
+- `vegetation/celandine_01.glb` — [Celandine 01](https://polyhaven.com/a/celandine_01), 5 variants, ~537 tris each.
+- `vegetation/dandelion_01.glb` — [Dandelion 01](https://polyhaven.com/a/dandelion_01), 5 variants, ~806 tris each.
+- `vegetation/shrub_02.glb` — [Shrub 02](https://polyhaven.com/a/shrub_02), 4 variants, ~803 tris each.
+- `vegetation/shrub_03.glb` — [Shrub 03](https://polyhaven.com/a/shrub_03), 4 variants, ~621 tris each.
+- `vegetation/shrub_04.glb` — [Shrub 04](https://polyhaven.com/a/shrub_04), 1 variant, ~2.8k tris.
+- `vegetation/pine_sapling_small.glb` — [Pine Sapling Small](https://polyhaven.com/a/pine_sapling_small), 3 variants, ~3.9k tris each (398k in the source; the heaviest simplification of the set, and only ever placed as a rare lone sapling).
+- `vegetation/tree_stump_01.glb` — [Tree Stump 01](https://polyhaven.com/a/tree_stump_01), ~6.2k tris. Diorama prop.
+- `vegetation/dry_branches_medium_01.glb` — [Dry Branches Medium 01](https://polyhaven.com/a/dry_branches_medium_01), 3 variants, ~2.8k tris each. Diorama prop.
+- `vegetation/stone_01.glb` — [Stone 01](https://polyhaven.com/a/stone_01), ~6.4k tris. Diorama prop.
+- `vegetation/rock_moss_set_01.glb` — [Rock Moss Set 01](https://polyhaven.com/a/rock_moss_set_01), 6 variants, ~1.3k tris each. Diorama prop.
+
+The dense grass carpet underneath all of these is NOT a model — it is a procedurally painted
+canvas texture on crossed quads (four triangles a tuft), see `GroundVegetation.tsx`'s
+`getGrassCardTexture`. No scanned plant is cheap enough to cover ground at that density.

@@ -1,4 +1,6 @@
 import * as THREE from 'three'
+import { hexToWorld, HEX_SIZE } from './hexMath'
+import { worldNoise01 } from './terrainRelief'
 
 /** Shared by MapEditorView (authoring) and HexMap (table display) so the
  * two never drift into showing terrain differently.
@@ -79,15 +81,72 @@ const getSnowTexture = () => loadPhotoTexture('/textures/snow.jpg', SNOW_REPEAT)
 const SIDEWALK_REPEAT = 2
 const getSidewalkTexture = () => loadPhotoTexture('/textures/sidewalk.jpg', SIDEWALK_REPEAT)
 
-// Not every plains tile is a uniform lawn — a minority (roughly 1 in 5)
-// render as bare, pebbly earth instead (dirt.jpg), so a field reads as
-// patchy ground rather than one photo tiled everywhere. Exported so
-// any decoration logic that cares (fewer grass tufts on a dirt patch,
-// say) can agree with the texture on which tiles are which, instead of
-// re-deriving the same hash independently and risking the two
-// disagreeing.
+/** Real user request: "ahora mismo tenemos dos texturas asignadas a
+ * llanuras y 1 textura a colinas, quiero poner las 3 texturas tanto para
+ * colinas como llanuras... deberan ser parches coherentes" — plains and
+ * hills are the same ground, only at different heights, so they now draw
+ * from one shared pool of three photos instead of hills being locked to
+ * a single one.
+ *
+ * `grassDark` is grass.jpg (deep, dense turf), `grassLight` is
+ * hill-grass.jpg (paler, coarser) and `earth` is dirt.jpg (bare pebbly
+ * soil).
+ *
+ * "Coherente" is the whole point of how they are picked. A per-tile hash
+ * (what plains used to use for its 1-in-5 dirt) makes an even, uncorrelated
+ * sprinkle — every tile an independent coin flip, which reads as noise, not
+ * as terrain. These sample the SAME kind of continuous world-space noise
+ * field the ground relief already uses, at a wavelength of a few hexes, so
+ * neighbouring tiles tend to agree and the variants come out as real
+ * patches that sprawl across several tiles: a meadow running over a ridge,
+ * a worn earth scar, and lawn between them. The two fields are independent
+ * (different offsets), so an earth patch can sit inside either grass type
+ * rather than only ever appearing at their boundary.
+ *
+ * Also what stops the texture blending from having to work everywhere at
+ * once: patches mean most borders now have MATCHING ground on both sides
+ * and no transition to draw at all, and the ones that remain are the real
+ * edges of a patch. */
+// Named for how they read on the board, which is how the user refers to
+// them ("las verdes claras... las verdes oscuras... las de tierra") and the
+// only naming that cannot be misread: grass.jpg measures notably DARKER than
+// hill-grass.jpg (mean brightness 67 vs 84), the opposite of what the file
+// names suggest, and getting that backwards puts every density in this
+// project's vegetation on the wrong ground.
+export type GroundVariant = 'grassDark' | 'grassLight' | 'earth'
+
+// Wavelengths in world units. PATCH is the lawn/meadow split — a few hexes
+// across, so a patch covers a small group of tiles rather than one. EARTH is
+// tighter: bare soil reads as a scar or a worn spot, something smaller than
+// the grassland it interrupts.
+const GROUND_PATCH_WAVELENGTH = HEX_SIZE * 3.4
+const GROUND_EARTH_WAVELENGTH = HEX_SIZE * 2.2
+// Thresholds on the two [0,1] fields. MEADOW_AT below 0.5 keeps lawn the
+// more common of the two grasses; EARTH_AT high keeps bare soil a minority,
+// close to the old 1-in-5 rate but clustered instead of scattered.
+const GROUND_MEADOW_AT = 0.46
+const GROUND_EARTH_AT = 0.62
+
+export function groundVariant(q: number, r: number): GroundVariant {
+  // Sampled at the tile's own world CENTRE, not per-pixel: a tile draws one
+  // texture, so the field only has to answer once per tile. Neighbouring
+  // centres are close together relative to the wavelengths above, which is
+  // exactly why they tend to land on the same answer.
+  const [wx, wz] = hexToWorld(q, r)
+  if (worldNoise01(wx / GROUND_EARTH_WAVELENGTH + 61.7, wz / GROUND_EARTH_WAVELENGTH - 23.9, 2) > GROUND_EARTH_AT) {
+    return 'earth'
+  }
+  return worldNoise01(wx / GROUND_PATCH_WAVELENGTH, wz / GROUND_PATCH_WAVELENGTH, 2) > GROUND_MEADOW_AT
+    ? 'grassLight'
+    : 'grassDark'
+}
+
+/** Kept as its own name because decoration logic asks a different question
+ * than the texture does — "is this tile bare soil?", for thinner grass
+ * cover — and should never re-derive it from a second, independent hash
+ * that could disagree with what is actually drawn. */
 export function plainsGroundVariant(q: number, r: number): 'grass' | 'dirt' {
-  return hashTile(q, r, 'plains-ground') % 5 === 0 ? 'dirt' : 'grass'
+  return groundVariant(q, r) === 'earth' ? 'dirt' : 'grass'
 }
 
 /* A per-tile Y rotation used to live here (`terrainRotation`), snapped to
@@ -244,15 +303,15 @@ export function buildingKind(q: number, r: number): number {
 /** Deterministic per-tile variant (stable across renders) of a terrain's
  * texture — same terrain, different tiles look slightly different. */
 export function terrainTexture(terrain: string, q: number, r: number): THREE.Texture {
-  if (terrain === 'plains') return plainsGroundVariant(q, r) === 'dirt' ? getDirtTexture() : getGrassTexture()
+  // plains and hills share one pool of three ground photos — see
+  // groundVariant above for why they are picked from a world-space field
+  // rather than a per-tile hash.
+  if (terrain === 'plains' || terrain === 'hills') {
+    const v = groundVariant(q, r)
+    return v === 'earth' ? getDirtTexture() : v === 'grassLight' ? getHillGrassTexture() : getGrassTexture()
+  }
   if (terrain === 'forest' || terrain === 'light_forest') return getForestFloorTexture()
   if (terrain === 'road') return getRoadTexture()
-  // Real photo instead of the flat procedural pattern every other
-  // non-photo terrain still uses — per explicit request for "alguna
-  // textura realista" once the tapered-mound geometry fix (see
-  // HexMap.tsx's own hillTopRadius) made hills actually worth looking
-  // closely at instead of reading as a flat-topped block.
-  if (terrain === 'hills') return getHillGrassTexture()
   // The tile's own ground, not the building on top of it — a real
   // sidewalk photo, per explicit request ("quiero que la base tenga la
   // textura como de una acera"). The building itself is a real .glb

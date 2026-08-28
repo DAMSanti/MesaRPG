@@ -12,7 +12,9 @@ import { listMechAnnotations } from '../api'
 import { Mech3D } from './Mech3D'
 import { GROUND_FLUSH_TOP, TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
+import { GroundVegetation } from './GroundVegetation'
 import { hashTile, terrainColor, terrainTexture } from '../terrain'
+import { grassDensityAt, GRASS_SHADE, GRASS_SHADE_STRENGTH } from '../grassPatches'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import {
   BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationBandRange, elevationToY, GROUND_BASE_HEIGHT, GROOVE_THICKNESS,
@@ -529,10 +531,18 @@ const Tile = memo(function Tile({
   const STAMP_DETAIL_SUBDIVISIONS = 32
   const BASE_SUBDIVISIONS = 10
   const subdivisions = stampVersion > 0 ? STAMP_DETAIL_SUBDIVISIONS : BASE_SUBDIVISIONS
+  // Only terrain that actually grows grass gets the shading — see
+  // grassPatches.ts. Everything else passes nothing and bakes plain white.
+  const groundTint = useMemo(() => (VEGETATED_TERRAINS.has(tile.terrain)
+    ? (wx: number, wz: number): [number, number, number] => {
+      const d = grassDensityAt(wx, wz) * GRASS_SHADE_STRENGTH
+      return [1 + (GRASS_SHADE.r - 1) * d, 1 + (GRASS_SHADE.g - 1) * d, 1 + (GRASS_SHADE.b - 1) * d]
+    }
+    : undefined), [tile.terrain])
   const blendedGeometry = useMemo(
-    () => buildBlendedHexGeometry(HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, subdivisions, TERRAIN_RAMP_FRACTION, x, z, bandLow, bandHigh),
+    () => buildBlendedHexGeometry(HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, subdivisions, TERRAIN_RAMP_FRACTION, x, z, bandLow, bandHigh, groundTint),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion],
+    [meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion, groundTint],
   )
   // Real user correction: a first fix just raised LosDebugOverlay's own
   // flat disc higher, clearing the terrain's bumps but reading as
@@ -645,6 +655,11 @@ const Tile = memo(function Tile({
       <meshStandardMaterial
         color={terrainColor(tile.terrain)}
         map={terrainTexture(tile.terrain, tile.q, tile.r)}
+        // Carries the grass-density shading baked into the geometry above.
+        // Always on, because every tile bakes the attribute (white where
+        // there is no tint) — see buildBlendedHexGeometry's own note on why
+        // a sometimes-present attribute is worse than a constant one.
+        vertexColors
         side={THREE.DoubleSide}
       />
     </mesh>
@@ -1668,6 +1683,9 @@ const FOOTPRINT_DEPTH = 0.45
 // why the two cannot be traded off inside this scheme at all.
 const TERRAIN_RAMP_FRACTION = 0.8
 
+/** Terrain whose soil takes the grass-density shading, matching what
+ * GroundVegetation actually plants on. */
+const VEGETATED_TERRAINS = new Set(['plains', 'hills'])
 const TEXTURE_BLEND_SKIP_TERRAINS = RELIEF_SKIP_TERRAINS
 // Real user follow-up on that first version: "quiero que los cambios de
 // textura no se aprecien tan bruscos... no tiene por que ser justo en la
@@ -2593,6 +2611,15 @@ export function HexMap({
           onPointerUp={(e) => resolveAt(tile.q, tile.r, e)}
         />
       ))}
+      {/* One batched pass for the whole board rather than per-tile decor —
+          see GroundVegetation's own doc comment for why instancing is the
+          only affordable way to put real plants on 30m hexes. */}
+      {/* No fog gating on purpose. Real user request: "la hierba/rocas debe
+          cargar incluso fuera de LoS" — and gating it was actively harmful,
+          because the visible set changes on every step and every turn, and
+          each change rebuilt the whole board's vegetation. Grass and ground
+          props are short enough that the fog volume covers them anyway. */}
+      <GroundVegetation tiles={map.tiles} lookup={lookup} />
       {fogRegions.map((region, i) => (
         <FogRegionMesh key={`fog-region-${i}`} shape={region.shape} baseY={region.baseY} seed={i * 7.13} subtle={fogSubtle} />
       ))}

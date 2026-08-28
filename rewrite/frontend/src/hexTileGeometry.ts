@@ -331,9 +331,21 @@ export function buildBlendedHexGeometry(
    * that boundary. */
   bandLow: number,
   bandHigh: number,
+  /** Optional per-vertex ground tint, sampled by TRUE world position.
+   *
+   * Real user request: "podemos hacer alguna trampa en tableview y gmview
+   * para que los parches de hierba se vean mejor? que pinte ligeramente del
+   * verde mas oscuro las zonas por densidad de hierba" — from a distant
+   * camera the grass geometry is only a few pixels tall and its mats barely
+   * register, so the soil underneath carries the pattern instead. Passed in
+   * rather than computed here because this file knows about hex geometry,
+   * not about what grows on it; the caller supplies whatever field it wants
+   * (and passes nothing at all for terrain that has no vegetation). */
+  groundTint?: (worldX: number, worldZ: number) => [number, number, number],
 ): THREE.BufferGeometry {
   const positions: number[] = []
   const uvs: number[] = []
+  const colors: number[] = []
   const indices: number[] = []
 
   const { heightAt, capBoundary } = makeHexHeightAt(
@@ -346,6 +358,16 @@ export function buildBlendedHexGeometry(
     positions.push(x, y, z)
     const [u, v] = worldTextureUV(tileWorldX + x, tileWorldZ + z, radius)
     uvs.push(u, v)
+    // White when no tint is supplied, so the material can keep vertexColors
+    // on unconditionally and every tile takes the same code path — a
+    // material that only sometimes has the attribute it declares is a
+    // reliable way to get a silently black mesh.
+    if (groundTint) {
+      const [cr, cg, cb] = groundTint(tileWorldX + x, tileWorldZ + z)
+      colors.push(cr, cg, cb)
+    } else {
+      colors.push(1, 1, 1)
+    }
     return vertCount++
   }
 
@@ -412,6 +434,7 @@ export function buildBlendedHexGeometry(
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+  geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3))
   geometry.setIndex(indices)
   // Real per-vertex normals from the actual baked (possibly ramped)
   // positions — cheap and correct now that there's no shader to hijack
@@ -564,7 +587,8 @@ export function buildDrapedHexCap(
  * Rendering contract is deliberately shader-free (hand-rolled GLSL caused
  * a real, visibly broken regression earlier in this project): an ordinary
  * transparent vertex-colored mesh drawn over the base tile with the
- * NEIGHBOR's texture, RGB always white so only alpha carries the mask.
+ * NEIGHBOR's texture, RGB carrying the same ground tint as the mesh
+ * underneath and alpha carrying the mask.
  * `heightAt`/`corner` come from the SAME `makeHexHeightAt` call the base
  * mesh used, so it sits flush on the real (ramped, bumpy, stamped)
  * surface; `liftY` is the small deliberate vertical gap that fixed a real
@@ -635,8 +659,8 @@ export function buildEdgeBlendPatch(
   const colors: number[] = []
   const indices: number[] = []
   let vertCount = 0
-  // Vertex color is RGBA: RGB always white (1,1,1) — no tint, only alpha
-  // carries the mask. Relies on ordinary three.js material behavior
+  // Vertex color is RGBA: RGB is the ground tint (white when there is none),
+  // alpha carries the mask. Relies on ordinary three.js material behavior
   // (`vertexColors` + a 4-component color attribute + `transparent`), no
   // custom shader involved.
   const pushVertex = (x: number, y: number, z: number, alpha: number): number => {
