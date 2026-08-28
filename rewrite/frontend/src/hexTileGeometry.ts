@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { TERRAIN_FLOOR_Y } from './hexMath'
 import { stampedDepthAt, terrainReliefAt, worldNoise01 } from './terrainRelief'
 
 /** Real user request: "vamos a eliminar los saltos entre hexes" — but
@@ -139,6 +140,7 @@ export function makeHexHeightAt(
   radius: number,
   ownHeight: number,
   neighborHeights: (number | null)[],
+  neighborBands: ([number, number] | null)[],
   blendFraction: number,
   tileWorldX: number,
   tileWorldZ: number,
@@ -151,6 +153,10 @@ export function makeHexHeightAt(
   const heightAt = (x: number, z: number): number => {
     let deltaSum = 0
     let weightSum = 0
+    // The tile's own elevation band, travelling along with the ramp under
+    // exactly the same weights as the height itself — see `bandLowAt` below.
+    let lowSum = 0
+    let highSum = 0
     for (let k = 0; k < 6; k++) {
       const nh = neighborHeights[k]
       if (nh == null || nh === ownHeight) continue
@@ -158,19 +164,106 @@ export function makeHexHeightAt(
       const distToEdge = apothem - (x * nx + z * nz)
       if (distToEdge >= blendZoneWidth) continue
       const t = Math.max(0, Math.min(1, distToEdge / blendZoneWidth))
-      const smooth = t * t * (3 - 2 * t)
-      const w = 1 - smooth
+      // Real user report, from the ground, pointing straight at a border:
+      // "continua la pendiente pero inmediatamente hace como un escalon...
+      // pasa en todas las fronteras entre tiles de alturas diferentes."
+      //
+      // `1 - smoothstep(t)` has ZERO derivative at t=0 — which is exactly
+      // AT the shared edge. Both tiles therefore arrived at the border
+      // dead flat and only picked the slope back up once inside
+      // themselves: a level shelf straight across every boundary between
+      // different elevations, with the hillside resuming right after it.
+      // Measured on a 6-unit level step: slope 0.0022 at the border
+      // against 0.2165 at its steepest, a few metres away.
+      //
+      // Reading the SAME smoothstep across the whole two-tile crossing
+      // fixes it. `u` is how far along that crossing this point is — 0 at
+      // the far side of our own ramp zone, 0.5 at the border — with the
+      // neighbour covering 0.5..1 by mirror symmetry. smoothstep is
+      // steepest at its midpoint, so the slope now PEAKS at the border
+      // (0.2165, the maximum) and eases off toward each tile's own middle:
+      // one continuous S-curve over the two tiles. Doubling keeps the
+      // weight on its old 0..1 scale, so w is still exactly 1 at the edge
+      // and the two tiles still meet at the midpoint height.
+      //
+      // This was tried once before and wrongly discarded as useless: at the
+      // time the within-hex noise was still being faded out across ramps,
+      // and the glassy smooth band THAT produced was a far bigger artifact
+      // sitting on top of this one, so fixing this changed nothing visible.
+      // With the noise restored (see below) it is the whole remaining bug.
+      // What it does NOT fix, and was mistakenly blamed for once, is the
+      // flat plateau every tile has at its own centre: that comes from
+      // blendFraction being under 1.0, and the restored noise is what
+      // covers it. Setting blendFraction to 1.0 to remove it as well turns
+      // every summit into a sharp pyramid — measured, and much worse.
+      const u = 0.5 * (1 - t)
+      const w = 2 * (u * u * (3 - 2 * u))
       if (w <= 0) continue
       deltaSum += w * (nh - ownHeight) * 0.5
       weightSum += w
+      const nb = neighborBands[k]
+      if (nb) {
+        lowSum += w * (nb[0] - bandLow) * 0.5
+        highSum += w * (nb[1] - bandHigh) * 0.5
+      }
     }
-    if (weightSum > 1) deltaSum /= weightSum
-    const rampWeight = Math.min(1, weightSum)
+    if (weightSum > 1) {
+      deltaSum /= weightSum
+      lowSum /= weightSum
+      highSum /= weightSum
+    }
     const base = ownHeight + deltaSum
-    const noise = terrainReliefAt(tileWorldX + x, tileWorldZ + z) * (1 - rampWeight)
+    // Full strength, everywhere — including across ramps, where it used to
+    // be faded out by `* (1 - rampWeight)`. That fade is what a real user
+    // spotted from the ground: hills inside one elevation level looked
+    // right ("una colina la hace perfecta") because they are pure
+    // world-space noise, while any level CHANGE turned the ground glassy
+    // smooth over the whole ramp and read as a step cut into rough terrain.
+    // It costs nothing in cross-tile agreement: the noise is one continuous
+    // function of world position, so both tiles sampling the same point
+    // always get the same number, fade or no fade.
+    const noise = terrainReliefAt(tileWorldX + x, tileWorldZ + z)
     const withNoise = base + noise
-    const clamped = rampWeight > 0 ? withNoise : Math.max(bandLow, Math.min(bandHigh, withNoise))
-    const result = clamped - stampedDepthAt(tileWorldX + x, tileWorldZ + z)
+    // Real user report (with screenshots): black blobs on the map, "siempre
+    // en las mismas zonas, parecen como depresiones... puede ser que bajen
+    // por debajo de la altura de las tiles." They did. This clamp used to be
+    // SKIPPED outright whenever `rampWeight > 0` — meaning on any tile with
+    // even one different-height neighbour, across the whole 80%-of-apothem
+    // ramp zone. Out near the inner end of that zone the ramp contributes
+    // almost nothing (base stays ~ownHeight) but `rampWeight` is still just
+    // barely above zero, so the noise ran at nearly full amplitude with
+    // nothing bounding it: a level-0 tile (own height 1, band 0..5, relief
+    // amplitude 3.6) could reach y = -2.6, straight through the groove slab
+    // underneath, whose dark top face is what was actually being seen. Same
+    // spots every time, because the noise field is deterministic in world
+    // space.
+    //
+    // The reason the clamp was conditional is real though: a ramp
+    // legitimately crosses out of its own band, that is the entire point of
+    // it. So rather than switching off, the bounds now WIDEN to admit the
+    // ramp's own value and nothing else — the ramp may leave the band, the
+    // noise on top of it may not.
+    // ...which is only safe if the BAND travels with the ramp too. Clamping
+    // ramped ground against the tile's own stationary band would shear the
+    // restored noise off against a flat ceiling/floor partway up every
+    // slope — a worse artifact than the one being fixed. Interpolating the
+    // two bands with the same weights as the height keeps the noise the
+    // same size all the way across, and keeps the two tiles in exact
+    // agreement: at their shared edge both land on w=1, so both compute the
+    // midpoint of the two bands and clamp against identical numbers.
+    const bandLowAt = bandLow + lowSum
+    const bandHighAt = bandHigh + highSum
+    const clamped = Math.max(Math.min(bandLowAt, base), Math.min(Math.max(bandHighAt, base), withNoise))
+    // Stamped craters/footprints are subtracted after the clamp on purpose
+    // (a crater is meant to dig below the band's own floor), but they must
+    // still stop short of the groove: a 1.2-deep impact crater on a level-0
+    // tile that had already dipped would otherwise punch through it exactly
+    // like the noise used to. Taking the MINIMUM means this floor can only
+    // ever stop a surface going lower, never raise one that belongs lower —
+    // a flush terrain's lake bed sets `bandLow` far below this and keeps
+    // it.
+    const floorY = Math.min(TERRAIN_FLOOR_Y, bandLow)
+    const result = Math.max(floorY, clamped - stampedDepthAt(tileWorldX + x, tileWorldZ + z))
     // Last-line defense: a real user report of actual HOLES in the
     // terrain mesh at a distance ("veo cosas de debajo del tablero")
     // traces to a NaN/non-finite vertex Y — WebGL quietly refuses to
@@ -201,11 +294,24 @@ export function buildBlendedHexGeometry(
    * HexMap.tsx's own Tile). A `null` edge gets a plain vertical wall
    * instead, same as every edge used to have. */
   neighborHeights: (number | null)[],
+  /** Each ramping neighbour's own elevation band, in the same order — see
+   * `makeHexHeightAt`, which interpolates these alongside the heights so a
+   * tile's within-hex noise can survive a ramp without being clamped flat
+   * against a band that stayed behind. `null` wherever `neighborHeights`
+   * is. */
+  neighborBands: ([number, number] | null)[],
   subdivisions: number,
-  /** Fraction of the hex's own apothem (center-to-edge distance) the
-   * ramp occupies, starting from the edge inward — real user request:
-   * keep this SMALL, most of the tile should still read at its own true
-   * height. */
+  /** Fraction of the hex's own apothem (center-to-edge distance) the ramp
+   * occupies, starting from the edge inward. An earlier request ("no
+   * suavices demasiado, se tiene que notar que son hexes de diferentes
+   * alturas") had this deliberately small so most of a tile stayed at its
+   * own flat height; a later one ("puedes hacer que la pendiente sea
+   * constante? no quiero ese escalon") supersedes it, and the caller now
+   * passes 1.0. Anything below 1.0 leaves a flat plateau in the middle of
+   * every tile, which on a hillside reads as a terrace per hex — see the
+   * weight in `heightAt` below, where the same fix has its other half.
+   * Different hex heights still read perfectly well from the slope itself
+   * and from the groove grid; what they no longer do is step. */
   blendFraction: number,
   /** This tile's own world-space center (hexToWorld(q,r)) — the within-
    * hex orography below samples `terrainReliefAt` by TRUE world
@@ -228,7 +334,7 @@ export function buildBlendedHexGeometry(
   const indices: number[] = []
 
   const { heightAt, capBoundary } = makeHexHeightAt(
-    radius, ownHeight, neighborHeights, blendFraction, tileWorldX, tileWorldZ, bandLow, bandHigh,
+    radius, ownHeight, neighborHeights, neighborBands, blendFraction, tileWorldX, tileWorldZ, bandLow, bandHigh,
   )
 
   const N = Math.max(1, Math.floor(subdivisions))

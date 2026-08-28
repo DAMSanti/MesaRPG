@@ -15,8 +15,8 @@ import { RoadMarkings } from './RoadMarkings'
 import { hashTile, terrainColor, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import {
-  BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationBandRange, elevationToY, GROUND_BASE_HEIGHT, HEX_SIZE, hexToWorld,
-  mapCenter, WALK_SPEED, worldToHex,
+  BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationBandRange, elevationToY, GROUND_BASE_HEIGHT, GROOVE_THICKNESS,
+  GROOVE_TOP_Y, HEX_SIZE, hexToWorld, mapCenter, WALK_SPEED, worldToHex,
 } from '../hexMath'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
@@ -410,8 +410,8 @@ const Tile = memo(function Tile({
   // CAP_EDGE_INSET, instead of a bare multiplier repeated at every call
   // site here.
   const groove = (
-    <mesh position={[0, -0.1, 0]} receiveShadow>
-      <cylinderGeometry args={[HEX_SIZE, HEX_SIZE, 0.15, 6]} />
+    <mesh position={[0, GROOVE_TOP_Y - GROOVE_THICKNESS / 2, 0]} receiveShadow>
+      <cylinderGeometry args={[HEX_SIZE, HEX_SIZE, GROOVE_THICKNESS, 6]} />
       <meshStandardMaterial color="#241a10" roughness={0.9} />
     </mesh>
   )
@@ -446,6 +446,26 @@ const Tile = memo(function Tile({
     // walkable would be worse than the old flat cliff it replaced.
     if (Math.abs(tile.elevation - neighbor.elevation) > 2) return null
     return elevationToY(neighbor.terrain, neighbor.elevation)
+  })
+  // Real user observation, and the thing that finally located the bug:
+  // "funciona perfectamente con cambios de altura entre tiles de la misma
+  // altura, una colina la hace perfecta, pero entre un tile de altura 0 y
+  // uno de altura 1 hace un escalon." Within one BattleTech level the
+  // surface is nothing but one continuous world-space noise field, which is
+  // why it looks right; across levels the ramp took over AND switched that
+  // noise off, dropping a glassy, perfectly smooth band into otherwise
+  // rough ground. Keeping the noise on across a ramp needs the tile's own
+  // elevation BAND to travel with it (otherwise the clamp shears the noise
+  // flat), so each ramping neighbour's band comes along here for
+  // makeHexHeightAt to interpolate with the very same weights it uses for
+  // the heights themselves. A neighbour that ramps is never a flush/skipped
+  // terrain (those return null above), so its band is always the plain
+  // elevation band — no need to repeat the flush/building special cases the
+  // tile's own bandLow/bandHigh below still has to handle.
+  const neighborBands = FOG_HEX_NEIGHBORS.map(([dq, dr], k) => {
+    if (neighborHeights[k] == null) return null
+    const neighbor = lookup.get(`${tile.q + dq},${tile.r + dr}`)
+    return neighbor ? elevationBandRange(neighbor.elevation) : null
   })
   // Real user report: water/swamp tiles' own within-hex orography could
   // bulge the ground mesh up ABOVE TerrainDecor.tsx's own WaterSurface/
@@ -510,7 +530,7 @@ const Tile = memo(function Tile({
   const BASE_SUBDIVISIONS = 10
   const subdivisions = stampVersion > 0 ? STAMP_DETAIL_SUBDIVISIONS : BASE_SUBDIVISIONS
   const blendedGeometry = useMemo(
-    () => buildBlendedHexGeometry(HEX_SIZE, meshOwnHeight, neighborHeights, subdivisions, 0.8, x, z, bandLow, bandHigh),
+    () => buildBlendedHexGeometry(HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, subdivisions, TERRAIN_RAMP_FRACTION, x, z, bandLow, bandHigh),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion],
   )
@@ -533,7 +553,7 @@ const Tile = memo(function Tile({
   const HIGHLIGHT_CAP_LIFT = HEX_SIZE * 0.02
   const drapedHighlightCap = useMemo(() => {
     if (!anyHighlighted) return null
-    const { heightAt, capBoundary } = makeHexHeightAt(HEX_SIZE, meshOwnHeight, neighborHeights, 0.8, x, z, bandLow, bandHigh)
+    const { heightAt, capBoundary } = makeHexHeightAt(HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TERRAIN_RAMP_FRACTION, x, z, bandLow, bandHigh)
     return buildDrapedHexCap(heightAt, capBoundary, HIGHLIGHT_CAP_SUBDIVISIONS, HIGHLIGHT_CAP_LIFT)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyHighlighted, meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion])
@@ -541,7 +561,7 @@ const Tile = memo(function Tile({
   const blendStrips = useMemo(() => {
     if (TEXTURE_BLEND_SKIP_TERRAINS.has(tile.terrain)) return []
     const { heightAt, capBoundary } = makeHexHeightAt(
-      HEX_SIZE, meshOwnHeight, neighborHeights, 0.8, x, z, bandLow, bandHigh,
+      HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TERRAIN_RAMP_FRACTION, x, z, bandLow, bandHigh,
     )
     const ownTexture = terrainTexture(tile.terrain, tile.q, tile.r)
     const ownColor = terrainColor(tile.terrain)
@@ -1641,6 +1661,13 @@ const FOOTPRINT_DEPTH = 0.45
 // attempt needed — that attempt was ALSO fighting the scene-wide
 // near:far depth-precision bug (see GMView.tsx's own fix), not just
 // this strip's own z-fighting.
+// Fraction of the apothem each tile's own edge ramp occupies. 1.0 was
+// tried, to kill the flat plateau this leaves in every tile's middle (the
+// terraces a real user reported on hillsides), and reverted: it turns every
+// summit into a sharp pyramid instead. See makeHexHeightAt's own weight for
+// why the two cannot be traded off inside this scheme at all.
+const TERRAIN_RAMP_FRACTION = 0.8
+
 const TEXTURE_BLEND_SKIP_TERRAINS = RELIEF_SKIP_TERRAINS
 // Real user follow-up on that first version: "quiero que los cambios de
 // textura no se aprecien tan bruscos... no tiene por que ser justo en la
