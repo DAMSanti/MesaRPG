@@ -4,6 +4,7 @@ import { Physics } from '@react-three/rapier'
 import { Environment, OrbitControls } from '@react-three/drei'
 import { PhysicalDiceThrow, THROW_ORIGIN_X } from '../components/PhysicalDiceThrow'
 import { HexMap, useAttackVfxQueue } from '../components/HexMap'
+import { HEX_SIZE } from '../hexMath'
 import { TableBackground } from '../components/TableBackground'
 import { BoardWalls } from '../components/BoardWalls'
 import { EnemyRevealCinematic } from '../components/EnemyRevealCinematic'
@@ -528,7 +529,10 @@ function TableViewBattletech() {
       {/* Cenital por defecto: es lo que replica la cámara real de la mesa
           física. Solo se rompe para el inset de repetición (abajo), nunca
           para el canvas principal. */}
-      <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
+      {/* near/far explicit and HEX_SIZE-scaled alongside position — see
+          GMView.tsx's own identical comment (same fix, same real user
+          report: "se glichea el agua cuando hago zoom"). */}
+      <Canvas shadows camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 0.1 * HEX_SIZE, far: 2000 * HEX_SIZE }}>
         <color attach="background" args={['#0f1a18']} />
         {/* Real user report: "los dados de jade se ven muy oscuros,
             quiza la escena tenga poca luz" — bumped alongside the
@@ -539,9 +543,9 @@ function TableViewBattletech() {
         <directionalLight
           position={[4, 8, 3]} intensity={1.8} castShadow
           shadow-mapSize={[2048, 2048]}
-          shadow-camera-left={-30} shadow-camera-right={30}
-          shadow-camera-top={30} shadow-camera-bottom={-30}
-          shadow-camera-far={60}
+          shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
+          shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
+          shadow-camera-far={60 * HEX_SIZE}
         />
         {/* Real user request: metallic/glass dice need real reflections
             to read as true chrome/glass rather than a flat tinted
@@ -561,7 +565,7 @@ function TableViewBattletech() {
               all). Moved inside and given `physics` so it can add its
               own backstop floor collider well below the tiles — see its
               own doc comment. */}
-          <TableBackground physics />
+          <TableBackground physics hexScale />
           {map && <BoardWalls map={map} clearLeftOf={THROW_ORIGIN_X} />}
           <Suspense fallback={null}>
             {map && (
@@ -585,6 +589,7 @@ function TableViewBattletech() {
                 onUnitWalkStep={onTableUnitWalkStep}
                 onTileClick={onTableTileClick}
                 physics
+                boardgameScale
               />
             )}
           </Suspense>

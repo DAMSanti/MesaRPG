@@ -14,7 +14,9 @@ import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
 import { terrainColor, terrainRotation, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
-import { hexToWorld, mapCenter, worldToHex } from '../hexMath'
+import {
+  BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationToY, GROUND_BASE_HEIGHT, HEX_SIZE, hexToWorld, mapCenter, worldToHex,
+} from '../hexMath'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
@@ -93,21 +95,15 @@ function rotateLocalOffset(local: [number, number, number], facingDeg: number) {
   return rotateLocalOffsetByYaw(local, Math.PI / 2 - (facingDeg * Math.PI) / 180)
 }
 
-// FIXED, not a floor that yields to a taller natural elevation — two
-// earlier versions of this (elevation 2's own 0.74, then elevation
-// 0.5's 0.41) both still let the tile's own `elevation` data drive the
-// platform's height, and mapgen.py/MapEditorView's 'Edificio' palette
-// entry both default that to 2 — so in the common case the "floor" was
-// never actually the limiting factor, the elevation value was, and the
-// platform kept reading as a tall pedestal every real building model
-// sat on top of instead of a sidewalk (real user report, twice, with
-// screenshots — most recently blunt enough that a third guess wasn't
-// worth risking). A real sidewalk doesn't get taller because a
-// building's LOS-blocking elevation happens to be high — that height
-// already reads from the real, now-dramatically-tall building model
-// standing on it, not from the ground it stands on. Flush with plain
-// ground level (elevation 0's own 0.3) settles it for good, unconditionally.
-export const BUILDING_MIN_HEIGHT = 0.3
+// GROUND_BASE_HEIGHT/ELEVATION_STEP/BUILDING_MIN_HEIGHT/elevationToY now
+// live in hexMath.ts (imported above, re-exported here for every existing
+// consumer that imports them from this file) — TerrainDecor.tsx's own
+// GROUND_FLUSH_TOP needs the exact same ground-level constant to keep
+// water/swamp surfaces flush with the real terrain mesh, but
+// TerrainDecor.tsx can't import from HERE (this file already imports
+// TerrainDecor, and Three/Vite don't tolerate the cycle) — hexMath.ts has
+// no such constraint either way.
+export { GROUND_BASE_HEIGHT, ELEVATION_STEP, BUILDING_MIN_HEIGHT, elevationToY }
 
 /** One weapon's worth of attack VFX to play right now, in hex
  * coordinates — HexMap resolves these to real world positions itself
@@ -256,17 +252,22 @@ export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, u
 }
 
 // World units per second a unit visually walks between hexes at — hex
-// center-to-center spacing is √3 (hexMath.ts's hexToWorld). Real user
-// report: "el movimiento de los mechs ahora mismo es MUUUUY rapido" —
-// cut to well under half its old value (was 3.5, ~one hex every 0.5s)
-// so a multi-hex path actually reads as a mech stepping across the
-// board instead of a blur.
-export const WALK_SPEED = 1.4
+// center-to-center spacing is √3 * HEX_SIZE (hexMath.ts's hexToWorld), so
+// this scales with HEX_SIZE too (was tuned as "hex every ~1.5s" against
+// the old radius-1 grid; ×HEX_SIZE preserves that same real-world pace
+// now that a hex is 30m across, not 1 world unit). Real user report: "el
+// movimiento de los mechs ahora mismo es MUUUUY rapido" — cut to well
+// under half its old value (was 3.5, ~one hex every 0.5s) so a multi-hex
+// path actually reads as a mech stepping across the board instead of a
+// blur.
+export const WALK_SPEED = 1.4 * HEX_SIZE
 // Below this distance (world units) a move is considered "arrived" —
 // small enough to be visually indistinguishable from exact, avoids the
 // interpolation asymptotically crawling the last fraction of a unit
-// forever.
-export const ARRIVE_EPSILON = 0.01
+// forever. Scales with HEX_SIZE so it stays the same tiny FRACTION of a
+// hex it always was, not a fixed sub-meter distance that's now way too
+// strict against the 30m-wide grid.
+export const ARRIVE_EPSILON = 0.01 * HEX_SIZE
 // Radians/sec the mech's model turns at while walking a real path — a
 // mech pivots to face each leg of its route before advancing along it,
 // not just at the destination, so a dogleg path visibly reads as a turn
@@ -400,18 +401,21 @@ const Tile = memo(function Tile({
   // does its normal job for LOS/movement rules (untouched here, purely
   // a render decision); the building model standing on this platform is
   // what visually carries "this is tall/blocks sightlines" now.
-  const height = tile.terrain === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + tile.elevation * 0.22
-  // Terrain cylinders are drawn at 0.95 of the true hex spacing (radius
+  const height = elevationToY(tile.terrain, tile.elevation)
+  // Terrain cylinders are drawn at 0.98 of the true hex spacing (radius
   // 1.0), leaving a small gap at every seam — harmless against a flat
   // background color, but a visible sliver of raw wood table once
   // TableBackground gave that gap something to show through. This sits
   // just under every tile at the FULL 1.0 radius, so neighboring tiles'
   // own undersized tops leave only a thin ring of it showing — a
   // continuous grid of grooves across the whole board, like the tiles
-  // are inset into it, instead of an empty seam.
+  // are inset into it, instead of an empty seam. Real user request: "el
+  // espacio entre tiles debe ser mucho mas pequeño... menos de la mitad
+  // que ahora, un 40% o asi" — was 0.95 (5% gap), 0.98 leaves a 2% gap,
+  // ~40% of the old one.
   const groove = (
-    <mesh position={[0, -0.03, 0]} receiveShadow>
-      <cylinderGeometry args={[1, 1, 0.04, 6]} />
+    <mesh position={[0, -0.1, 0]} receiveShadow>
+      <cylinderGeometry args={[HEX_SIZE, HEX_SIZE, 0.15, 6]} />
       <meshStandardMaterial color="#241a10" roughness={0.9} />
     </mesh>
   )
@@ -427,7 +431,7 @@ const Tile = memo(function Tile({
         onPointerUp?.(e)
       }}
     >
-      <cylinderGeometry args={[0.95, 0.95, height, 6]} />
+      <cylinderGeometry args={[HEX_SIZE * 0.98, HEX_SIZE * 0.98, height, 6]} />
       <meshStandardMaterial
         color={terrainColor(tile.terrain, tile.q, tile.r)}
         map={terrainTexture(tile.terrain, tile.q, tile.r)}
@@ -455,18 +459,18 @@ const Tile = memo(function Tile({
           land on the table correctly either way. */}
       {!fogged && <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} physics={physics} />}
       {losHighlighted && <LosDebugOverlay height={height} color="#39ff8f" />}
-      {dragHighlighted && <LosDebugOverlay height={height} color="#f5c542" y={height + 0.03} />}
-      {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.04} />}
-      {activeMoverHighlighted && <LosDebugOverlay height={height} color="#ffb020" opacity={0.5} y={height + 0.05} />}
+      {dragHighlighted && <LosDebugOverlay height={height} color="#f5c542" y={height + 0.03 * HEX_SIZE} />}
+      {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.04 * HEX_SIZE} />}
+      {activeMoverHighlighted && <LosDebugOverlay height={height} color="#ffb020" opacity={0.5} y={height + 0.05 * HEX_SIZE} />}
       {/* Real user request: from FirstPersonView's near-ground eye-level
           camera, the old +0.12 gap read as visibly floating above the
           hex — a small perspective effect a top-down camera never
           revealed. Halving the whole stack (still staggered, just
           tighter) keeps every highlight type distinguishable without
           the floating look, in both this and GMView's own top-down use. */}
-      {moveHighlighted && <LosDebugOverlay height={height} color="#4a9eff" opacity={0.4} y={height + 0.06} />}
-      {pathPreviewHighlighted && <LosDebugOverlay height={height} color="#ffffff" opacity={0.55} y={height + 0.065} />}
-      {targetableHighlighted && <LosDebugOverlay height={height} color="#e35d5d" opacity={0.45} y={height + 0.07} />}
+      {moveHighlighted && <LosDebugOverlay height={height} color="#4a9eff" opacity={0.4} y={height + 0.06 * HEX_SIZE} />}
+      {pathPreviewHighlighted && <LosDebugOverlay height={height} color="#ffffff" opacity={0.55} y={height + 0.065 * HEX_SIZE} />}
+      {targetableHighlighted && <LosDebugOverlay height={height} color="#e35d5d" opacity={0.45} y={height + 0.07 * HEX_SIZE} />}
     </group>
   )
 }, tilePropsEqual)
@@ -483,11 +487,11 @@ const Tile = memo(function Tile({
 // mismatch between the two geometry types' own conventions. Mixing them
 // made this overlay visibly rotated relative to the tile it's sitting on.
 function LosDebugOverlay({
-  height, color, y = height + 0.03, opacity = 0.32,
+  height, color, y = height + 0.03 * HEX_SIZE, opacity = 0.32,
 }: { height: number; color: string; y?: number; opacity?: number }) {
   return (
     <mesh position={[0, y, 0]}>
-      <cylinderGeometry args={[0.92, 0.92, 0.02, 6]} />
+      <cylinderGeometry args={[0.92 * HEX_SIZE, 0.92 * HEX_SIZE, 0.02 * HEX_SIZE, 6]} />
       <meshBasicMaterial color={color} transparent opacity={opacity} depthWrite={false} />
     </mesh>
   )
@@ -584,8 +588,12 @@ function MechExplosionOnce({ position }: { position: [number, number, number] })
   const debris = useMemo(
     () => Array.from({ length: 12 }, () => ({
       dir: new THREE.Vector3((Math.random() - 0.5) * 2, Math.random() * 1.4, (Math.random() - 0.5) * 2).normalize(),
-      speed: 0.6 + Math.random() * 0.8,
-      size: 0.3 + Math.random() * 0.35,
+      // MECH-factor scaled (tuned by eye against the mech, same family as
+      // FOG_HEIGHT above) — both the burst's travel distance (speed, a
+      // world-units/sec multiplier on dir) and the sprite size need to
+      // stay proportionate to the now-10-world-unit-tall mech.
+      speed: (0.6 + Math.random() * 0.8) * (MODEL_SCALE / 1.65),
+      size: (0.3 + Math.random() * 0.35) * (MODEL_SCALE / 1.65),
       delay: Math.random() * 0.15,
     })),
     [],
@@ -648,6 +656,7 @@ function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<Un
     && prev.heightAt === next.heightAt
     && prev.outlined === next.outlined
     && prev.heat === next.heat
+    && prev.boardgameScale === next.boardgameScale
     && prev.prone === next.prone
     && prev.shutdown === next.shutdown
     && prev.destroyedReason === next.destroyedReason
@@ -656,6 +665,21 @@ function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<Un
       || (prev.dragPosition != null && next.dragPosition != null
         && prev.dragPosition[0] === next.dragPosition[0] && prev.dragPosition[1] === next.dragPosition[1]))
 }
+
+// Real user request: "en GMview y en tableview los mechs deben ocupar
+// toda la hex, solo ahi, por el tema de jugar al juego de tablero" — the
+// realistic 10m-mech-on-a-30m-hex proportions (the whole point of the
+// scale normalization above) read as "too small to click/read" on the
+// tabletop views, so those two get a purely-visual boardgame-token scale
+// instead, same convention real BattleTech miniatures use (a mini that
+// visibly overflows its own hex). Rather than pick a new number by eye,
+// this reproduces the OLD (pre-normalization) implicit ratio — mech
+// height was 1.65 world units against a hex of circumradius 1, i.e.
+// 1.65x the hex — on the NEW grid: (1.65 * HEX_SIZE) world units of mech
+// height, expressed as a multiplier on the real MODEL_SCALE. FirstPersonView's
+// own <HexMap> instance deliberately does NOT set this (real scale only
+// there — "solo ahi" was explicit).
+export const BOARDGAME_MECH_SCALE = (1.65 * HEX_SIZE) / MODEL_SCALE
 
 type UnitMarkerProps = {
   unit: Unit
@@ -766,11 +790,15 @@ type UnitMarkerProps = {
    * unit_walked broadcast walkPath itself came from. Same
    * unitMarkerPropsEqual exclusion as onWalkDone above. */
   onWalkStep?: (index: number) => void
+  /** BOARDGAME_MECH_SCALE's own opt-in — GMView/TableView pass true,
+   * FirstPersonView leaves this unset (real scale). See that constant's
+   * doc comment for why. */
+  boardgameScale?: boolean
 }
 
 const UnitMarker = memo(function UnitMarker({
   unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
-  prone, shutdown, destroyedReason,
+  prone, shutdown, destroyedReason, boardgameScale,
   onPointerDown, onPointerUp, onWalkDone, onWalkStep,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
@@ -778,9 +806,9 @@ const UnitMarker = memo(function UnitMarker({
   // HEIGHT), not the elevation formula every other terrain uses here —
   // a mech standing on a building tile needs to rest on the SAME
   // surface height that tile actually renders at, or it visibly floats
-  // above (a real elevation-2 building tile's platform sits at 0.3 now,
-  // not 0.3+2*0.22).
-  const restY = terrainSinkY(terrain) ?? (terrain === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + elevation * 0.22)
+  // above (a real elevation-2 building tile's platform sits at
+  // GROUND_BASE_HEIGHT, not GROUND_BASE_HEIGHT + 2*ELEVATION_STEP).
+  const restY = terrainSinkY(terrain) ?? elevationToY(terrain, elevation)
   const baseY = restY + (dragPosition ? 0.5 : 0)
   // Forces one extra render once this marker's own Mech3D mesh actually
   // exists — see Mech3D's own onLoaded doc comment for the <Select>
@@ -1066,8 +1094,15 @@ const UnitMarker = memo(function UnitMarker({
   // outline, not a shape drawn over its screen projection) is what
   // actually turns a claimed selection into a visible red rim; this is
   // just the per-unit "claim me" toggle.
+  // BOARDGAME_MECH_SCALE's own doc comment — real scale (1) everywhere
+  // except GMView/TableView, which opt in via boardgameScale. Wrapping
+  // the whole visual subtree (model + explosion VFX + steam puffs, whose
+  // own vent-point offsets are already MODEL_SCALE-relative) in one group
+  // scale keeps every part of it proportionate to the model, instead of
+  // rescaling each piece's constants independently.
+  const mechScale = boardgameScale ? BOARDGAME_MECH_SCALE : 1
   const mechOrMarker = (
-    <>
+    <group scale={mechScale}>
       <Select enabled={!!outlined}>
         {unit.mech_id != null ? (
           <>
@@ -1126,7 +1161,7 @@ const UnitMarker = memo(function UnitMarker({
       {unit.mech_id != null && destroyedReason == null && ((heat != null && heat > 0) || shutdown) && (
         <SteamPuffs heat={heat ?? 20} />
       )}
-    </>
+    </group>
   )
 
   if (physics) {
@@ -1156,9 +1191,12 @@ const UnitMarker = memo(function UnitMarker({
         rotation={[0, facingRotationY, 0]}
       >
         {unit.mech_id != null ? (
-          <CuboidCollider args={[0.374 * MODEL_SCALE, 0.5 * MODEL_SCALE, 0.310 * MODEL_SCALE]} position={[0, 0.5 * MODEL_SCALE, 0]} />
+          <CuboidCollider
+            args={[0.374 * MODEL_SCALE * mechScale, 0.5 * MODEL_SCALE * mechScale, 0.310 * MODEL_SCALE * mechScale]}
+            position={[0, 0.5 * MODEL_SCALE * mechScale, 0]}
+          />
         ) : (
-          <CuboidCollider args={[0.35, 0.35, 0.35]} position={[0, 0.35, 0]} />
+          <CuboidCollider args={[0.35 * mechScale, 0.35 * mechScale, 0.35 * mechScale]} position={[0, 0.35 * mechScale, 0]} />
         )}
         {mechOrMarker}
         {unit.is_ghost && (
@@ -1263,10 +1301,15 @@ const MAX_FOOTPRINTS = 600
 // movimiento", real user request after a single-print-per-hex version
 // read as too sparse.
 const STEPS_PER_HEX = 3
-// World units between consecutive steps within one hex — (STEPS_PER_HEX
-// - 1) * STEP_SPACING must stay under a hex's own ~0.95 radius so every
-// step lands inside the CURRENT (snow) tile, not the previous one.
-const STEP_SPACING = 0.3
+// World units (meters, now — see hexMath.ts's own HEX_SIZE) between
+// consecutive steps within one hex — (STEPS_PER_HEX - 1) * STEP_SPACING
+// must stay under a hex's own ~0.95*HEX_SIZE radius so every step lands
+// inside the CURRENT (snow) tile, not the previous one. Scaled by the
+// same HEX_SIZE factor as the grid itself (not a real per-step stride
+// length — this is "a few evenly-spaced marks across whatever hex was
+// just crossed," always exactly STEPS_PER_HEX of them regardless of the
+// hex's real size, same as before the rescale).
+const STEP_SPACING = 0.3 * HEX_SIZE
 
 /** One mech-foot print — a single blocky, rectangular pad, not a
  * heel-and-toe pair (that read as a human shoe's curved sole, not a
@@ -1328,14 +1371,18 @@ const MAX_IMPACT_MARKS = 150
  * — a dark, irregular scorch circle plus a couple of short radial
  * scuff-marks so it reads as a blast, not a dropped coin. */
 function ImpactMarkMesh({ mark }: { mark: ImpactMark }) {
+  // MECH-factor scaled (tuned by eye against the mech, same family as
+  // FOG_HEIGHT/MechExplosionOnce's debris above) — a blast mark roughly
+  // proportionate to a mech's own footprint, not the hex grid.
+  const s = MODEL_SCALE / 1.65
   return (
-    <group position={[mark.x, mark.y + 0.012, mark.z]} rotation={[0, mark.rot, 0]}>
+    <group position={[mark.x, mark.y + 0.012 * s, mark.z]} rotation={[0, mark.rot, 0]}>
       <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.34, 16]} />
+        <circleGeometry args={[0.34 * s, 16]} />
         <meshStandardMaterial color="#1a1512" roughness={1} transparent opacity={0.82} />
       </mesh>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
-        <ringGeometry args={[0.2, 0.34, 16]} />
+        <ringGeometry args={[0.2 * s, 0.34 * s, 16]} />
         <meshStandardMaterial color="#3a2a1c" roughness={1} transparent opacity={0.5} />
       </mesh>
     </group>
@@ -1360,7 +1407,11 @@ function ImpactMarkTrail({ marks }: { marks: ImpactMark[] }) {
 // of how the edges were softened — there's nothing left to collide with
 // once it's genuinely one shape. See buildFogRegions's own doc comment
 // for the algorithm.
-const FOG_HEIGHT = 1.7
+// MECH-factor scaled (tuned by eye against the mech, not the hex grid —
+// this was always "about knee-to-chest height on a mech standing in it,"
+// never tied to hex spacing), against MODEL_SCALE's own old value (1.65)
+// so this tracks correctly if MODEL_SCALE is ever retuned again.
+const FOG_HEIGHT = 1.7 * (MODEL_SCALE / 1.65)
 // Real user request: "en FPV deberia ser mas sutil... debe tener mas
 // altura, que no se vea donde termina por arriba" — a completely
 // separate, MUCH taller volume for that view (see FogRegionMesh's own
@@ -1384,10 +1435,15 @@ const FOG_HEIGHT_SUBTLE = FOG_HEIGHT * 4.2
 // one uniform slab. yOffset is in world units (a small vertical stagger,
 // like sedimentary bands); flowAngle is radians; opacity is this layer's
 // OWN multiplier on top of the caller's overall uOpacity.
+// yOffset values are MECH-factor scaled (small vertical stagger tuned by
+// eye against the mech, same family as FOG_HEIGHT above) so the layers
+// stay proportionately "thin sedimentary bands" at the new scale instead
+// of collapsing to a barely-there fraction of the now-much-taller volume.
+const FOG_YOFFSET_SCALE = MODEL_SCALE / 1.65
 const FOG_LAYERS = [
   { yOffset: 0, flowAngle: 0.6, flowSpeed: 1, noiseScale: 1, opacity: 1 },
-  { yOffset: 0.22, flowAngle: 2.4, flowSpeed: 0.62, noiseScale: 1.7, opacity: 0.65 },
-  { yOffset: 0.42, flowAngle: 4.4, flowSpeed: 1.35, noiseScale: 0.55, opacity: 0.5 },
+  { yOffset: 0.22 * FOG_YOFFSET_SCALE, flowAngle: 2.4, flowSpeed: 0.62, noiseScale: 1.7, opacity: 0.65 },
+  { yOffset: 0.42 * FOG_YOFFSET_SCALE, flowAngle: 4.4, flowSpeed: 1.35, noiseScale: 0.55, opacity: 0.5 },
 ] as const
 
 // Matches CylinderGeometry(radius, radius, height, 6)'s own real default
@@ -1400,7 +1456,7 @@ const FOG_LAYERS = [
 // rendered underneath.
 function fogHexCorner(cx: number, cz: number, i: number): [number, number] {
   const theta = (i * Math.PI) / 3
-  return [cx + Math.sin(theta), cz + Math.cos(theta)]
+  return [cx + HEX_SIZE * Math.sin(theta), cz + HEX_SIZE * Math.cos(theta)]
 }
 
 // Axial neighbor offsets, matching hexToWorld's own convention — offset
@@ -1621,7 +1677,7 @@ const fogVertexShader = /* glsl */ `
     float wz = fogFbm(worldPos.xz * (0.35 * uNoiseScale) - flow, 2) - 0.5;
     worldPos.x += wx * lift * 0.9;
     worldPos.z += wz * lift * 0.9;
-    worldPos.y += (fogValueNoise(worldPos.xz * 0.4 + flow * 0.6) - 0.5) * lift * 0.35;
+    worldPos.y += (fogValueNoise(worldPos.xz * (0.4 * uNoiseScale) + flow * 0.6) - 0.5) * lift * 0.35;
     vWorldPosition = worldPos.xyz;
     vCapFactor = abs(normal.y);
     gl_Position = projectionMatrix * viewMatrix * worldPos;
@@ -1746,7 +1802,20 @@ function FogRegionMesh({
       {FOG_LAYERS.map((layer, i) => {
         const layerBaseY = baseY + layer.yOffset
         const layerTopY = layerBaseY + variant.height
-        const flowDir = [Math.cos(layer.flowAngle) * 0.028 * layer.flowSpeed, Math.sin(layer.flowAngle) * 0.028 * layer.flowSpeed]
+        // The shader samples noise at worldPos.xz * uNoiseScale (real world
+        // units, now HEX_SIZE times bigger for the same relative position
+        // within a hex) — without dividing back down here, the noise
+        // pattern completes many full cycles across a single hex instead
+        // of one smooth swirl, reading as flat/staticky instead of turbulent
+        // cloud (real user report: no visible turbulence after the rescale).
+        // flowDir gets the same correction so the animated drift still
+        // moves through noise-space at the same relative rate. Real user
+        // request: "aumentar la velocidad de movimiento del ruido de la
+        // niebla" — base rate bumped from 0.028 to 0.05 (~1.8x).
+        const flowDir = [
+          Math.cos(layer.flowAngle) * 0.05 * layer.flowSpeed / HEX_SIZE,
+          Math.sin(layer.flowAngle) * 0.05 * layer.flowSpeed / HEX_SIZE,
+        ]
         return (
           <mesh key={i} position={[0, layerTopY, 0]} geometry={geometry}>
             <shaderMaterial
@@ -1759,11 +1828,18 @@ function FogRegionMesh({
                 uBaseY: { value: layerBaseY },
                 uTopY: { value: layerTopY },
                 uOpacity: { value: variant.opacity * layer.opacity },
-                uNoiseScale: { value: layer.noiseScale },
+                uNoiseScale: { value: layer.noiseScale / HEX_SIZE },
                 uFlowDir: { value: flowDir },
                 uFadeStart: { value: variant.fadeStart },
                 uFadeAmount: { value: variant.fadeAmount },
-                uDisplaceScale: { value: variant.displaceScale },
+                // variant.displaceScale is a dimensionless 0.3-1 ratio —
+                // the actual vertex-shader displacement it drives (`lift`)
+                // was tuned in absolute world units against the OLD ~1.73-
+                // wide hex, so it needs the same HEX_SIZE scale-up as the
+                // hex grid itself (this displacement's whole job is
+                // staying proportionate to — and clamped under — one
+                // hex's own radius, see FOG_VARIANTS' own doc comment).
+                uDisplaceScale: { value: variant.displaceScale * HEX_SIZE },
               }}
               transparent
               depthWrite={false}
@@ -1782,7 +1858,7 @@ export function HexMap({
   proneUnitIds, shutdownUnitIds,
   destroyedReasonByUnitId,
   teamVisibleHexes, fogSubtle, physics, activeAttack, onAttackEffectDone, onUnitWalkDone, onUnitWalkStep,
-  onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange,
+  onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange, boardgameScale,
 }: {
   map: MapData
   units: Unit[]
@@ -1922,6 +1998,11 @@ export function HexMap({
    * caller can disable OrbitControls' rotate while dragging (otherwise
    * the same mouse-drag gesture fights the camera for the same input). */
   onDraggingChange?: (dragging: boolean) => void
+  /** BOARDGAME_MECH_SCALE's own opt-in for every unit on this map — real
+   * user request: "en GMview y en tableview los mechs deben ocupar toda
+   * la hex, solo ahi". GMView/TableView pass true; FirstPersonView leaves
+   * this unset so its own cockpit stays at real 10m-mech/30m-hex scale. */
+  boardgameScale?: boolean
 }) {
   // Memoized on map.tiles specifically — without this, these three full
   // scans over every tile rebuilt three fresh Maps (and handed Tile a
@@ -1945,7 +2026,7 @@ export function HexMap({
   const heightAt = useCallback((q: number, r: number) => {
     const t = terrainAt.get(`${q},${r}`) ?? 'plains'
     const elev = elevationAt.get(`${q},${r}`) ?? 0
-    return terrainSinkY(t) ?? (t === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + elev * 0.22)
+    return terrainSinkY(t) ?? elevationToY(t, elev)
   }, [terrainAt, elevationAt])
   // One merged polygon per connected cluster of fogged hexes — see
   // buildFogRegions's own doc comment for why this replaced a shape-per-
@@ -1967,7 +2048,7 @@ export function HexMap({
   // still lands at that mech's actual (now non-elevation-scaled) chest
   // height, not where the old elevation math would have put it.
   const groundYAt = (q: number, r: number) =>
-    terrainAt.get(`${q},${r}`) === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + (elevationAt.get(`${q},${r}`) ?? 0) * 0.22
+    elevationToY(terrainAt.get(`${q},${r}`) ?? 'plains', elevationAt.get(`${q},${r}`) ?? 0)
   // Real user report (GM's own map, ALL CAPS this time): "EN EL MAPA DE
   // GM SE VEN TODOS LOS MECHS DA IGUAL QUE ESTEN EN LOS O NO... en el
   // unico sitio donde esos mechs tienen que estar ocultos hasta que les
@@ -2118,7 +2199,7 @@ export function HexMap({
             const elev = elevationAt.get(`${hex.q},${hex.r}`) ?? 0
             // The snow's own surface height — FootprintMesh builds its
             // geometry UP from this itself, no offset needed here.
-            const y = 0.3 + elev * 0.22
+            const y = GROUND_BASE_HEIGHT + elev * ELEVATION_STEP
             for (let step = 1; step <= STEPS_PER_HEX; step++) {
               const backDist = (STEPS_PER_HEX - step) * STEP_SPACING
               const side = -(sides.get(u.id) ?? 1)
@@ -2254,6 +2335,7 @@ export function HexMap({
           prone={proneUnitIds?.has(unit.id) ?? false}
           shutdown={shutdownUnitIds?.has(unit.id) ?? false}
           destroyedReason={destroyedReasonByUnitId?.get(unit.id) ?? null}
+          boardgameScale={boardgameScale}
           onWalkDone={() => onUnitWalkDone?.(unit.id)}
           onWalkStep={(index) => onUnitWalkStep?.(unit.id, index)}
           onPointerDown={() => {

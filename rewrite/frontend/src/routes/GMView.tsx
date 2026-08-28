@@ -30,7 +30,7 @@ import { DIE_STYLES, buildHeldByMap } from '../dieStyles'
 import {
   activeAttackPilotIds, activeMoverPilotId, currentPhase, PHASE_LABELS, pilotsNeedingInitiative, useDisplayedPhase, useHeldActiveMover,
 } from '../rounds'
-import { mapCenter, worldToHex } from '../hexMath'
+import { HEX_SIZE, mapCenter, worldToHex } from '../hexMath'
 import {
   buildMechLocationsPayload, emptyLocationsForm, locationsFormFromMechLocationIn,
 } from '../characterSheet'
@@ -1210,17 +1210,28 @@ function GMViewBattletech() {
           <p className="round-info">Cargando mapa…</p>
         ) : (
           <div className="map-embed" ref={mapContainerRef}>
-            <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
+            {/* near/far explicit and HEX_SIZE-scaled alongside position —
+                the perspective depth buffer's usable precision is relative
+                to how far the camera actually sits from what it's looking
+                at, not an absolute world-unit amount; leaving these at
+                three.js's own defaults (0.1/2000) while the camera moved
+                30x further away starved the buffer of precision at the
+                actual scene depth, reading as z-fighting/flicker on zoom
+                (real user report: "se glichea el agua cuando hago zoom").
+                Scaling both by HEX_SIZE preserves the exact same near/far
+                RATIO (hence the same precision curve) that worked fine
+                before, just covering the new, 30x-bigger scene. */}
+            <Canvas shadows camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 0.1 * HEX_SIZE, far: 2000 * HEX_SIZE }}>
               <color attach="background" args={['#0f1a18']} />
               <ambientLight intensity={0.6} />
               <directionalLight
                 position={[4, 8, 3]} intensity={1.4} castShadow
                 shadow-mapSize={[2048, 2048]}
-                shadow-camera-left={-30} shadow-camera-right={30}
-                shadow-camera-top={30} shadow-camera-bottom={-30}
-                shadow-camera-far={60}
+                shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
+                shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
+                shadow-camera-far={60 * HEX_SIZE}
               />
-              <TableBackground />
+              <TableBackground hexScale />
               <CameraBridge onReady={(fn) => { raycastToGroundRef.current = fn }} />
               <Suspense fallback={null}>
                 <HexMap
@@ -1249,6 +1260,7 @@ function GMViewBattletech() {
                   onTileClick={onTileClick}
                   onUnitDragEnd={onUnitDragEnd}
                   onDraggingChange={setIsDraggingUnit}
+                  boardgameScale
                 />
               </Suspense>
               {/* dampingFactor explicit — see TableView.tsx's own

@@ -10,14 +10,19 @@ const ORBIT_DURATION_S = 6
  * ref-driven loop (this scene has no OrbitControls of its own to fight
  * with), not tied to any prop so it keeps running smoothly regardless
  * of what else re-renders around it. */
+// MECH-factor scaled (tuned by eye against the mech, same family as
+// HexMap.tsx's FOG_HEIGHT) — old radius/offset against MODEL_SCALE's own
+// old value (1.65), so the orbit stays clear of the now much taller model.
+const MECH_FACTOR = MODEL_SCALE / 1.65
+
 function OrbitingCamera() {
   const { camera } = useThree()
   const targetY = MODEL_SCALE * MODEL_CHEST_FRACTION
   useFrame((state) => {
     const t = (state.clock.elapsedTime % ORBIT_DURATION_S) / ORBIT_DURATION_S
     const angle = t * Math.PI * 2
-    const radius = 3
-    camera.position.set(Math.sin(angle) * radius, targetY + 0.35, Math.cos(angle) * radius)
+    const radius = 3 * MECH_FACTOR
+    camera.position.set(Math.sin(angle) * radius, targetY + 0.35 * MECH_FACTOR, Math.cos(angle) * radius)
     camera.lookAt(0, targetY, 0)
   })
   return null
@@ -48,7 +53,7 @@ export function EnemyRevealCinematic({
   return (
     <div className="enemy-reveal-overlay">
       <div className="enemy-reveal-frame">
-        <Canvas camera={{ fov: 32, near: 0.1, far: 50 }} shadows>
+        <Canvas camera={{ fov: 32, near: 0.1, far: 50 * MECH_FACTOR }} shadows>
           <color attach="background" args={['#0a1210']} />
           <ambientLight intensity={0.55} />
           <directionalLight position={[3, 5, 2]} intensity={1.7} castShadow />

@@ -5,8 +5,8 @@ import { EffectComposer, Outline, Selection } from '@react-three/postprocessing'
 import { KernelSize } from 'postprocessing'
 import * as THREE from 'three'
 import {
-  ARRIVE_EPSILON, BIG_TURN_THRESHOLD, HexMap, TURN_SPEED, WALK_SPEED, angleDelta, findAnnotatedLocalPoint, lerpAngle,
-  rotateLocalOffsetByYaw, useAttackVfxQueue, useMechAnnotationsCache,
+  ARRIVE_EPSILON, BIG_TURN_THRESHOLD, ELEVATION_STEP, GROUND_BASE_HEIGHT, HexMap, TURN_SPEED, WALK_SPEED, angleDelta,
+  findAnnotatedLocalPoint, lerpAngle, rotateLocalOffsetByYaw, useAttackVfxQueue, useMechAnnotationsCache,
 } from './HexMap'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
@@ -19,7 +19,7 @@ import {
   type RoundState, type Unit, type VisibleEnemy, type VisibleHex, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase, useDisplayedPhase, useHeldActiveMover } from '../rounds'
-import { hexToWorld, mapCenter } from '../hexMath'
+import { HEX_SIZE, hexToWorld, mapCenter } from '../hexMath'
 import type { FogWalkStep, MeleeResult, UnitWalked } from '../ws'
 import './FirstPersonView.css'
 
@@ -27,7 +27,9 @@ import './FirstPersonView.css'
 // number, so bumping the model's size there doesn't quietly leave the
 // cockpit camera sitting somewhere around its knees.
 const EYE_HEIGHT = MODEL_SCALE * MODEL_HEAD_FRACTION
-const LOOK_DISTANCE = 4
+// MECH-factor scaled (tuned by eye against the cockpit/model, same family
+// as HexMap.tsx's FOG_HEIGHT) — old 4 × MODEL_SCALE's own old value (1.65).
+const LOOK_DISTANCE = 4 * (MODEL_SCALE / 1.65)
 // Target silhouettes are ~56px wide at the fallback/near size — a bit
 // more than that so two decluttered markers never touch.
 const MARKER_MIN_SEPARATION = 64
@@ -38,7 +40,9 @@ const MARKER_MIN_SEPARATION = 64
 // glide. BOB_SMOOTH_RATE fades it in/out instead of snapping the instant
 // isMoving flips, so a step that's mid-leg when the path queue empties
 // doesn't cut the bob off abruptly.
-const BOB_AMPLITUDE = 0.035
+// MECH-factor scaled, same family as LOOK_DISTANCE above — BOB_FREQUENCY/
+// BOB_SMOOTH_RATE are rates (Hz / per-second), not spatial, so they stay.
+const BOB_AMPLITUDE = 0.035 * (MODEL_SCALE / 1.65)
 const BOB_FREQUENCY = 4
 const BOB_SMOOTH_RATE = 8
 
@@ -336,8 +340,11 @@ function EnemyMarkersController({
       // Real user request: the caption (chassis/model + distance) should
       // float just above the mech, not sit centered on its torso — anchor
       // at head height (MODEL_HEAD_FRACTION) plus a bit of clearance
-      // instead of MODEL_CHEST_FRACTION.
-      const y = 0.3 + elevationAt(enemy.q, enemy.r) * 0.22 + MODEL_SCALE * MODEL_HEAD_FRACTION + 0.3
+      // instead of MODEL_CHEST_FRACTION. The trailing clearance term is
+      // MECH-factor scaled (same family as LOOK_DISTANCE above) so it
+      // stays visually proportionate to the now-much-taller head height.
+      const y = GROUND_BASE_HEIGHT + elevationAt(enemy.q, enemy.r) * ELEVATION_STEP
+        + MODEL_SCALE * MODEL_HEAD_FRACTION + 0.3 * (MODEL_SCALE / 1.65)
       const worldPos = new THREE.Vector3(lx, y, lz)
 
       // Three.js's project() doesn't clip points behind the camera — they
@@ -1306,7 +1313,7 @@ export function FirstPersonView({
   )
   const eyeYAt = (q: number, r: number) => {
     const elevation = map?.tiles.find((t) => t.q === q && t.r === r)?.elevation ?? 0
-    const ground = 0.3 + elevation * 0.22
+    const ground = GROUND_BASE_HEIGHT + elevation * ELEVATION_STEP
     // Only the annotated cockpit case gets bare ground here — its own
     // rotated Y offset supplies the real eye height instead (see
     // WalkingFirstPersonCam's useFrame). An unannotated mech keeps the
@@ -1572,9 +1579,9 @@ export function FirstPersonView({
                 <directionalLight
                   position={[4, 8, 3]} intensity={1.8} castShadow
                   shadow-mapSize={[2048, 2048]}
-                  shadow-camera-left={-30} shadow-camera-right={30}
-                  shadow-camera-top={30} shadow-camera-bottom={-30}
-                  shadow-camera-far={60}
+                  shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
+                  shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
+                  shadow-camera-far={60 * HEX_SIZE}
                 />
                 <WalkingFirstPersonCam
                   q={unit.q} r={unit.r} facingDeg={unit.facing_deg}

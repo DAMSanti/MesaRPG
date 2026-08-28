@@ -5,6 +5,13 @@ import { CuboidCollider, CylinderCollider, RigidBody } from '@react-three/rapier
 import { SkeletonUtils } from 'three-stdlib'
 import * as THREE from 'three'
 import { hashTile, buildingKind, plainsGroundVariant, terrainTexture } from '../terrain'
+import { GROUND_BASE_HEIGHT, HEX_SIZE } from '../hexMath'
+import { MODEL_SCALE } from './Mech3D'
+
+// MECH-factor multiplier — this file's tree/rock/building/decor scales
+// were all tuned by eye against the mech (MODEL_SCALE), not the hex grid,
+// same family as HexMap.tsx's own FOG_HEIGHT/AttackEffects.tsx's MECH_FACTOR.
+const MECH_FACTOR = MODEL_SCALE / 1.65
 
 // A real, textured .glb tree (public/models/realistic-tree.glb,
 // CREDITS.md — CC-BY-4.0, attribution required) instead of procedural
@@ -102,8 +109,8 @@ function normalizeTreeSceneOnce(scene: THREE.Group) {
 
 // Normalized-to-1-unit-tall → world-unit conversion, tuned to roughly
 // match this game's own hex/mech scale (Mech3D's MODEL_SCALE is its
-// equivalent for the mech model).
-const TREE_BASE_SCALE = 2.2
+// equivalent for the mech model) — MECH-factor scaled.
+const TREE_BASE_SCALE = 2.2 * MECH_FACTOR
 
 /** One real tree instance. `sizeMultiplier` varies the final height per
  * tile (see the two TerrainDecor call sites below) so a forest doesn't
@@ -167,7 +174,7 @@ function normalizeRockSceneOnce(url: string, scene: THREE.Group) {
   })
 }
 
-const ROCK_BASE_SCALE = 0.5
+const ROCK_BASE_SCALE = 0.5 * MECH_FACTOR
 
 /** One real rock/debris-chunk instance. `tint`, when given, clones (never
  * mutates the shared source material in place — every other instance of
@@ -297,13 +304,16 @@ function normalizeBuildingSceneOnce(url: string, scene: THREE.Group) {
 }
 
 // Target footprint WIDTH in world units — a hex tile's own radius is
-// 0.95 (diameter ~1.9), so 1.3 leaves a visible margin on a model's
-// longer horizontal axis without needing per-model tuning; the shorter
-// axis (these are all rectangular footprints, not square) ends up with
-// even more room. Height is NOT set directly — it falls out of each
-// model's own real aspect ratio once its footprint is pinned to this,
-// which is the whole point (see the cache comment above).
-const BUILDING_FOOTPRINT_SCALE = 1.3
+// ~0.98 * HEX_SIZE (diameter ~1.96 * HEX_SIZE), so 1.3 * HEX_SIZE leaves
+// a visible margin on a model's longer horizontal axis without needing
+// per-model tuning; the shorter axis (these are all rectangular
+// footprints, not square) ends up with even more room. HEX-factor scaled
+// (explicitly tied to the hex's own radius, unlike TREE_BASE_SCALE/
+// ROCK_BASE_SCALE above, which are tuned against the mech instead).
+// Height is NOT set directly — it falls out of each model's own real
+// aspect ratio once its footprint is pinned to this, which is the whole
+// point (see the cache comment above).
+const BUILDING_FOOTPRINT_SCALE = 1.3 * HEX_SIZE
 
 /** One real building/skyscraper instance. `tint`, when given, clones
  * (never mutates the shared source material in place) and darkens every
@@ -429,13 +439,16 @@ function LeafLitter({ q, r }: { q: number; r: number }) {
       {Array.from({ length: count }, (_, i) => {
         const s = hashTile(q, r, `leaf-${i}`)
         const angle = (s % 360) * (Math.PI / 180)
-        const dist = 0.12 + ((s >>> 8) % 100) / 100 * 0.6
-        const size = 0.08 + ((s >>> 16) % 100) / 100 * 0.07
+        // dist is a position offset (HEX-factor); size/y-clearance are the
+        // leaf's own visible size (MECH-factor) — same split as the tree/
+        // rock scatter above.
+        const dist = (0.12 + ((s >>> 8) % 100) / 100 * 0.6) * HEX_SIZE
+        const size = (0.08 + ((s >>> 16) % 100) / 100 * 0.07) * MECH_FACTOR
         const shape = LEAF_SHAPES[s % LEAF_SHAPES.length]
         return (
           <mesh
             key={i}
-            position={[Math.cos(angle) * dist, 0.015, Math.sin(angle) * dist]}
+            position={[Math.cos(angle) * dist, 0.015 * MECH_FACTOR, Math.sin(angle) * dist]}
             rotation={[-Math.PI / 2, 0, (s % 628) / 100]}
           >
             <planeGeometry args={[size, size]} />
@@ -466,8 +479,8 @@ function Pebbles({ q, r }: { q: number; r: number }) {
       {Array.from({ length: count }, (_, i) => {
         const s = hashTile(q, r, `pebble-${i}`)
         const angle = (s % 360) * (Math.PI / 180)
-        const dist = 0.08 + ((s >>> 8) % 100) / 100 * 0.7
-        const size = 0.02 + ((s >>> 16) % 100) / 100 * 0.035
+        const dist = (0.08 + ((s >>> 8) % 100) / 100 * 0.7) * HEX_SIZE
+        const size = (0.02 + ((s >>> 16) % 100) / 100 * 0.035) * MECH_FACTOR
         const flat = 0.55 + ((s >>> 20) % 100) / 100 * 0.3
         return (
           <mesh
@@ -513,8 +526,12 @@ function GrassTufts({ q, r, sparse }: { q: number; r: number; sparse: boolean })
       {Array.from({ length: count }, (_, i) => {
         const s = hashTile(q, r, `tuft-${i}`)
         const angle = (s % 360) * (Math.PI / 180)
-        const dist = 0.08 + ((s >>> 8) % 100) / 100 * 0.7
-        const bladeScale = 0.7 + ((s >>> 16) % 100) / 100 * 0.5
+        // dist (position offset) is HEX-factor; bladeScale feeds every
+        // species' own group `scale` below, so folding MECH_FACTOR in
+        // here scales each blade's own geometry without touching their
+        // individual local constants.
+        const dist = (0.08 + ((s >>> 8) % 100) / 100 * 0.7) * HEX_SIZE
+        const bladeScale = (0.7 + ((s >>> 16) % 100) / 100 * 0.5) * MECH_FACTOR
         const px = Math.cos(angle) * dist
         const pz = Math.sin(angle) * dist
         const species = (s >>> 24) % 3
@@ -599,38 +616,40 @@ function GrassTufts({ q, r, sparse }: { q: number; r: number; sparse: boolean })
 // there's no visible seam or gap to give away that the column extends
 // past where the solid ground physically ends.
 //
-// +0.002, not a bare 0.3: a plain 'water' (or 'swamp') tile (elevation 0)
-// has its OWN underlying floor mesh (HexMap.tsx's Tile terrainMesh) top
-// at that exact same 0.3 — coplanar with this surface's own top cap on
-// the very same tile. Two coincident faces at an identical height is a
-// textbook z-fighting setup: the GPU can't consistently resolve which
-// one is in front, so it flickers pixel-by-pixel into visible banding
-// ("¿Porque se ven esas rayas en el agua...?", real user report,
-// screenshot showing exactly that striping on plain water tiles
-// specifically — 'water_deep' was unaffected, since ITS own floor sits
-// lower, at 0.08, nowhere near this line). A couple millimeters of world
-// space is nowhere near enough to read as "poking up out of the ground"
-// again, but it's enough to give the depth buffer an unambiguous winner.
-export const GROUND_FLUSH_TOP = 0.3 + 0.002
+// +0.002 * HEX_SIZE, not a bare GROUND_BASE_HEIGHT: a plain 'water' (or
+// 'swamp') tile (elevation 0) has its OWN underlying floor mesh
+// (HexMap.tsx's Tile terrainMesh) top at that exact same height —
+// coplanar with this surface's own top cap on the very same tile. Two
+// coincident faces at an identical height is a textbook z-fighting
+// setup: the GPU can't consistently resolve which one is in front, so it
+// flickers pixel-by-pixel into visible banding ("¿Porque se ven esas
+// rayas en el agua...?", real user report, screenshot showing exactly
+// that striping on plain water tiles specifically — 'water_deep' was
+// unaffected, since ITS own floor sits lower, nowhere near this line). A
+// couple millimeters of world space is nowhere near enough to read as
+// "poking up out of the ground" again, but it's enough to give the depth
+// buffer an unambiguous winner — scaled by HEX_SIZE alongside it since
+// depth-buffer precision at a given screen depth is relative to the
+// scene's own overall distances (camera/shadow frustums all scaled the
+// same way — see HexMap.tsx's own shadow-camera-far), not an absolute
+// world-unit amount.
+export const GROUND_FLUSH_TOP = GROUND_BASE_HEIGHT + 0.002 * HEX_SIZE
 
-// How deep each terrain's surface column reads below that fixed line.
-// water/water_deep tuned by eye per direct user feedback: 'water_deep' at
-// 3x plain 'water', a real "wading in deep water" look instead of a
-// faint wetting. swamp is shallower than either — "que el mech se hunda
-// un poco" (explicitly asked to reuse water's sinking effect, but only a
-// little). 0.16 measured correct (confirmed via a direct debug readout:
-// a mech's own resting Y really was 0.158 lower there than on dry
-// ground) but still read as "no se hunde" to the eye — unlike water's
-// translucent, brightly-tinted surface, opaque mud in a similar dark
-// tone to a typical mech's own chassis leaves no clear visual "line"
-// where mud meets metal, so a real sink was easy to miss even though it
-// was there. Bumped to 0.24 — still short of plain water's 0.27 — and
+// How deep each terrain's surface column reads below that fixed line —
+// MECH-factor scaled (tuned by eye against how deep a mech visibly wades,
+// same family as HexMap.tsx's own FOG_HEIGHT), against the model's old
+// scale (1.65) so the wading depth stays proportionate to the now-much-
+// taller mech. water/water_deep tuned by eye per direct user feedback:
+// 'water_deep' at 3x plain 'water', a real "wading in deep water" look
+// instead of a faint wetting. swamp is shallower than either — "que el
+// mech se hunda un poco" (explicitly asked to reuse water's sinking
+// effect, but only a little) — bumped once already (see git history) and
 // paired with a lighter, glossier mud material (see MudSurface below) so
 // the boundary itself is legible, not just technically present.
 const SINK_DEPTH: Record<string, number> = {
-  water: 0.27,
-  water_deep: 0.81,
-  swamp: 0.24,
+  water: 0.27 * MECH_FACTOR,
+  water_deep: 0.81 * MECH_FACTOR,
+  swamp: 0.24 * MECH_FACTOR,
 }
 
 /** How far a standing unit's feet should sink for a given terrain — the
@@ -684,7 +703,7 @@ function WaterSurface({ terrain, q, r }: { terrain: string; q: number; r: number
   const bottomY = GROUND_FLUSH_TOP - depth
   return (
     <mesh position={[0, (GROUND_FLUSH_TOP + bottomY) / 2, 0]}>
-      <cylinderGeometry args={[0.95, 0.95, depth, 6]} />
+      <cylinderGeometry args={[0.98 * HEX_SIZE, 0.98 * HEX_SIZE, depth, 6]} />
       <meshStandardMaterial
         ref={matRef}
         map={texture}
@@ -718,7 +737,7 @@ function MudBubbles({ q, r }: { q: number; r: number }) {
   )
   const bottomY = GROUND_FLUSH_TOP - SINK_DEPTH.swamp
   const riseFrom = bottomY + SINK_DEPTH.swamp * 0.2
-  const riseTo = GROUND_FLUSH_TOP + 0.015
+  const riseTo = GROUND_FLUSH_TOP + 0.015 * MECH_FACTOR
   useFrame((state) => {
     const t = state.clock.elapsedTime
     seeds.forEach((seed, i) => {
@@ -736,7 +755,7 @@ function MudBubbles({ q, r }: { q: number; r: number }) {
       mesh.position.y = riseFrom + p * (riseTo - riseFrom)
       const growIn = Math.min(p / 0.2, 1)
       const popFade = p > 0.82 ? Math.max(0, (1 - p) / 0.18) : 1
-      const maxRadius = 0.013 + ((seed >>> 16) % 100) / 100 * 0.011
+      const maxRadius = (0.013 + ((seed >>> 16) % 100) / 100 * 0.011) * MECH_FACTOR
       mesh.scale.setScalar(maxRadius * growIn * popFade)
       const mat = mesh.material as THREE.MeshStandardMaterial
       mat.opacity = 0.75 * popFade
@@ -746,7 +765,7 @@ function MudBubbles({ q, r }: { q: number; r: number }) {
     <>
       {seeds.map((seed, i) => {
         const angle = (seed % 360) * (Math.PI / 180)
-        const dist = ((seed >>> 4) % 100) / 100 * 0.55
+        const dist = ((seed >>> 4) % 100) / 100 * 0.55 * HEX_SIZE
         return (
           <mesh
             key={i}
@@ -786,7 +805,7 @@ function MudSurface({ q, r }: { q: number; r: number }) {
   return (
     <group>
       <mesh position={[0, (GROUND_FLUSH_TOP + bottomY) / 2, 0]}>
-        <cylinderGeometry args={[0.95, 0.95, depth, 6]} />
+        <cylinderGeometry args={[0.98 * HEX_SIZE, 0.98 * HEX_SIZE, depth, 6]} />
         <meshStandardMaterial attach="material-0" color="#2e2c1f" roughness={0.9} metalness={0} side={THREE.DoubleSide} />
         <meshStandardMaterial
           attach="material-1" color="#6f6b47" roughness={0.3} metalness={0.08}
@@ -837,8 +856,11 @@ export function TerrainDecor({
     // Dense forest reads visibly bigger than light_forest, same
     // proportions the earlier procedural trunk/canopy sizing used.
     const sizeMultiplier = (dense ? 1.15 : 0.9) + ((seed >>> 3) % 100) / 100 * (dense ? 0.35 : 0.25)
-    const jitterX = (((seed >>> 8) % 100) / 100 - 0.5) * 0.3
-    const jitterZ = (((seed >>> 14) % 100) / 100 - 0.5) * 0.3
+    // Position offsets from tile center — HEX-factor scaled (has to stay
+    // proportionate to the hex's own radius so a tree never jitters into
+    // a neighboring tile), NOT the MECH-factor the tree's own size uses.
+    const jitterX = (((seed >>> 8) % 100) / 100 - 0.5) * 0.3 * HEX_SIZE
+    const jitterZ = (((seed >>> 14) % 100) / 100 - 0.5) * 0.3 * HEX_SIZE
     const rotY = ((seed >>> 20) % 628) / 100
 
     // Dense forest gets a second, smaller tree offset from the first —
@@ -846,18 +868,19 @@ export function TerrainDecor({
     // "the same single tree, just bigger" like light_forest's one tree.
     const seed2 = hashTile(q, r, 'forest-decor-2')
     const sizeMultiplier2 = 0.55 + ((seed2 >>> 3) % 100) / 100 * 0.25
-    const jitterX2 = (((seed2 >>> 8) % 100) / 100 - 0.5) * 0.65
-    const jitterZ2 = (((seed2 >>> 14) % 100) / 100 - 0.5) * 0.65
+    const jitterX2 = (((seed2 >>> 8) % 100) / 100 - 0.5) * 0.65 * HEX_SIZE
+    const jitterZ2 = (((seed2 >>> 14) % 100) / 100 - 0.5) * 0.65 * HEX_SIZE
     const rotY2 = ((seed2 >>> 20) % 628) / 100
 
-    // Rough trunk approximation — TREE_BASE_SCALE=2.2 is the model's own
+    // Rough trunk approximation — TREE_BASE_SCALE is the model's own
     // normalized-to-1-unit-tall → world-unit factor, so a tree's real
-    // height is ~2.2 * sizeMultiplier; the trunk itself only fills a
-    // fraction of that (the rest is canopy, which a die should be able
-    // to graze/tumble through same as it would real branches), so the
+    // height is ~TREE_BASE_SCALE * sizeMultiplier; the trunk itself only
+    // fills a fraction of that (the rest is canopy, which a die should be
+    // able to graze/tumble through same as it would real branches), so the
     // collider itself is deliberately much shorter than the full model.
-    const trunkHalfHeight = 0.9 * sizeMultiplier
-    const trunkRadius = 0.18 * sizeMultiplier
+    // MECH-factor scaled, same family as TREE_BASE_SCALE itself.
+    const trunkHalfHeight = 0.9 * MECH_FACTOR * sizeMultiplier
+    const trunkRadius = 0.18 * MECH_FACTOR * sizeMultiplier
     return (
       <>
         <group position={[jitterX, height, jitterZ]} rotation={[0, rotY, 0]}>
@@ -916,9 +939,13 @@ export function TerrainDecor({
     // footprint reads as "fills its tile" visually even as the model
     // itself scales, so the collider doesn't need to track sizeMultiplier
     // precisely to feel right.
+    // Horizontal extents HEX-factor scaled (roughly fills the hex
+    // footprint, same family as BUILDING_FOOTPRINT_SCALE above); vertical
+    // extent MECH-factor scaled (a building's height reads against the
+    // mech, not the hex width).
     const buildingCollider = physics && (
-      <RigidBody type="fixed" position={[0, height + 1.5, 0]} colliders={false}>
-        <CuboidCollider args={[0.8, 1.5, 0.8]} />
+      <RigidBody type="fixed" position={[0, height + 1.5 * MECH_FACTOR, 0]} colliders={false}>
+        <CuboidCollider args={[0.8 * HEX_SIZE, 1.5 * MECH_FACTOR, 0.8 * HEX_SIZE]} />
       </RigidBody>
     )
 
@@ -958,12 +985,12 @@ export function TerrainDecor({
         <group position={[0, height, 0]} rotation={[0, rotY, 0]}>
           <RealBuilding url={ruinUrl} sizeMultiplier={ruinSizeMultiplier} tint="#4a4038" />
         </group>
-        <mesh position={[0.3, height + 0.08, 0.2]} rotation={[0.15, 0.4, 0.1]} castShadow>
-          <boxGeometry args={[0.3, 0.16, 0.3]} />
+        <mesh position={[0.3 * MECH_FACTOR, height + 0.08 * MECH_FACTOR, 0.2 * MECH_FACTOR]} rotation={[0.15, 0.4, 0.1]} castShadow>
+          <boxGeometry args={[0.3 * MECH_FACTOR, 0.16 * MECH_FACTOR, 0.3 * MECH_FACTOR]} />
           <meshStandardMaterial color="#4a4038" />
         </mesh>
-        <mesh position={[-0.25, height + 0.06, -0.25]} rotation={[-0.1, 0.8, 0.2]} castShadow>
-          <boxGeometry args={[0.25, 0.12, 0.25]} />
+        <mesh position={[-0.25 * MECH_FACTOR, height + 0.06 * MECH_FACTOR, -0.25 * MECH_FACTOR]} rotation={[-0.1, 0.8, 0.2]} castShadow>
+          <boxGeometry args={[0.25 * MECH_FACTOR, 0.12 * MECH_FACTOR, 0.25 * MECH_FACTOR]} />
           <meshStandardMaterial color="#443a34" />
         </mesh>
         {buildingCollider}
@@ -978,7 +1005,9 @@ export function TerrainDecor({
         {Array.from({ length: count }, (_, i) => {
           const s = hashTile(q, r, `rough-rock-${i}`)
           const angle = (s % 360) * (Math.PI / 180)
-          const dist = ((s >>> 8) % 100) / 100 * 0.45
+          // HEX-factor scaled — a position offset, same reasoning as the
+          // tree jitterX/jitterZ above.
+          const dist = ((s >>> 8) % 100) / 100 * 0.45 * HEX_SIZE
           const sizeMultiplier = 0.55 + ((s >>> 16) % 100) / 100 * 0.55
           const rotY = ((s >>> 20) % 628) / 100
           const url = (s >>> 2) % 2 === 0 ? ROCK_BOULDER_URL : ROCK_FACE_URL
@@ -1004,7 +1033,9 @@ export function TerrainDecor({
         {Array.from({ length: count }, (_, i) => {
           const s = hashTile(q, r, `rubble-chunk-${i}`)
           const angle = (s % 360) * (Math.PI / 180)
-          const dist = ((s >>> 8) % 100) / 100 * 0.5
+          // HEX-factor scaled — a position offset, same reasoning as the
+          // tree jitterX/jitterZ above.
+          const dist = ((s >>> 8) % 100) / 100 * 0.5 * HEX_SIZE
           const sizeMultiplier = 0.45 + ((s >>> 16) % 100) / 100 * 0.5
           const rotY = ((s >>> 20) % 628) / 100
           const useBlock = (s >>> 2) % 2 === 0

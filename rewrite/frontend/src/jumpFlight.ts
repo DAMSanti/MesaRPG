@@ -1,4 +1,5 @@
 import { MODEL_SCALE } from './components/Mech3D'
+import { HEX_SIZE } from './hexMath'
 
 /** Real user request: real Saltar animation (Despegar→Saltar→Aterrizar)
  * wired into actual gameplay, with the miniature genuinely rising and
@@ -36,7 +37,13 @@ const LANDING_DURATION = 0.35
 // about hex spacing, callers already convert to world-space before
 // calling), scaled up from there.
 const MIN_FLIGHT_DURATION = 0.5
-const FLIGHT_DURATION_PER_WORLD_UNIT = 0.22
+// Inversely scaled by HEX_SIZE (not multiplied, like the spatial
+// constants elsewhere) — this is seconds of flight PER world-unit of
+// horizontal distance, and a hex-to-hex jump now covers HEX_SIZE times
+// more world units for the exact same real-world jump, so the per-unit
+// rate has to shrink by that same factor to keep the actual jump
+// duration unchanged.
+const FLIGHT_DURATION_PER_WORLD_UNIT = 0.22 / HEX_SIZE
 // Peak arc height above a straight line between origin and destination,
 // in world units — scaled by MODEL_SCALE so it stays proportionate if
 // that ever changes.

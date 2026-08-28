@@ -2,6 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFrame } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
+import { HEX_SIZE } from '../hexMath'
+import { MODEL_SCALE } from './Mech3D'
+
+// MECH-factor multiplier — this file's beam/tracer/missile/glow sizes were
+// all originally tuned by eye against the mech (MODEL_SCALE), not the hex
+// grid, same family as HexMap.tsx's own FOG_HEIGHT.
+const MECH_FACTOR = MODEL_SCALE / 1.65
 
 /** Which visual treatment a weapon gets, classified from its own catalog
  * name (app/weapons.py's WEAPON_CATALOG) — kept as simple substring
@@ -56,16 +63,19 @@ const CATEGORY_DURATION_MS: Record<AttackEffectCategory, number> = {
   flame: 420,
 }
 
-// World units/second — hex center-to-center spacing is √3 ≈ 1.73 (see
+// World units/second — hex center-to-center spacing is √3 * HEX_SIZE (see
 // hexMath.ts), so missile ≈ 0.4s/hex (a slow, clearly-trackable lob) and
 // tracer/mg ≈ 0.15s/hex (fast but still visible, unlike the near-instant
 // speed a short fixed duration implied for a many-hex shot before —
 // that's what made a missile look like it vanished after "a few tiles"
-// instead of visibly flying the whole way to the target).
+// instead of visibly flying the whole way to the target). Values scale
+// ×HEX_SIZE (not divided, unlike jumpFlight.ts's own per-world-unit
+// rate) since these ARE the world-units/sec speed directly, and a hex
+// now spans HEX_SIZE times more world units for the same real distance.
 const CATEGORY_SPEED: Partial<Record<AttackEffectCategory, number>> = {
-  tracer: 11,
-  missile: 4.3,
-  mg: 13,
+  tracer: 11 * HEX_SIZE,
+  missile: 4.3 * HEX_SIZE,
+  mg: 13 * HEX_SIZE,
 }
 const MIN_TRAVEL_MS = 350
 const MAX_TRAVEL_MS = 3000
@@ -196,7 +206,7 @@ export function ImpactFlash({ position, color }: { position: THREE.Vector3; colo
   return (
     <group ref={ref} position={position}>
       <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <ringGeometry args={[0.15, 0.32, 20]} />
+        <ringGeometry args={[0.15 * MECH_FACTOR, 0.32 * MECH_FACTOR, 20]} />
         <meshBasicMaterial color={color} transparent opacity={0.9} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
     </group>
@@ -223,8 +233,11 @@ function BeamAttack({ from, to, color, duration, thick }: { from: THREE.Vector3;
   })
   return (
     <group ref={groupRef}>
-      <StraightBeam from={from} to={to} color={color} coreRadius={thick ? 0.045 : 0.03} glowRadius={thick ? 0.13 : 0.08} />
-      <GlowSprite meshRef={flashRef} color={color} size={thick ? 0.9 : 0.6} />
+      <StraightBeam
+        from={from} to={to} color={color}
+        coreRadius={(thick ? 0.045 : 0.03) * MECH_FACTOR} glowRadius={(thick ? 0.13 : 0.08) * MECH_FACTOR}
+      />
+      <GlowSprite meshRef={flashRef} color={color} size={(thick ? 0.9 : 0.6) * MECH_FACTOR} />
     </group>
   )
 }
@@ -264,9 +277,12 @@ function TracerAttack({
   return (
     <group>
       <group ref={beamGroupRef}>
-        <StraightBeam from={lastSeg.current.from} to={lastSeg.current.to} color={color} coreRadius={0.025} glowRadius={0.06} />
+        <StraightBeam
+          from={lastSeg.current.from} to={lastSeg.current.to} color={color}
+          coreRadius={0.025 * MECH_FACTOR} glowRadius={0.06 * MECH_FACTOR}
+        />
       </group>
-      <GlowSprite meshRef={muzzleRef} color={color} size={0.5} />
+      <GlowSprite meshRef={muzzleRef} color={color} size={0.5 * MECH_FACTOR} />
     </group>
   )
 }
@@ -315,7 +331,7 @@ const MISSILE_MODEL_URL = '/models/missile-hellfire.glb'
 // World units, nose to tail — small and fast-moving on screen, so this
 // only needs to read as "a real missile shape" at a glance, not survive
 // close scrutiny the way a stationary decoration would.
-const MISSILE_LENGTH = 0.4
+const MISSILE_LENGTH = 0.4 * MECH_FACTOR
 
 // Cached once from the shared source scene: the uniform scale factor
 // that maps the model's own longest raw dimension (its nose-to-tail
@@ -460,7 +476,7 @@ function Missile({
       </group>
       <group ref={trailGroupRef}>
         <mesh frustumCulled={false}>
-          <cylinderGeometry args={[0.02, 0.005, 1, 5, 1, true]} />
+          <cylinderGeometry args={[0.02 * MECH_FACTOR, 0.005 * MECH_FACTOR, 1, 5, 1, true]} />
           <meshBasicMaterial color={color} transparent opacity={0.5} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
         </mesh>
       </group>
@@ -488,7 +504,11 @@ function MachineGunAttack({
       // still reads as one continuous burst instead of the rounds
       // bunching together.
       delay: (i / 6) * (travelMs / 1000) * 0.5,
-      spread: new THREE.Vector3((Math.random() - 0.5) * 0.35, (Math.random() - 0.5) * 0.22, (Math.random() - 0.5) * 0.35),
+      spread: new THREE.Vector3(
+        (Math.random() - 0.5) * 0.35 * MECH_FACTOR,
+        (Math.random() - 0.5) * 0.22 * MECH_FACTOR,
+        (Math.random() - 0.5) * 0.35 * MECH_FACTOR,
+      ),
     })),
     [travelMs],
   )
@@ -539,7 +559,7 @@ function TracerRound({
   return (
     <>
       <mesh ref={ref} frustumCulled={false}>
-        <cylinderGeometry args={[0.015, 0.015, 1, 5, 1, true]} />
+        <cylinderGeometry args={[0.015 * MECH_FACTOR, 0.015 * MECH_FACTOR, 1, 5, 1, true]} />
         <meshBasicMaterial color={color} transparent opacity={0.95} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
       {impact && <ImpactFlash position={impact} color={color} />}
@@ -554,8 +574,12 @@ function FlameAttack({ from, to, color, duration }: { from: THREE.Vector3; to: T
   const particles = useMemo(
     () => Array.from({ length: 14 }, () => ({
       delay: Math.random() * 0.25,
-      jitter: new THREE.Vector3((Math.random() - 0.5) * 0.4, (Math.random() - 0.5) * 0.3, (Math.random() - 0.5) * 0.4),
-      size: 0.25 + Math.random() * 0.25,
+      jitter: new THREE.Vector3(
+        (Math.random() - 0.5) * 0.4 * MECH_FACTOR,
+        (Math.random() - 0.5) * 0.3 * MECH_FACTOR,
+        (Math.random() - 0.5) * 0.4 * MECH_FACTOR,
+      ),
+      size: (0.25 + Math.random() * 0.25) * MECH_FACTOR,
     })),
     [],
   )
@@ -614,12 +638,12 @@ export interface AttackEffectData {
 
 // Real user request: "los ataques de los mechs graficamente no pueden
 // fallar a mas de 2 tiles del objetivo que son mechs no Storm troopers"
-// — hex center-to-center spacing is √3 ≈ 1.73 (hexMath.ts), so this caps
-// a miss's lateral drift well inside 2 tiles (max ≈1.15 tiles) rather
-// than an arbitrary-feeling number, and reads as "just barely missed" —
-// a mech pilot's aim, not a stormtrooper's.
-const MAX_MISS_LATERAL = 2.0
-const MIN_MISS_LATERAL = 0.8
+// — hex center-to-center spacing is √3 * HEX_SIZE (hexMath.ts), so this
+// caps a miss's lateral drift well inside 2 tiles (max ≈1.15 tiles)
+// rather than an arbitrary-feeling number, and reads as "just barely
+// missed" — a mech pilot's aim, not a stormtrooper's. HEX-factor scaled.
+const MAX_MISS_LATERAL = 2.0 * HEX_SIZE
+const MIN_MISS_LATERAL = 0.8 * HEX_SIZE
 
 /** One weapon's whole visual — resolves a category from the weapon
  * name, builds the real 3D from/to points (raised to roughly torso

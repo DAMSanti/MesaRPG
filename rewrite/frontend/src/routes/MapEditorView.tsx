@@ -4,8 +4,9 @@ import { OrbitControls } from '@react-three/drei'
 import { useCampaignId } from '../useCampaignId'
 import { terrainColor, terrainTexture } from '../terrain'
 import { TerrainDecor } from '../components/TerrainDecor'
-import { BUILDING_MIN_HEIGHT } from '../components/HexMap'
+import { BOARDGAME_MECH_SCALE, elevationToY, GROUND_BASE_HEIGHT, ELEVATION_STEP } from '../components/HexMap'
 import { TableBackground } from '../components/TableBackground'
+import { HEX_SIZE, hexToWorld } from '../hexMath'
 import { RoadMarkings } from '../components/RoadMarkings'
 import { NavBar, GM_LINKS } from '../components/NavBar'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -27,14 +28,16 @@ import {
 } from '../api'
 import './MapEditorView.css'
 
-const SQRT3 = Math.sqrt(3)
 const SQUARE_SPACING = 2
 
 /** Grid shape follows the map's grid_type (ROADMAP.md S0) — hex for
- * Battletech, square for D&D 5e. Same (q, r) columns, different meaning. */
+ * Battletech, square for D&D 5e. Same (q, r) columns, different meaning.
+ * Hex case defers to hexMath.ts's own hexToWorld (real-scale, HEX_SIZE=30)
+ * instead of re-deriving the formula locally — the D&D square grid has no
+ * equivalent real-world scale request, so SQUARE_SPACING stays untouched. */
 function worldPos(gridType: 'hex' | 'square', q: number, r: number): [number, number] {
   if (gridType === 'square') return [q * SQUARE_SPACING, r * SQUARE_SPACING]
-  return [SQRT3 * (q + r / 2), 1.5 * r]
+  return hexToWorld(q, r)
 }
 
 const BIOME_LABELS: Record<Biome, string> = {
@@ -65,14 +68,14 @@ function EditableTile({
   lookup: Map<string, HexTileData>
 }) {
   const [x, z] = worldPos(gridType, tile.q, tile.r)
-  // Same fixed building-tile platform height HexMap.tsx's own Tile
-  // uses — see BUILDING_MIN_HEIGHT's own doc comment there.
-  const height = tile.terrain === 'building' ? BUILDING_MIN_HEIGHT : 0.3 + tile.elevation * 0.22
+  // Same shared elevation formula HexMap.tsx's own Tile uses — see
+  // elevationToY's own doc comment there.
+  const height = elevationToY(tile.terrain, tile.elevation)
   return (
     <group position={[x, 0, z]}>
       <mesh position={[0, height / 2, 0]} castShadow receiveShadow>
         {gridType === 'hex' ? (
-          <cylinderGeometry args={[0.95, 0.95, height, 6]} />
+          <cylinderGeometry args={[HEX_SIZE * 0.98, HEX_SIZE * 0.98, height, 6]} />
         ) : (
           <boxGeometry args={[1.85, height, 1.85]} />
         )}
@@ -98,15 +101,23 @@ function EditableTile({
 
 function UnitDot({ unit, gridType, elevation }: { unit: Unit; gridType: 'hex' | 'square'; elevation: number }) {
   const [x, z] = worldPos(gridType, unit.q, unit.r)
-  const y = 0.3 + elevation * 0.22 + 0.35
+  // Small float-above-the-platform clearance, kept proportional to how
+  // much GROUND_BASE_HEIGHT itself grew (was 0.35 against an old base of
+  // ~0.3) so this read-only marker still visibly hovers above the tile
+  // surface instead of clipping into it.
+  const y = GROUND_BASE_HEIGHT + elevation * ELEVATION_STEP + GROUND_BASE_HEIGHT * (0.35 / 0.3)
   const color = unit.is_ghost
     ? '#e35d5d'
     : unit.pilot_faction != null
       ? FACTION_COLORS[unit.pilot_faction]
       : NEUTRAL_UNIT_COLOR
+  // BOARDGAME_MECH_SCALE's own doc comment (HexMap.tsx) — same "board
+  // game token" convenience this read-only overview wants too, only for
+  // the hex (Battletech) grid; the D&D square grid never rescaled.
+  const dotScale = gridType === 'hex' ? BOARDGAME_MECH_SCALE : 1
   return (
     <mesh position={[x, y, z]}>
-      <sphereGeometry args={[0.28, 16, 16]} />
+      <sphereGeometry args={[0.28 * dotScale, 16, 16]} />
       <meshStandardMaterial
         color={color}
         emissive={unit.is_ghost ? '#e35d5d' : '#000000'}
@@ -291,18 +302,26 @@ function Canvas3D({
   const zs = map.tiles.map((t) => worldPos(map.grid_type, t.q, t.r)[1])
   const centerX = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : 0
   const centerZ = zs.length ? (Math.min(...zs) + Math.max(...zs)) / 2 : 0
+  // Only the hex (Battletech) grid got the real-scale rescale — the D&D
+  // square grid (SQUARE_SPACING) has its own untouched, much smaller
+  // scale, so this camera/shadow setup can't use one fixed multiplier
+  // for both grid_types.
+  const camScale = map.grid_type === 'hex' ? HEX_SIZE : 1
   return (
-    <Canvas shadows camera={{ position: [0, 16, 0.01], fov: 40 }}>
+    // near/far explicit and scaled alongside position — see GMView.tsx's
+    // own identical comment (same fix, same real user report: "se glichea
+    // el agua cuando hago zoom").
+    <Canvas shadows camera={{ position: [0, 16 * camScale, 0.01], fov: 40, near: 0.1 * camScale, far: 2000 * camScale }}>
       <color attach="background" args={['#0f1a18']} />
       <ambientLight intensity={0.7} />
       <directionalLight
         position={[4, 8, 3]} intensity={1.2} castShadow
         shadow-mapSize={[2048, 2048]}
-        shadow-camera-left={-30} shadow-camera-right={30}
-        shadow-camera-top={30} shadow-camera-bottom={-30}
-        shadow-camera-far={60}
+        shadow-camera-left={-30 * camScale} shadow-camera-right={30 * camScale}
+        shadow-camera-top={30 * camScale} shadow-camera-bottom={-30 * camScale}
+        shadow-camera-far={60 * camScale}
       />
-      <TableBackground />
+      <TableBackground hexScale={map.grid_type === 'hex'} />
       {/* TerrainDecor's forest tiles load a real .glb tree model via
           useGLTF, which suspends — every other TerrainDecor consumer
           (HexMap.tsx's own callers: TableView/GMView/FirstPersonView)

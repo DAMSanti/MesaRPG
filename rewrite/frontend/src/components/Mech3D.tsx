@@ -179,13 +179,25 @@ const GENERIC_MODEL_URL = '/models/mech-placeholder.glb'
 // to a plain walk's own WalkStart.
 const RUN_WALK_START_SPEED = 2.2
 
-// Source model's own bounding box is X ±0.374, Y 0..1, Z ±0.310 (already
-// resting on y=0) — roughly matched the old procedural mech's own
-// footprint (X ±0.32, Y 0..~0.89) at 1:1 scale. Bumped well past that on
-// request — a mech visibly overhanging its own hex is the normal look
-// for tabletop miniatures (readability over strict scale accuracy), not
-// a bug to correct back down.
-export const MODEL_SCALE = 1.65
+// Real user request: "vamos a seguir una escala real de juego... un mech
+// mide entre 8 y 14 [metros]" — real BattleTech canon (confirmed:
+// BattleMechs stand 8-14m tall, average often cited around 10m). This
+// used to be 1.65 (a "tabletop miniature" stylization tuned by eye
+// against the hex grid, not real proportions — the hex grid was 1 world
+// unit back then too, so a 1.65-unit mech read as absurdly hex-
+// overhanging once hexMath.ts's own HEX_SIZE made a hex genuinely 30m).
+// Every OTHER prop in the scene (trees, buildings, missiles, fog,
+// explosions...) was in turn tuned by eye against THIS mech, never
+// against the hex — so those all get the SAME multiplier this constant
+// just did (1.65 → 10, ×6.06) rather than the hex's own ×30, or a real
+// forest/mech scene would suddenly read as a forest of 66m trees. See
+// each of those files' own doc comments for the same reasoning applied
+// locally. No per-chassis height variation yet (every mech still renders
+// at this one height regardless of tonnage) — mechAssets.ts has no
+// height/tonnage field to key off today; real 8m-light vs 14m-assault
+// variation is a natural, cheap follow-up once wanted, not part of this
+// pass (scoped to "la normalizacion de alturas" as asked).
+export const MODEL_SCALE = 10
 
 // Local bounding box top is y=1 (see above) — this is roughly where a
 // head/cockpit sits rather than the very topmost point, so
