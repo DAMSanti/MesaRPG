@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react'
 import { Die } from './Die'
+import { HEX_SIZE } from '../hexMath'
 
 // Extracted from TableView.tsx's own InitiativeDice (Fase B — real user
 // request: every roll, not just initiative, should be a real physical
@@ -16,13 +17,17 @@ import { Die } from './Die'
 // typical map instead of sailing across and off the far side. Exported
 // so TableView's own BoardWalls (clearLeftOf) can clear space around the
 // same spot without a second, possibly-drifting copy of this number.
-export const THROW_ORIGIN_X = -5
+// HEX_SIZE-scaled alongside Die.tsx's own DIE_SIZE (real user report:
+// "no veo los dados" — this used to sit just off a board a few world
+// units wide; against the now-real-scale board it was sitting almost
+// dead center instead of off the edge).
+export const THROW_ORIGIN_X = -5 * HEX_SIZE
 // How long the dice sit still showing their result before vanishing.
 const DICE_VISIBLE_MS = 5000
 // Concurrent throws (everyone rolling at once) land in their own lateral
 // lane instead of overlapping — a fixed, deterministic offset per lane
 // index.
-const LANE_SPACING = 2.2
+const LANE_SPACING = 2.2 * HEX_SIZE
 
 export function PhysicalDiceThrow({
   rollId, dieCount, color, dieStyle, lane, onSettled, onDone,
@@ -68,15 +73,21 @@ export function PhysicalDiceThrow({
   // (not runaway) speed — small per-roll jitter (on top of the lane
   // offset) so two dice from the SAME throw don't land in the exact
   // same spot either.
+  // Positions ×HEX_SIZE same as THROW_ORIGIN_X/LANE_SPACING above.
+  // Velocities ×HEX_SIZE too, alongside TableView.tsx's own gravity —
+  // scaling every spatial AND velocity quantity by the same factor while
+  // leaving gravity's acceleration scaled by that same factor keeps the
+  // whole arc's TIMING identical to before, just HEX_SIZE times bigger
+  // (see Die.tsx's own doc comment on why this needed fixing at all).
   const laneZ = (lane - 1) * LANE_SPACING
-  const jitterZ = ((seed % 5) - 2) * 0.5
-  const speed = 3 + (seed % 3) * 0.4
+  const jitterZ = ((seed % 5) - 2) * 0.5 * HEX_SIZE
+  const speed = (3 + (seed % 3) * 0.4) * HEX_SIZE
   return (
     <>
       <Die
         rollId={seed} color={color} style={dieStyle}
-        spawn={[THROW_ORIGIN_X, 1.1, laneZ + jitterZ - 0.4]}
-        throwVelocity={[speed, 1.4, (seed % 3) * 0.4 - 0.4]}
+        spawn={[THROW_ORIGIN_X, 1.1 * HEX_SIZE, laneZ + jitterZ - 0.4 * HEX_SIZE]}
+        throwVelocity={[speed, 1.4 * HEX_SIZE, ((seed % 3) * 0.4 - 0.4) * HEX_SIZE]}
         onSettled={settle(0)}
         vanishing={vanishing}
         onVanished={dieCount === 1 ? onDone : undefined}
@@ -84,8 +95,8 @@ export function PhysicalDiceThrow({
       {dieCount === 2 && (
         <Die
           rollId={seed} color={color} style={dieStyle}
-          spawn={[THROW_ORIGIN_X, 1.3, laneZ + jitterZ + 0.4]}
-          throwVelocity={[speed - 0.4, 1.7, (seed % 3) * 0.4 - 0.6]}
+          spawn={[THROW_ORIGIN_X, 1.3 * HEX_SIZE, laneZ + jitterZ + 0.4 * HEX_SIZE]}
+          throwVelocity={[speed - 0.4 * HEX_SIZE, 1.7 * HEX_SIZE, ((seed % 3) * 0.4 - 0.6) * HEX_SIZE]}
           onSettled={settle(1)}
           vanishing={vanishing}
           onVanished={onDone}

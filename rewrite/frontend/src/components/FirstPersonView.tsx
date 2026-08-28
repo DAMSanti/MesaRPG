@@ -5,7 +5,7 @@ import { EffectComposer, Outline, Selection } from '@react-three/postprocessing'
 import { KernelSize } from 'postprocessing'
 import * as THREE from 'three'
 import {
-  ARRIVE_EPSILON, BIG_TURN_THRESHOLD, ELEVATION_STEP, GROUND_BASE_HEIGHT, HexMap, TURN_SPEED, WALK_SPEED, angleDelta,
+  ARRIVE_EPSILON, BIG_TURN_THRESHOLD, ELEVATION_STEP, GROUND_BASE_HEIGHT, HexMap, TURN_SPEED, angleDelta,
   findAnnotatedLocalPoint, lerpAngle, rotateLocalOffsetByYaw, useAttackVfxQueue, useMechAnnotationsCache,
 } from './HexMap'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
@@ -19,7 +19,7 @@ import {
   type RoundState, type Unit, type VisibleEnemy, type VisibleHex, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase, useDisplayedPhase, useHeldActiveMover } from '../rounds'
-import { HEX_SIZE, hexToWorld, mapCenter } from '../hexMath'
+import { HEX_SIZE, hexToWorld, mapCenter, WALK_SPEED } from '../hexMath'
 import type { FogWalkStep, MeleeResult, UnitWalked } from '../ws'
 import './FirstPersonView.css'
 
@@ -1582,6 +1582,12 @@ export function FirstPersonView({
                   shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
                   shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
                   shadow-camera-far={60 * HEX_SIZE}
+                  // Real user report: dark speckled blotches across tile
+                  // faces, worse zoomed out — shadow-map self-shadowing
+                  // acne on this terrain mesh's own bumpy per-vertex noise
+                  // (see GMView.tsx's own identical fix for the full
+                  // reasoning).
+                  shadow-normalBias={HEX_SIZE * 0.02}
                 />
                 <WalkingFirstPersonCam
                   q={unit.q} r={unit.r} facingDeg={unit.facing_deg}

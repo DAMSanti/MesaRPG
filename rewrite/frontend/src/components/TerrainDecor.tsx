@@ -49,6 +49,9 @@ const treeTextureLoader = new THREE.TextureLoader()
 function loadTreeTexture(url: string): THREE.Texture {
   const tex = treeTextureLoader.load(url)
   tex.colorSpace = THREE.SRGBColorSpace
+  // Same anisotropy fix as terrain.ts's own loadPhotoTexture, same
+  // reason (three.js defaults this to 1/off on every texture).
+  tex.anisotropy = 16
   return tex
 }
 const barkTexture = loadTreeTexture('/textures/bark-branch.jpg')

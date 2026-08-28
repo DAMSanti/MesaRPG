@@ -147,6 +147,26 @@ function GMViewBattletech() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId, roundState])
 
+  // Real user request: "cuando llegue a final de ronda, automaticamente
+  // tiene que pasar a la siguiente ronda de iniciativas" — same self-
+  // driving pattern as the heat-phase effect just above: this GM screen
+  // is the one authoritative source for round progression already (the
+  // "Siguiente ronda" button's own submitStartRound calls this exact
+  // same endpoint), so once currentPhase lands on 'other' (every phase
+  // this round has to offer is done), it starts the next one itself
+  // instead of waiting on a manual click. Safe against a second GM tab/a
+  // re-fired effect the same way the heat one is: a successful call
+  // advances round_number, which changes `roundState` and moves
+  // currentPhase off 'other' on the very next render, so this can't
+  // double-advance — it only ever fires again for a NEW round genuinely
+  // reaching its own end.
+  useEffect(() => {
+    if (!campaignId || !roundState) return
+    if (currentPhase(roundState) !== 'other') return
+    startRound(campaignId).catch(() => {})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [campaignId, roundState])
+
   // useMapState's own map/units already refetch on every visibility_update
   // (broadcast on every unit move — see its own doc comment), but `mechs`
   // is separate local state here, only ever refreshed at explicit GM
@@ -1221,7 +1241,26 @@ function GMViewBattletech() {
                 Scaling both by HEX_SIZE preserves the exact same near/far
                 RATIO (hence the same precision curve) that worked fine
                 before, just covering the new, 30x-bigger scene. */}
-            <Canvas shadows camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 0.1 * HEX_SIZE, far: 2000 * HEX_SIZE }}>
+            {/* Real user report: zoom-out z-fighting that visibly JUMPS
+                between different hexes as the zoom level changes — the
+                textbook signature of depth-buffer precision loss, not a
+                per-tile bug. near:far was 0.1:2000 * HEX_SIZE = 1:20000 —
+                a 24-bit depth buffer distributes almost all of its real
+                precision within the first few percent of that range
+                (nearest the camera), leaving very little for everything
+                else. First attempt cut far all the way to 100*HEX_SIZE —
+                too aggressive: real zoomed-OUT use (OrbitControls has no
+                maxDistance set, and a normal "see the whole board"
+                zoom-out already puts the camera several thousand units
+                out) started exceeding that far plane and clipping the
+                ENTIRE map to nothing, a real regression, not a fix.
+                Settled on near raised to 1*HEX_SIZE (still far below
+                anything this top-down camera ever actually gets close
+                to) and far cut to 500*HEX_SIZE — ratio improves from
+                1:20000 to 1:500 (40x), while empirically staying well
+                clear of where a normal "whole board" zoom-out actually
+                sits. */}
+            <Canvas shadows camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 1 * HEX_SIZE, far: 500 * HEX_SIZE }}>
               <color attach="background" args={['#0f1a18']} />
               <ambientLight intensity={0.6} />
               <directionalLight
@@ -1230,6 +1269,25 @@ function GMViewBattletech() {
                 shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
                 shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
                 shadow-camera-far={60 * HEX_SIZE}
+                // Real user report: dark speckled blotches across whole
+                // tile faces, worse when zoomed out — classic shadow-map
+                // self-shadowing acne (three.js's own shadow.bias/
+                // normalBias both default to 0), and this terrain mesh's
+                // own per-vertex noise/ramp displacement (terrainReliefAt,
+                // added earlier this session) gives it exactly the kind of
+                // constantly-varying normal that triggers it — a flat
+                // plane rarely shows this at all. Worse at a distance
+                // because more of the shadow map's fixed 2048² resolution
+                // covers the visible area at once, making its own
+                // discretization error more visible per screen pixel.
+                // normalBias (offsets the shadow-map LOOKUP along the
+                // surface normal, not the light direction) is the
+                // standard fix for acne specifically on non-flat
+                // receivers, scaled to this scene's real HEX_SIZE=30m
+                // units the same way every other small-offset constant
+                // this session already is (see e.g. hexTileGeometry.ts's
+                // own TEXTURE_BLEND_LIFT).
+                shadow-normalBias={HEX_SIZE * 0.02}
               />
               <TableBackground hexScale />
               <CameraBridge onReady={(fn) => { raycastToGroundRef.current = fn }} />

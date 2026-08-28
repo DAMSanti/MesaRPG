@@ -26,6 +26,49 @@ export function hexToWorld(q: number, r: number): [number, number] {
   return [HEX_SIZE * SQRT3 * (q + r / 2), HEX_SIZE * 1.5 * r]
 }
 
+// World units per second a unit visually walks between hexes at — hex
+// center-to-center spacing is √3 * HEX_SIZE (hexToWorld above, and true
+// for EVERY neighbor direction on a regular hex grid, not just an
+// approximation), so this scales with HEX_SIZE too (was tuned as "hex
+// every ~1.5s" against the old radius-1 grid; ×HEX_SIZE preserves that
+// same real-world pace now that a hex is 30m across, not 1 world unit).
+// Real user report: "el movimiento de los mechs ahora mismo es MUUUUY
+// rapido" — cut to well under half its old value (was 3.5, ~one hex
+// every 0.5s) so a multi-hex path actually reads as a mech stepping
+// across the board instead of a blur.
+//
+// Moved here (was HexMap.tsx-local) so Mech3D.tsx can read it too
+// without a circular import (HexMap.tsx itself imports Mech3D) — see
+// WALK_CYCLE_TIME_SCALE below, its own reason for needing it.
+export const WALK_SPEED = 1.4 * HEX_SIZE
+
+// Real user report (with screenshot/description): a multi-hex walk only
+// ever left ONE footprint pair, always right near the DESTINATION hex,
+// nothing along the path in between — sometimes not even that
+// ("y no lo hace siempre"). Root cause: the Walk animation clip plays at
+// its own fixed authored pace (2 real seconds per full stride cycle,
+// timeScale=1) completely decoupled from how fast/far the mech is
+// ACTUALLY sliding across the board (WALK_SPEED, world units/second) —
+// crossing several hexes in less real time than even one full stride
+// cycle takes means the legs only ever get through a PARTIAL cycle (at
+// most one real touchdown per foot) for the ENTIRE multi-hex move,
+// landing wherever the animation happens to catch up, which is close to
+// wherever the group has arrived by then (near the end of a fast move).
+// Real per-foot bone data measured directly from the Jenner's own GLB
+// (offline analysis, not a guess) confirmed one clean touchdown per foot
+// per full 2s Walk-clip cycle — so speeding up the CLIP's own playback
+// (not the movement itself, which is a deliberate gameplay-pacing
+// choice, not a bug) to match how long it actually takes to cross one
+// hex at WALK_SPEED is what makes roughly one stride happen per hex,
+// like a real gait, instead of the animation lagging arbitrarily behind
+// actual travel distance. `oneHexSeconds` = real time to cross one hex
+// at WALK_SPEED; `timeScale` = how much faster than authored the clip
+// needs to play so ITS OWN 2s duration matches that real duration.
+const ONE_HEX_DISTANCE = HEX_SIZE * SQRT3
+const ONE_HEX_SECONDS = ONE_HEX_DISTANCE / WALK_SPEED
+const WALK_CLIP_AUTHORED_SECONDS = 2
+export const WALK_CYCLE_TIME_SCALE = WALK_CLIP_AUTHORED_SECONDS / ONE_HEX_SECONDS
+
 // Inverse of hexToWorld: nearest hex to a raw world (x, z) point — needed
 // once a position comes from something continuous (a raycast hit) rather
 // than an existing tile/unit's own q/r. Standard cube-round algorithm:
@@ -98,5 +141,22 @@ export const BUILDING_MIN_HEIGHT = GROUND_BASE_HEIGHT
  * GROUND_BASE_HEIGHT only ever need to change in one place. */
 export function elevationToY(terrain: string, elevation: number): number {
   return terrain === 'building' ? BUILDING_MIN_HEIGHT : GROUND_BASE_HEIGHT + elevation * ELEVATION_STEP
+}
+
+/** Real user request: "las hexes de altura 0 podran tener elevacion de 0
+ * a 5m, las de altura 1 de 5 a 11, las de altura 2 de 11 a 17..." — each
+ * BattleTech elevation LEVEL is really a real-world height BAND, not one
+ * exact number; `elevationToY` above stays the single flat reference
+ * point gameplay/most rendering still uses (LOS, movement, the base a
+ * mech rests on), but the deformable terrain's own within-hex orography
+ * (hexTileGeometry.ts) is allowed to vary anywhere inside its tile's own
+ * band — bounded so it can never drift into a DIFFERENT level's own
+ * range (that would silently break the LOS/elevation rules the discrete
+ * `elevation` number itself still governs). Level 0's own band is 5m
+ * (0-5) instead of a full ELEVATION_STEP (6m) — a deliberate asymmetry
+ * from the user's own stated numbers, not a rounding slip. */
+export function elevationBandRange(elevation: number): [number, number] {
+  if (elevation <= 0) return [0, 5]
+  return [5 + ELEVATION_STEP * (elevation - 1), 5 + ELEVATION_STEP * elevation]
 }
 

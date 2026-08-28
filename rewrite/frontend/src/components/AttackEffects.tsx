@@ -4,6 +4,28 @@ import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { HEX_SIZE } from '../hexMath'
 import { MODEL_SCALE } from './Mech3D'
+import { DynamicLight } from './DynamicLight'
+
+// Real user request: "cuando los mechs disparen un láser... producirán
+// un destello rojo que iluminará lo que tenga alrededor, sobretodo a
+// oscuras" — real point lights (DynamicLight.tsx), not just emissive
+// sprites that only light themselves. Distance kept generous (a few hex
+// widths) so a flash in the dark actually reaches the mechs standing
+// around it, not just its own few-meter footprint. castShadow stays off
+// even for these — confirmed with the user that BattleTech's own turn
+// order means at most one shot's VFX is ever live at a time, so cost
+// isn't the concern; a shadow-casting muzzle flash just didn't read as
+// better than a plain one for something this brief.
+const ATTACK_LIGHT_DISTANCE = HEX_SIZE * 4
+// Real user report (on Die.tsx's own glass-die light, same root cause
+// here): three.js's default lighting is physically-correct (candela
+// units, real inverse-square falloff) — a plain intensity of 4-6 works
+// out to a barely-there contribution of ~0.01 at even a modest 20-unit
+// distance, invisible next to the scene's own ambient/directional
+// light. This multiplier bumps every intensity below into the hundreds/
+// low-thousands range so each flash is actually visible at mech-scale
+// distances, without hand-tuning every call site's raw number.
+const ATTACK_LIGHT_INTENSITY_SCALE = 250
 
 // MECH-factor multiplier — this file's beam/tracer/missile/glow sizes were
 // all originally tuned by eye against the mech (MODEL_SCALE), not the hex
@@ -171,10 +193,15 @@ function StraightBeam({
   )
 }
 
-/** Every material under a group, so a single useFrame can set opacity on
- * a whole composite effect (beam core+glow+flash sprites) in one line
- * instead of threading a ref through each sub-mesh individually. */
-function setGroupOpacity(group: THREE.Group | null, opacity: number) {
+/** Every material AND light under a group, so a single useFrame can fade
+ * a whole composite effect (beam core+glow+flash sprites+point light) in
+ * one line instead of threading a ref through each sub-element
+ * individually. Renamed from setGroupOpacity now that it also drives
+ * DynamicLight's own intensity the same way — same fade fraction, same
+ * "each element keeps its own base value, scaled by the incoming
+ * fraction" trick, just applied to `.intensity` instead of `.opacity`
+ * for anything that's a THREE.Light. */
+function setGroupFade(group: THREE.Group | null, fade: number) {
   if (!group) return
   group.traverse((obj) => {
     if (obj instanceof THREE.Mesh) {
@@ -186,8 +213,12 @@ function setGroupOpacity(group: THREE.Group | null, opacity: number) {
         // balance instead of flattening everything to the same value.
         const base = (mat.userData as { baseOpacity?: number }).baseOpacity ?? mat.opacity
         ;(mat.userData as { baseOpacity?: number }).baseOpacity = base
-        mat.opacity = base * opacity
+        mat.opacity = base * fade
       }
+    } else if (obj instanceof THREE.Light) {
+      const base = (obj.userData as { baseIntensity?: number }).baseIntensity ?? obj.intensity
+      ;(obj.userData as { baseIntensity?: number }).baseIntensity = base
+      obj.intensity = base * fade
     }
   })
 }
@@ -201,7 +232,7 @@ export function ImpactFlash({ position, color }: { position: THREE.Vector3; colo
     const scale = 0.3 + t * 1.4
     const fade = 1 - t
     ref.current?.scale.setScalar(scale)
-    setGroupOpacity(ref.current, fade)
+    setGroupFade(ref.current, fade)
   })
   return (
     <group ref={ref} position={position}>
@@ -209,6 +240,7 @@ export function ImpactFlash({ position, color }: { position: THREE.Vector3; colo
         <ringGeometry args={[0.15 * MECH_FACTOR, 0.32 * MECH_FACTOR, 20]} />
         <meshBasicMaterial color={color} transparent opacity={0.9} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
+      <DynamicLight position={[0, MECH_FACTOR, 0]} color={color} intensity={4 * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE} />
     </group>
   )
 }
@@ -225,7 +257,7 @@ function BeamAttack({ from, to, color, duration, thick }: { from: THREE.Vector3;
     const elapsedMs = (state.clock.elapsedTime - start.current) * 1000
     const holdUntil = duration * 0.35
     const fade = elapsedMs <= holdUntil ? 1 : Math.max(0, 1 - (elapsedMs - holdUntil) / (duration - holdUntil))
-    setGroupOpacity(groupRef.current, fade)
+    setGroupFade(groupRef.current, fade)
     if (flashRef.current) {
       const mat = flashRef.current.material as THREE.MeshBasicMaterial
       mat.opacity = fade
@@ -238,6 +270,18 @@ function BeamAttack({ from, to, color, duration, thick }: { from: THREE.Vector3;
         coreRadius={(thick ? 0.045 : 0.03) * MECH_FACTOR} glowRadius={(thick ? 0.13 : 0.08) * MECH_FACTOR}
       />
       <GlowSprite meshRef={flashRef} color={color} size={(thick ? 0.9 : 0.6) * MECH_FACTOR} />
+      {/* Lights the shooter's own mech, not just the impact — a laser/PPC
+          has no separate travel phase to hang a light on (it snaps in
+          instantly), so one light at the muzzle for this beam's whole
+          brief life is the natural fit. */}
+      <DynamicLight
+        position={[from.x, from.y, from.z]} color={color}
+        intensity={(thick ? 6 : 4) * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE}
+      />
+      <DynamicLight
+        position={[to.x, to.y, to.z]} color={color}
+        intensity={(thick ? 6 : 4) * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE}
+      />
     </group>
   )
 }
@@ -252,6 +296,7 @@ function TracerAttack({
 }: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; tailMs: number }) {
   const beamGroupRef = useRef<THREE.Group>(null)
   const muzzleRef = useRef<THREE.Mesh>(null)
+  const muzzleLightRef = useRef<THREE.PointLight>(null)
   const start = useRef<number | null>(null)
   const lastSeg = useRef({ from, to })
   useFrame((state) => {
@@ -267,11 +312,16 @@ function TracerAttack({
       beamGroupRef.current.visible = travelT < 1
     }
     const postFade = travelT >= 1 ? Math.max(0, 1 - (elapsedMs - travelMs) / tailMs) : 1
+    const muzzleFade = Math.max(0, 1 - elapsedMs / (travelMs * 0.3))
     if (muzzleRef.current) {
       const mat = muzzleRef.current.material as THREE.MeshBasicMaterial
-      mat.opacity = Math.max(0, 1 - elapsedMs / (travelMs * 0.3))
+      mat.opacity = muzzleFade
     }
-    setGroupOpacity(beamGroupRef.current, postFade)
+    // Impact-end illumination is already covered by ImpactFlash's own
+    // light (AttackEffect renders one alongside this on a real hit) —
+    // this one only needs to cover the muzzle's own brief flash.
+    if (muzzleLightRef.current) muzzleLightRef.current.intensity = 3 * ATTACK_LIGHT_INTENSITY_SCALE * muzzleFade
+    setGroupFade(beamGroupRef.current, postFade)
     lastSeg.current = { from: segFrom, to: segTo }
   })
   return (
@@ -283,6 +333,10 @@ function TracerAttack({
         />
       </group>
       <GlowSprite meshRef={muzzleRef} color={color} size={0.5 * MECH_FACTOR} />
+      <DynamicLight
+        lightRef={muzzleLightRef} position={[from.x, from.y, from.z]} color={color}
+        intensity={3 * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE}
+      />
     </group>
   )
 }
@@ -473,6 +527,15 @@ function Missile({
     <>
       <group ref={headRef}>
         <RealMissile />
+        {/* Real user request: "los misiles pasando cerca de un mech, su
+            propulsion generará una luz que se reflejará en el mech" — a
+            steady glow riding the missile's own head group, so it
+            tracks the flight path for free instead of re-deriving its
+            position each frame. */}
+        <DynamicLight
+          position={[0, 0, 0]} color="#ff9a3b"
+          intensity={2.5 * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE * 0.6}
+        />
       </group>
       <group ref={trailGroupRef}>
         <mesh frustumCulled={false}>

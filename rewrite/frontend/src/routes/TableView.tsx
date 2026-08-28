@@ -532,7 +532,13 @@ function TableViewBattletech() {
       {/* near/far explicit and HEX_SIZE-scaled alongside position — see
           GMView.tsx's own identical comment (same fix, same real user
           report: "se glichea el agua cuando hago zoom"). */}
-      <Canvas shadows camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 0.1 * HEX_SIZE, far: 2000 * HEX_SIZE }}>
+      {/* Real user report: zoom-out z-fighting that visibly jumps between
+          different hexes as zoom changes — see GMView.tsx's own identical
+          fix for the full reasoning (near:far precision ratio, not a
+          per-tile bug; a first, more aggressive far cut clipped the whole
+          map at a normal "zoomed all the way out" distance, a real
+          regression, not a fix). */}
+      <Canvas shadows camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 1 * HEX_SIZE, far: 500 * HEX_SIZE }}>
         <color attach="background" args={['#0f1a18']} />
         {/* Real user report: "los dados de jade se ven muy oscuros,
             quiza la escena tenga poca luz" — bumped alongside the
@@ -546,6 +552,11 @@ function TableViewBattletech() {
           shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
           shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
           shadow-camera-far={60 * HEX_SIZE}
+          // Real user report: dark speckled blotches across tile faces,
+          // worse zoomed out — shadow-map self-shadowing acne on this
+          // terrain mesh's own bumpy per-vertex noise (see GMView.tsx's
+          // own identical fix for the full reasoning).
+          shadow-normalBias={HEX_SIZE * 0.02}
         />
         {/* Real user request: metallic/glass dice need real reflections
             to read as true chrome/glass rather than a flat tinted
@@ -558,7 +569,18 @@ function TableViewBattletech() {
         <Suspense fallback={null}>
           <Environment files="/textures/dice-env.exr" background={false} />
         </Suspense>
-        <Physics gravity={[0, -9.81, 0]}>
+        {/* -9.81 was real Earth gravity for the dice, the only dynamic
+            (gravity-affected) bodies in this Physics world — every tile/
+            mech/decor collider is fixed or kinematic, so this never
+            touched the mech/hex rescale at all. Dice themselves DO need
+            it scaled now (see Die.tsx's own doc comment on why they were
+            invisible after that rescale): scaling every dice spatial/
+            velocity constant by HEX_SIZE while leaving gravity's
+            acceleration untouched would make the same fall take
+            sqrt(HEX_SIZE) times longer (falling HEX_SIZE times farther
+            under the same accel) — scaling gravity by HEX_SIZE too keeps
+            the exact same fall/bounce TIMING, just at the new scale. */}
+        <Physics gravity={[0, -9.81 * HEX_SIZE, 0]}>
           {/* Real user report: a die that rolled off a tile into a gap
               fell straight through — this used to render OUTSIDE
               <Physics> entirely (a plain visual mesh, no collider at

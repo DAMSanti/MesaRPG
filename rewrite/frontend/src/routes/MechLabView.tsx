@@ -1,6 +1,8 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  forwardRef, Suspense, useEffect, useImperativeHandle, useMemo, useRef, useState,
+} from 'react'
 import { Canvas, useFrame, useThree, type ThreeEvent } from '@react-three/fiber'
-import { OrbitControls, useAnimations, useGLTF } from '@react-three/drei'
+import { OrbitControls, TransformControls, useAnimations, useGLTF } from '@react-three/drei'
 import { Physics, RigidBody, useRapier } from '@react-three/rapier'
 import type RAPIER from '@dimforge/rapier3d-compat'
 import type { Collider, RigidBody as RapierRigidBody, World } from '@dimforge/rapier3d-compat'
@@ -222,7 +224,7 @@ function nearestNamedMeshBySamplePoints(
 
 const LOOK_DISTANCE = 4
 
-type Mode = 'annotate' | 'limbs' | 'rig' | 'texture'
+type Mode = 'annotate' | 'limbs' | 'rig' | 'texture' | 'footprint'
 type MechLocationCode = (typeof MECH_LOCATIONS)[number]
 type LimbLocation = (typeof LIMB_LOCATIONS)[number]
 
@@ -1360,6 +1362,183 @@ function BoneAxisHandles({
   )
 }
 
+// Real user request: "en mech lab me dejas hacer un cuadro alrededor de
+// un pie, ese cuadro debe cortar una seccion de la malla y nos da la
+// forma exacta de la huella, la guardamos en un png" — a real per-chassis
+// footprint shape, since Mech3D.tsx's own skin-weight-based getFootShape
+// can come back empty on a rig like the Jenner's (PieD/PieI are pure IK
+// sockets with zero skinned vertices — confirmed by directly inspecting
+// that GLB — so there's no vertex-membership shape to derive there at
+// all).
+//
+// First version used a screen-space rubber-band drag (raycasting the 4
+// corners against a FIXED camera). Real user correction after trying it:
+// "da igual donde haga el cuadro, siempre aparece en blanco... si no me
+// dejas mover la camara como voy a hacer un cuadro en un sitio correcto"
+// — blocking camera orbit for the whole tab (so a screen-space drag
+// wouldn't also spin the camera) meant the box could only ever be drawn
+// against whatever the DEFAULT camera angle happened to show, which
+// often wasn't even framing a foot; and "el cuadro me debes dejar
+// ponerle, rotarle, desplazarle... debe ser fijo, y que mire lo que 'hay
+// dentro' en un slice" — they want a real, persistent, freely
+// positionable/rotatable 3D box, not a one-shot 2D rectangle.
+//
+// This version: a real BoxGeometry mesh, moved/rotated/scaled via drei's
+// <TransformControls> (same gizmo pattern used everywhere else 3D
+// manipulation is needed), completely independent of the camera — the
+// user orbits the view with the mouse as always, and separately drags
+// the box's own gizmo handles to position it. Capture derives an
+// orthographic camera DIRECTLY from the box's own transform (position/
+// quaternion/scale) rather than raycasting anything, so it's an exact
+// "slice" of the box's own volume in the box's own local space — this
+// is what actually gives a real slice for free: an orthographic
+// frustum's near/far/left/right/top/bottom EXACTLY matching the box's
+// own local half-extents on all 3 axes clips everything outside it on
+// every side, with no separate clip-plane logic needed. Rotating the box
+// rotates the captured slice's own orientation right along with it.
+interface FootprintCaptureHandle {
+  capture: () => void
+}
+
+const FOOTPRINT_CAPTURE_RESOLUTION = 256
+const FOOTPRINT_BOX_DEFAULT_POSITION: [number, number, number] = [0.12, 0.08, 0.06]
+const FOOTPRINT_BOX_DEFAULT_SCALE: [number, number, number] = [0.15, 0.12, 0.22]
+
+const FootprintCapture = forwardRef<FootprintCaptureHandle, {
+  chassis: string
+  model: string | null
+  transformMode: 'translate' | 'rotate' | 'scale'
+  onDraggingChange: (dragging: boolean) => void
+  onCapture: (dataUrl: string) => void
+}>(function FootprintCapture({ chassis, model, transformMode, onDraggingChange, onCapture }, ref) {
+  const url = resolveMechModelUrl(chassis, model)
+  const { scene } = useGLTF(url)
+  const instance = useMemo(() => normalizeMechInstance(scene), [scene])
+  useMechPbr(instance)
+  const { gl } = useThree()
+  const modelGroupRef = useRef<THREE.Group>(null)
+  // Real bug found live (user report: "da igual donde haga el cuadro,
+  // siempre aparece en blanco"): TransformControls with NO `object` prop
+  // and the box as its JSX CHILD does not attach to the box mesh itself
+  // — it silently renders its own internal wrapper <group> around the
+  // children and attaches to THAT instead, so every drag was moving a
+  // group my own code never had a reference to, while `boxRef` (this
+  // mesh's own local transform) sat frozen at its original JSX props the
+  // whole time — capture kept reading that same frozen default position/
+  // size no matter how the visible gizmo box was actually dragged. Fixed
+  // by attaching explicitly (`object={box}`) to the REAL mesh, rendered
+  // as TransformControls' SIBLING, not its child — a plain object
+  // instance (not a ref) is required, hence state + a callback ref
+  // instead of the usual useRef, so it can't be attached before the mesh
+  // actually exists.
+  const [box, setBox] = useState<THREE.Mesh | null>(null)
+
+  useImperativeHandle(ref, () => ({
+    capture: () => {
+      const model = modelGroupRef.current
+      if (!model || !box) return
+
+      const halfWidth = box.scale.x / 2
+      const halfHeight = box.scale.y / 2
+      const halfDepth = box.scale.z / 2
+
+      const orthoCam = new THREE.OrthographicCamera(
+        -halfWidth, halfWidth, halfDepth, -halfDepth, 0.001, box.scale.y + 0.001,
+      )
+      // Positioned at the box's own local TOP (not its center — sitting
+      // at the center would only ever see the lower half, since near/far
+      // only extend forward from the camera, never behind it), oriented
+      // by the box's own quaternion so a rotated box tilts the slice
+      // with it. Cameras look down their own local -Z by default; an
+      // extra -90° tilt around the camera's own (now box-aligned) local
+      // X re-aims that at the box's local -Y ("down" through the box),
+      // same "avoid the degenerate straight-down default up vector"
+      // reasoning GMView's own top-down game camera already uses,
+      // applied via an explicit local rotation instead of a manual up-
+      // vector/lookAt this time since the box can be arbitrarily rotated.
+      const topOffset = new THREE.Vector3(0, halfHeight, 0).applyQuaternion(box.quaternion)
+      orthoCam.position.copy(box.position).add(topOffset)
+      orthoCam.quaternion.copy(box.quaternion)
+      orthoCam.rotateX(-Math.PI / 2)
+      orthoCam.updateMatrixWorld(true)
+      orthoCam.updateProjectionMatrix()
+
+      // Flat unlit white on every mesh in the capture, restored right
+      // after — the output is meant to read as a clean silhouette/
+      // coverage mask, not a lit render.
+      const originals: { mesh: THREE.Mesh; material: THREE.Material | THREE.Material[] }[] = []
+      const maskMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff })
+      model.traverse((obj) => {
+        if (obj instanceof THREE.Mesh) {
+          originals.push({ mesh: obj, material: obj.material })
+          obj.material = maskMaterial
+        }
+      })
+
+      const renderTarget = new THREE.WebGLRenderTarget(FOOTPRINT_CAPTURE_RESOLUTION, FOOTPRINT_CAPTURE_RESOLUTION)
+      const prevTarget = gl.getRenderTarget()
+      const prevClearColor = new THREE.Color()
+      gl.getClearColor(prevClearColor)
+      const prevClearAlpha = gl.getClearAlpha()
+      gl.setRenderTarget(renderTarget)
+      gl.setClearColor(0x000000, 0)
+      gl.clear(true, true, true)
+      gl.render(model, orthoCam)
+
+      const pixels = new Uint8Array(FOOTPRINT_CAPTURE_RESOLUTION * FOOTPRINT_CAPTURE_RESOLUTION * 4)
+      gl.readRenderTargetPixels(renderTarget, 0, 0, FOOTPRINT_CAPTURE_RESOLUTION, FOOTPRINT_CAPTURE_RESOLUTION, pixels)
+
+      gl.setRenderTarget(prevTarget)
+      gl.setClearColor(prevClearColor, prevClearAlpha)
+      renderTarget.dispose()
+      maskMaterial.dispose()
+      for (const { mesh, material } of originals) mesh.material = material
+
+      const outCanvas = document.createElement('canvas')
+      outCanvas.width = FOOTPRINT_CAPTURE_RESOLUTION
+      outCanvas.height = FOOTPRINT_CAPTURE_RESOLUTION
+      const ctx = outCanvas.getContext('2d')
+      if (!ctx) return
+      const imageData = ctx.createImageData(FOOTPRINT_CAPTURE_RESOLUTION, FOOTPRINT_CAPTURE_RESOLUTION)
+      const n = FOOTPRINT_CAPTURE_RESOLUTION
+      // WebGL read-back rows go bottom-to-top; canvas ImageData wants
+      // top-to-bottom — flip.
+      for (let row = 0; row < n; row++) {
+        const srcRow = n - 1 - row
+        imageData.data.set(pixels.subarray(srcRow * n * 4, (srcRow + 1) * n * 4), row * n * 4)
+      }
+      ctx.putImageData(imageData, 0, 0)
+      onCapture(outCanvas.toDataURL('image/png'))
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [gl, box])
+
+  return (
+    <>
+      <primitive ref={modelGroupRef} object={instance} />
+      <mesh ref={setBox} position={FOOTPRINT_BOX_DEFAULT_POSITION} scale={FOOTPRINT_BOX_DEFAULT_SCALE}>
+        <boxGeometry args={[1, 1, 1]} />
+        <meshBasicMaterial color="#6ea8e3" wireframe transparent opacity={0.7} />
+      </mesh>
+      {/* Real user request: independent of camera orbit — dragging this
+          gizmo's own handles must never also spin the view. drei's
+          TransformControls' own onMouseDown/onMouseUp are exactly what
+          MechLabView's own onDraggingChange uses to disable OrbitControls
+          for the drag's duration, same "boneDragging" pattern the Ver rig
+          tab's own custom gizmo already established. Only rendered once
+          the box mesh actually exists (object needs a real instance, not
+          a possibly-null ref). */}
+      {box && (
+        <TransformControls
+          object={box} mode={transformMode} size={0.6}
+          onMouseDown={() => onDraggingChange(true)}
+          onMouseUp={() => onDraggingChange(false)}
+        />
+      )}
+    </>
+  )
+})
+
 function RigViewer({
   chassis, model, activeClip, playing, scrub, selectedBone,
   onClipsChange, onBonesChange, onScrubChange, onInfluencePercentChange, onBoneDragChange,
@@ -1631,6 +1810,17 @@ export function MechLabView() {
 
   const [activeLimb, setActiveLimb] = useState<LimbLocation | null>(null)
   const [previewBreak, setPreviewBreak] = useState(false)
+
+  // Footprint-capture tab — see FootprintCapture's own doc comment. A
+  // real, persistent 3D box (TransformControls: mover/rotar/escalar),
+  // independent of camera orbit — footprintDragging only ever tracks the
+  // GIZMO's own drag (via FootprintCapture's onDraggingChange), the same
+  // "boneDragging" pattern the Ver rig tab's own gizmo already uses to
+  // disable OrbitControls just for that.
+  const footprintCaptureRef = useRef<FootprintCaptureHandle>(null)
+  const [footprintCaptureUrl, setFootprintCaptureUrl] = useState<string | null>(null)
+  const [footprintDragging, setFootprintDragging] = useState(false)
+  const [footprintTransformMode, setFootprintTransformMode] = useState<'translate' | 'rotate' | 'scale'>('translate')
 
   // Real bug hunt this session: a real crash earlier (reparenting a mesh
   // from inside instance.traverse(), now fixed) took the WHOLE WebGL
@@ -2032,17 +2222,24 @@ export function MechLabView() {
               <button type="button" className={mode === 'texture' ? 'active' : ''} onClick={() => setMode('texture')}>
                 Textura
               </button>
+              <button type="button" className={mode === 'footprint' ? 'active' : ''} onClick={() => setMode('footprint')}>
+                Huella
+              </button>
             </div>
 
-            <ReviewBadge
-              status={reviewStatusFor(reviewByKey, modelUrl, currentTrack)}
-              onAccept={() => setReviewStatus(modelUrl, currentTrack, 'accepted')}
-              onUnaccept={() => setReviewStatus(modelUrl, currentTrack, 'done')}
-            />
-            {isTrackLocked && (
-              <p className="mechlab-hint">
-                Aceptado — bloqueado para edición. Pulsa "↺ Desmarcar" arriba para poder tocarlo de nuevo.
-              </p>
+            {mode !== 'footprint' && (
+              <>
+                <ReviewBadge
+                  status={reviewStatusFor(reviewByKey, modelUrl, currentTrack)}
+                  onAccept={() => setReviewStatus(modelUrl, currentTrack, 'accepted')}
+                  onUnaccept={() => setReviewStatus(modelUrl, currentTrack, 'done')}
+                />
+                {isTrackLocked && (
+                  <p className="mechlab-hint">
+                    Aceptado — bloqueado para edición. Pulsa "↺ Desmarcar" arriba para poder tocarlo de nuevo.
+                  </p>
+                )}
+              </>
             )}
 
             {mode === 'annotate' && (
@@ -2392,6 +2589,65 @@ export function MechLabView() {
                 </div>
               </>
             )}
+
+            {mode === 'footprint' && (
+              <>
+                <h2>Huella</h2>
+                <p className="mechlab-hint">
+                  Coloca el cuadro azul alrededor de un pie (muévelo/rotalo/escálalo con los ejes) — la cámara se
+                  mueve como siempre, el cuadro es independiente. "Capturar" toma justo el volumen del cuadro, como
+                  un corte/slice, y lo guarda como PNG en blanco sobre transparente: la silueta real de lo que haya
+                  dentro. Sirve como máscara real de la huella para ese chasis, en vez de la elipse genérica.
+                </p>
+                <div className="mechlab-mode-tabs">
+                  <button
+                    type="button" className={footprintTransformMode === 'translate' ? 'active' : ''}
+                    onClick={() => setFootprintTransformMode('translate')}
+                  >
+                    Mover
+                  </button>
+                  <button
+                    type="button" className={footprintTransformMode === 'rotate' ? 'active' : ''}
+                    onClick={() => setFootprintTransformMode('rotate')}
+                  >
+                    Rotar
+                  </button>
+                  <button
+                    type="button" className={footprintTransformMode === 'scale' ? 'active' : ''}
+                    onClick={() => setFootprintTransformMode('scale')}
+                  >
+                    Escalar
+                  </button>
+                </div>
+                <div className="row">
+                  <button
+                    type="button" className="mechlab-save-btn"
+                    onClick={() => footprintCaptureRef.current?.capture()}
+                  >
+                    📸 Capturar
+                  </button>
+                </div>
+                {footprintCaptureUrl ? (
+                  <>
+                    <img
+                      src={footprintCaptureUrl} alt="Captura de huella"
+                      style={{ width: '100%', background: '#1c2624', border: '1px solid var(--border)' }}
+                    />
+                    <div className="row">
+                      <a
+                        className="mechlab-save-btn"
+                        href={footprintCaptureUrl}
+                        download={`huella-${selectedChassis}-${selectedModel ?? 'default'}.png`}
+                      >
+                        ⬇ Descargar PNG
+                      </a>
+                    </div>
+                  </>
+                ) : (
+                  <p className="mechlab-hint">Todavía no hay ninguna captura.</p>
+                )}
+              </>
+            )}
           </>
         )}
       </aside>
@@ -2468,13 +2724,22 @@ export function MechLabView() {
                 {mode === 'texture' && (
                   <TextureTuner chassis={selectedChassis} model={selectedModel} settings={pbrSettings} />
                 )}
+                {mode === 'footprint' && (
+                  <FootprintCapture
+                    ref={footprintCaptureRef}
+                    chassis={selectedChassis} model={selectedModel}
+                    transformMode={footprintTransformMode}
+                    onDraggingChange={setFootprintDragging}
+                    onCapture={setFootprintCaptureUrl}
+                  />
+                )}
               </Suspense>
             </Physics>
             {mode === 'annotate' && points.map((p, i) => (p.kind !== 'limb' ? <PointMarker key={`${pointKey(p.kind, p.location)}:${i}`} point={p} /> : null))}
             {mode === 'annotate' && fpvPreview && cockpitPoint ? (
               <FpvPreviewCam cockpitLocal={[cockpitPoint.x, cockpitPoint.y, cockpitPoint.z]} />
             ) : (
-              <OrbitControls target={[0, 0.5, 0]} enabled={!boneDragging} />
+              <OrbitControls target={[0, 0.5, 0]} enabled={!boneDragging && !footprintDragging} />
             )}
           </Canvas>
         ) : (

@@ -5,6 +5,8 @@ import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { resolveDieStyle, type DieMarkingKind, type DieTextureSet } from '../dieStyles'
+import { GROUND_BASE_HEIGHT, HEX_SIZE } from '../hexMath'
+import { DynamicLight } from './DynamicLight'
 
 // Real user request: "los dados deben tener los lados y los vertices
 // ligeramente redondeados" — a real d6's edges/corners are never
@@ -16,8 +18,19 @@ import { resolveDieStyle, type DieMarkingKind, type DieTextureSet } from '../die
 // also the other half of that request ("deben tener el mismo
 // color/textura que el dado en si"). Modest radius/segment count —
 // "ligeramente", not a soap-bar look.
-const DIE_SIZE = 0.9
-const DIE_CORNER_RADIUS = 0.07
+// Real user report: "desde que hemos hecho esto del tamaño real no veo
+// los dados" — this file was DELIBERATELY left alone during the scale
+// normalization (dice were treated as a stylized tabletop-prop
+// abstraction, never meant to represent real-world size). That reasoning
+// missed one thing: the TableView camera itself moved HEX_SIZE times
+// farther back to frame the now-real-scale board, so a die that stayed
+// at its old absolute size shrank to the same fraction on screen — not
+// a rendering bug, just correct perspective math applied to a size that
+// never moved. Scaling by HEX_SIZE restores the exact same on-screen
+// presence the dice always had, same as scaling the camera position did
+// for everything else.
+const DIE_SIZE = 0.9 * HEX_SIZE
+const DIE_CORNER_RADIUS = 0.07 * HEX_SIZE
 
 // Real user request: "quiero texturizar los dados de verdad... dados
 // metalicos con textura... mapa metalico, roughness y glossiness,
@@ -341,12 +354,12 @@ function getCausticsTexture(): THREE.Texture {
   return texture
 }
 
-const CAUSTICS_SIZE = 1.3
+const CAUSTICS_SIZE = 1.3 * HEX_SIZE
 // How high above the ground a die can be and still show a (fading)
 // caustic pattern — real light-through-glass caustics only sharpen once
 // something is close to the surface catching them, so this fades out
 // while the die is still tumbling through the air, not just at rest.
-const CAUSTICS_FADE_HEIGHT = 0.6
+const CAUSTICS_FADE_HEIGHT = 0.6 * HEX_SIZE
 
 /** Follows `bodyRef`'s own live X/Z every frame (a plain sibling of the
  * RigidBody, not a child of it — a caustic pattern lives flat on the
@@ -366,8 +379,15 @@ function DieCausticsProjector({ bodyRef, color }: { bodyRef: RefObject<RapierRig
     const mat = materialRef.current
     if (!body || !group || !mat) return
     const t = body.translation()
-    group.position.set(t.x, t.y - 0.46, t.z)
-    const heightAboveGround = Math.max(0, t.y - 0.3)
+    // 0.46 tracks DIE_SIZE's own half-height (was 0.45 against the old
+    // 0.9 — a hair over so the projector sits just under the die's own
+    // center, not exactly at it) — scaled the same HEX_SIZE way DIE_SIZE
+    // itself was. The ground-level offset uses GROUND_BASE_HEIGHT (was a
+    // stale bare 0.3 — the same duplicated-old-value bug fixed everywhere
+    // else in the rescale, just missed here since this file was
+    // otherwise left alone).
+    group.position.set(t.x, t.y - 0.46 * HEX_SIZE, t.z)
+    const heightAboveGround = Math.max(0, t.y - GROUND_BASE_HEIGHT)
     mat.opacity = 0.5 * Math.max(0, 1 - heightAboveGround / CAUSTICS_FADE_HEIGHT)
     // Slow independent drift on each axis so the pattern visibly
     // shimmers instead of sitting static — real caustics never hold
@@ -666,7 +686,29 @@ export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled,
         restitution={0.3}
         friction={0.6}
       >
-        <mesh ref={meshRef} castShadow material={materials} geometry={geometry} />
+        <mesh ref={meshRef} castShadow material={materials} geometry={geometry}>
+          {/* Real user request: "los dados de cristal quiero que tengan
+              una pequeña luz que no castee sombras en el centro" — a
+              child of the die's own mesh, not a separate tracked object,
+              so it rides along with every tumble/bounce for free (same
+              transform Rapier already drives via `meshRef`). Non-shadow-
+              casting (DynamicLight's own default) — a shadow-casting
+              light bouncing/spinning with the die would be a much
+              stranger effect than the subtle internal sparkle asked
+              for, on top of the real render cost of a shadow map that
+              has to keep re-rendering every frame the die moves. */}
+          {/* Real user report: "no se ve la luz" — three.js's default
+              lighting is physically-correct (candela units, real
+              inverse-square falloff), so a point light's actual
+              contribution at distance d is roughly intensity/d². At the
+              die's own surface (d≈DIE_SIZE/2≈13-14 units), intensity=2
+              works out to ~0.01 — completely imperceptible next to the
+              scene's own ambient/directional light. 600 puts a
+              genuinely visible ~3 contribution at that same distance. */}
+          {look.transmission ? (
+            <DynamicLight position={[0, 0, 0]} color={look.color} intensity={600} distance={DIE_SIZE * 4} />
+          ) : null}
+        </mesh>
       </RigidBody>
       {/* A sibling of the RigidBody, not a child of it — a caustic
           pattern lives flat on the table regardless of how the die

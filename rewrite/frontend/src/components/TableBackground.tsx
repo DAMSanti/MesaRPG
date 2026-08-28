@@ -63,7 +63,14 @@ export function TableBackground({ physics, hexScale }: { physics?: boolean; hexS
   // already stops it from also sailing off sideways.
   return (
     <RigidBody type="fixed" colliders={false}>
-      <CuboidCollider args={[100 * scale, 0.25, 100 * scale]} position={[0, -0.3, 0]} />
+      {/* Vertical thickness/position ×scale too now — this only ever
+          mounts alongside hexScale (TableView's real board, the one
+          Physics provider with real dynamic bodies: the dice), and a
+          much bigger/faster-falling HEX_SIZE-scaled die needs a
+          proportionately thick catch zone, not the old few-centimeter
+          slab (real user report: "no veo los dados" — same rescale as
+          Die.tsx/BoardWalls.tsx). */}
+      <CuboidCollider args={[100 * scale, 0.25 * scale, 100 * scale]} position={[0, -0.3 * scale, 0]} />
       {plane}
     </RigidBody>
   )

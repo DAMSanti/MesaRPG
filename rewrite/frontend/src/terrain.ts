@@ -41,6 +41,17 @@ function loadPhotoTexture(url: string, repeat: number): THREE.Texture {
   tex.colorSpace = THREE.SRGBColorSpace
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
   tex.repeat.set(repeat, repeat)
+  // Real user report: dark speckled/glitchy blotches across whole tile
+  // faces, worse zoomed out — three.js defaults `anisotropy` to 1 (off)
+  // on every texture, and NOTHING in this file ever raised it. A
+  // repeat-tiled photo texture (every one of these is — GRASS_REPEAT,
+  // FOREST_FLOOR_REPEAT, etc.) viewed from a distance/steep-ish angle
+  // with no anisotropic filtering is a textbook cause of moiré/aliasing
+  // that reads as exactly this kind of speckled noise, worsening as
+  // zoom-out increases minification with nothing compensating for it.
+  // 16 is the conventional safe max (three.js clamps to whatever the
+  // GPU actually supports either way).
+  tex.anisotropy = 16
   photoTextures.set(url, tex)
   return tex
 }
@@ -193,6 +204,8 @@ function finish(canvas: HTMLCanvasElement): THREE.CanvasTexture {
   const tex = new THREE.CanvasTexture(canvas)
   tex.colorSpace = THREE.SRGBColorSpace
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  // Same anisotropy fix as loadPhotoTexture above, same reason.
+  tex.anisotropy = 16
   return tex
 }
 

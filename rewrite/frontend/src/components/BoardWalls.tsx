@@ -1,6 +1,6 @@
 import { RigidBody } from '@react-three/rapier'
 import type { MapData } from '../api'
-import { hexToWorld } from '../hexMath'
+import { hexToWorld, HEX_SIZE } from '../hexMath'
 
 // A die thrown in with real velocity can sail clean off the far edge of
 // the board (requested directly — "quiero que haya una pared invisible
@@ -8,9 +8,13 @@ import { hexToWorld } from '../hexMath'
 // the map's own tile bounding box — same coordinate space HexMap's own
 // [-centerX,-centerZ] group offset puts everything else in, so these
 // line up with the actual rendered board regardless of its shape.
-const MARGIN = 1.2
-const WALL_HEIGHT = 4
-const WALL_THICKNESS = 0.4
+// HEX_SIZE-scaled alongside Die.tsx/PhysicalDiceThrow.tsx's own dice
+// rescale (real user report: "no veo los dados" — these walls stayed at
+// their old size while the dice flying at/through them grew HEX_SIZE
+// times bigger and faster).
+const MARGIN = 1.2 * HEX_SIZE
+const WALL_HEIGHT = 4 * HEX_SIZE
+const WALL_THICKNESS = 0.4 * HEX_SIZE
 
 export function BoardWalls({
   map, clearLeftOf,
@@ -30,7 +34,7 @@ export function BoardWalls({
   // Centered coordinates (HexMap's own group already offsets by
   // -centerX,-centerZ using this same bounding-box midpoint).
   let left = minX - cx - MARGIN
-  if (clearLeftOf != null) left = Math.min(left, clearLeftOf - 1)
+  if (clearLeftOf != null) left = Math.min(left, clearLeftOf - HEX_SIZE)
   const right = maxX - cx + MARGIN
   const back = minZ - cz - MARGIN
   const front = maxZ - cz + MARGIN

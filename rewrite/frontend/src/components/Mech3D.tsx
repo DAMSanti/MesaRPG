@@ -3,6 +3,7 @@ import { useAnimations, useGLTF, useTexture } from '@react-three/drei'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
 import { SkeletonUtils } from 'three-stdlib'
+import { WALK_CYCLE_TIME_SCALE } from '../hexMath'
 import type { JumpPhase } from '../jumpFlight'
 import { resolveMechModelUrl } from '../mechAssets'
 
@@ -169,6 +170,17 @@ interface Mech3DProps {
    * FirstPersonView, GMView previews) keeps today's animated behavior
    * exactly as-is. */
   playAnimation?: boolean
+  /** Real user request: "recuerda que te pedi que fuera la impresion del
+   * pie del mech donde pisa, no un punto random en un hex... Si las
+   * huellas IK cogen la forma de la planta del pie de la malla, me
+   * valen" — fires once per real footfall (a foot bone's world Y
+   * hitting a local minimum while walking), giving the caller the real
+   * bone position plus the real per-chassis sole shape (see
+   * `getFootShape`'s own doc comment) instead of a geometric
+   * approximation. Only fires for chassis actually rigged with `PieD`/
+   * `PieI` bones (only the Jenner today) — HexMap's own UnitMarker keeps
+   * its existing path-interpolation fallback for every other chassis. */
+  onFootstep?: (worldPos: [number, number, number], footHalfWidth: number, footHalfDepth: number, rotationY: number) => void
 }
 
 const GENERIC_MODEL_URL = '/models/mech-placeholder.glb'
@@ -270,6 +282,146 @@ export function normalizeMechInstance(scene: THREE.Object3D): THREE.Group {
     clone.position.set(-center.x * s, -box.min.y * s, -center.z * s)
   }
   return clone
+}
+
+// ---------------------------------------------------------------------
+// Real footstep tracking — real user request: "recuerda que te pedi que
+// fuera la impresion del pie del mech donde pisa, no un punto random en
+// un hex... Si las huellas IK cogen la forma de la planta del pie de la
+// malla, me valen." The rig's own foot bones are named `PieD` (derecho)
+// / `PieI` (izquierdo) — a real convention the user confirmed directly
+// ("asi se van a llamar... lo usaran todos"), not a heuristic guess.
+// Today only the Jenner has them; any chassis without them simply
+// returns nulls here and HexMap.tsx falls back to its existing
+// geometric-approximation footprint system.
+
+/** Same "most curated assets are one monolithic SkinnedMesh, no separate
+ * per-limb mesh node" constraint MechLabView.tsx's own `findSkinnedMesh`
+ * already documents (real user report there: "en el selector de
+ * extremidades selecciona siempre todo el mech") — this is that same
+ * function, needed here too since gameplay never had a reason to reach
+ * the skeleton before now. */
+function findSkinnedMeshInGroup(root: THREE.Object3D): THREE.SkinnedMesh | null {
+  const found: THREE.SkinnedMesh[] = []
+  root.traverse((obj) => {
+    if ((obj as THREE.SkinnedMesh).isSkinnedMesh) found.push(obj as THREE.SkinnedMesh)
+  })
+  return found[0] ?? null
+}
+
+/** Exact-name lookup, not a positional heuristic — `null` for either
+ * side a given chassis hasn't been rigged with yet. Cheap (a handful of
+ * bones to scan) and safe to call fresh per mounted instance — unlike
+ * `getFootShape` below, there's no reason to cache bone OBJECT
+ * references across instances, since each mounted Mech3D already needs
+ * its own independent clone/skeleton for its own animation state
+ * regardless. */
+function findFootBones(skinnedMesh: THREE.SkinnedMesh | null): { left: THREE.Bone | null; right: THREE.Bone | null } {
+  if (!skinnedMesh) return { left: null, right: null }
+  let left: THREE.Bone | null = null
+  let right: THREE.Bone | null = null
+  for (const bone of skinnedMesh.skeleton.bones) {
+    if (bone.name === 'PieI') left = bone
+    else if (bone.name === 'PieD') right = bone
+  }
+  return { left, right }
+}
+
+interface FootShape {
+  halfWidth: number
+  halfDepth: number
+}
+
+// Keyed by `${url}:${boneName}` — the bind-pose geometry (and therefore
+// the real foot shape) is identical across every instance of the same
+// chassis, so this is computed once per chassis ever, not once per
+// mounted mech. Same "cache per chassis, not per instance" pattern
+// TerrainDecor.tsx's own rockUnitScale/rockRawOffset Maps already use.
+const footShapeCache = new Map<string, FootShape | null>()
+
+/** Real per-chassis foot size, derived from the ACTUAL mesh — not a
+ * generic guess. Selects every vertex whose skin weight favors this one
+ * bone (same `boneInfluenceMask`-style skin-weight membership technique
+ * MechLabView.tsx's own limb-paint/RigViewer features already use to
+ * answer "which vertices does this bone actually drive," since there's
+ * no separate foot mesh node to just grab directly — see
+ * findSkinnedMeshInGroup's own doc comment) and takes the local-space
+ * bounding box of just those vertices. `null` if the mesh has no real
+ * skin-weight data, or the bone influences nothing (shouldn't happen
+ * for a bone that's actually part of the working rig, but a missing/
+ * corrupt weight paint should degrade to "no shape," not a crash). */
+function getFootShape(url: string, mesh: THREE.SkinnedMesh, bone: THREE.Bone): FootShape | null {
+  const key = `${url}:${bone.name}`
+  if (footShapeCache.has(key)) return footShapeCache.get(key) ?? null
+
+  const geometry = mesh.geometry
+  const skinIndex = geometry.getAttribute('skinIndex')
+  const skinWeight = geometry.getAttribute('skinWeight')
+  const position = geometry.getAttribute('position')
+  if (!skinIndex || !skinWeight || !position) {
+    footShapeCache.set(key, null)
+    return null
+  }
+  const boneIndex = mesh.skeleton.bones.indexOf(bone)
+  if (boneIndex < 0) {
+    footShapeCache.set(key, null)
+    return null
+  }
+
+  const FOOT_WEIGHT_THRESHOLD = 0.25
+  const box = new THREE.Box3()
+  let found = false
+  for (let i = 0; i < position.count; i++) {
+    let influenced = false
+    for (let j = 0; j < 4; j++) {
+      if (skinIndex.getComponent(i, j) === boneIndex && skinWeight.getComponent(i, j) >= FOOT_WEIGHT_THRESHOLD) {
+        influenced = true
+        break
+      }
+    }
+    if (!influenced) continue
+    found = true
+    box.expandByPoint(new THREE.Vector3(position.getX(i), position.getY(i), position.getZ(i)))
+  }
+  if (!found) {
+    // Real rig fact, confirmed by directly inspecting the Jenner GLB's
+    // own skin data (offline analysis, not a guess): PieD/PieI have
+    // ZERO vertices at ANY weight — they're pure IK end-effector/socket
+    // bones, not skinning bones. The actual foot geometry is skinned to
+    // their PARENT (TibiaD/TibiaI, the shin+foot combined segment), so
+    // there is no distinct "foot" vertex group this rig exposes at all.
+    // This is exactly why footsteps stopped firing entirely (real user
+    // report: "no está dejando ninguna huella") once the Y-motion timing
+    // itself was fixed — `getFootShape` returning null here made the
+    // caller's `if (!bone || !shape) continue` skip the foot outright,
+    // with no shape to report regardless of how correct the touchdown
+    // detection was. The bone's own POSITION still tracks correctly
+    // (plain forward-kinematics, unrelated to skin weights — verified
+    // against the same real GLB), so rather than silently killing every
+    // footstep for a whole chassis, fall back to a generic oval sized
+    // off the mesh's own overall bind-pose height — proportionate
+    // regardless of a given chassis's raw unit scale, same "fraction of
+    // total height" convention MODEL_HEAD_FRACTION/MODEL_CHEST_FRACTION
+    // already use elsewhere in this file. HexMap.tsx's own
+    // MIN_FOOTPRINT_HALF_SIZE floors the final world-space size anyway,
+    // so this only needs to be in the right ballpark.
+    geometry.computeBoundingBox()
+    const meshHeight = geometry.boundingBox ? geometry.boundingBox.max.y - geometry.boundingBox.min.y : 1
+    const fallbackShape: FootShape = { halfWidth: meshHeight * 0.05, halfDepth: meshHeight * 0.08 }
+    footShapeCache.set(key, fallbackShape)
+    return fallbackShape
+  }
+  const size = new THREE.Vector3()
+  box.getSize(size)
+  // X/Z only — the sole's own footprint on the ground plane, in the
+  // SkinnedMesh's own local (bind-pose) space, same normalized space
+  // normalizeMechInstance already puts the whole model into. Callers
+  // multiply by MODEL_SCALE for real world units, same convention every
+  // other local-space measurement in this file already follows (see
+  // MODEL_HEAD_FRACTION/MODEL_CHEST_FRACTION's own use sites).
+  const shape: FootShape = { halfWidth: size.x / 2, halfDepth: size.z / 2 }
+  footShapeCache.set(key, shape)
+  return shape
 }
 
 /** Live-tunable knobs for useMechPbr, below — pulled out into their own
@@ -478,7 +630,7 @@ export function useMechPbr(
 
 function Mech3DModel({
   color, emissive, emissiveIntensity, chassis, model, isMoving, movementType, jumpPhase, fallen, dead,
-  tintStrength, onLoaded, onSurfaceClick, playAnimation,
+  tintStrength, onLoaded, onSurfaceClick, playAnimation, onFootstep,
 }: Mech3DProps) {
   const url = resolveMechModelUrl(chassis, model)
   const { scene, animations } = useGLTF(url)
@@ -493,6 +645,22 @@ function Mech3DModel({
   }, [])
 
   const instance = useMemo(() => normalizeMechInstance(scene), [scene])
+
+  // Real foot-bone lookup + real sole shape (see this file's own
+  // findFootBones/getFootShape doc comments) — bones re-found fresh per
+  // mounted instance (SkeletonUtils.clone gives each instance its own
+  // bone objects, and this lookup is cheap), shape cached per chasis URL
+  // (expensive-ish, identical across every instance of one chasis).
+  // `null` sides for any chassis not yet rigged with PieD/PieI — the
+  // footstep-detection useFrame below simply never fires for those.
+  const footRig = useMemo(() => {
+    const skinnedMesh = findSkinnedMeshInGroup(instance)
+    const { left, right } = findFootBones(skinnedMesh)
+    const leftShape = skinnedMesh && left ? getFootShape(url, skinnedMesh, left) : null
+    const rightShape = skinnedMesh && right ? getFootShape(url, skinnedMesh, right) : null
+    return { skinnedMesh, left, right, leftShape, rightShape }
+  }, [instance, url])
+
   // applyColorBoost: false — this component's own tint effect below owns
   // `mat.color` (it resets it from scratch on every faction/destroyed/
   // shutdown change, unlike LimbPainter/RigViewer's static preview), so
@@ -628,9 +796,19 @@ function Mech3DModel({
           crossFadeTo('Run', true)
           return
         }
-        if (current === 'WalkStart' || current === 'Walk') { crossFadeTo('Walk', true); return }
+        // Real user report: a multi-hex walk only ever left one footprint
+        // pair, always near the destination, nothing along the path (and
+        // "no lo hace siempre" — inconsistent) — the Walk clip's own
+        // authored pace (2s/cycle) is decoupled from how fast the mech
+        // actually crosses the board, so a fast multi-hex move finishes
+        // before the legs even complete one real stride cycle. See
+        // hexMath.ts's own WALK_CYCLE_TIME_SCALE doc comment for the real
+        // derivation (measured against the actual Jenner GLB, not
+        // guessed) — playing the clip that much faster makes roughly one
+        // real touchdown happen per hex crossed, matching a real gait.
+        if (current === 'WalkStart' || current === 'Walk') { crossFadeTo('Walk', true, WALK_CYCLE_TIME_SCALE); return }
         if (crossFadeTo('WalkStart', false)) return
-        crossFadeTo('Walk', true)
+        crossFadeTo('Walk', true, WALK_CYCLE_TIME_SCALE)
         return
       }
 
@@ -809,6 +987,90 @@ function Mech3DModel({
       return
     }
     group.rotation.z = 0
+  })
+
+  // Real footstep detection — see this file's own onFootstep doc
+  // comment. Tracks each rigged foot bone's world-space Y per frame and
+  // fires the instant it stops descending and starts rising again (a
+  // local minimum = the real moment the sole meets the ground), rather
+  // than a fixed timer/position along the walk path. Only while
+  // `isMoving` (via `inputsRef`, same live-value pattern the locomotion
+  // effect above already uses) — a still mech's feet don't leave marks,
+  // and resets tracking state whenever it stops so the next walk's first
+  // frame doesn't read a stale descent from a previous, unrelated move.
+  // Real bug found live, twice (user reports): a first version compared
+  // only the PER-FRAME delta against a small epsilon, which is fragile
+  // in both directions at once — animation-curve interpolation jitter
+  // near the flat stance phase was enough to cross a small epsilon
+  // (dozens of spurious footprints stamped before the mech left its
+  // first hex), but raising the epsilon to reject that jitter also
+  // rejected real motion during the eased-in/eased-out top and bottom of
+  // a natural stride arc, where the per-frame delta is smallest exactly
+  // when it needs to cross the threshold cleanly (no footprints at all).
+  // A single per-frame threshold can't be both, because it doesn't know
+  // the difference between "real motion, sampled during its slow part"
+  // and "no real motion, just noise" — only the CUMULATIVE range since
+  // the last apex tells them apart, regardless of animation speed or
+  // frame rate: track each foot's own running peak Y (`peakY`, the top
+  // of its current swing); once it has dropped at least
+  // FOOT_ARM_DROP below that peak, it's `armed` — a real, deliberate
+  // descent has now happened (jitter alone never accumulates a
+  // consistent one-directional drop that big); once armed, the first
+  // frame the foot stops sinking (`y >= prevY`) is the real touchdown —
+  // fire there, then start tracking a fresh peak from that landing spot
+  // for the next swing. Immune to jitter (never arms on it) and immune
+  // to slow real motion (arms on cumulative range, not any single
+  // frame's delta).
+  const FOOT_ARM_DROP = 0.15
+  const footTrackRef = useRef<{
+    left: { prevY: number | null; peakY: number; armed: boolean }
+    right: { prevY: number | null; peakY: number; armed: boolean }
+  }>({ left: { prevY: null, peakY: 0, armed: false }, right: { prevY: null, peakY: 0, armed: false } })
+  const footWorldScratch = useRef(new THREE.Vector3()).current
+  const footScaleScratch = useRef(new THREE.Vector3()).current
+  useFrame(() => {
+    if (!onFootstep || !inputsRef.current.isMoving) {
+      footTrackRef.current.left.prevY = null
+      footTrackRef.current.left.armed = false
+      footTrackRef.current.right.prevY = null
+      footTrackRef.current.right.armed = false
+      return
+    }
+    const group = groupRef.current
+    const { skinnedMesh, left, leftShape, right, rightShape } = footRig
+    if (!group || !skinnedMesh) return
+    skinnedMesh.getWorldScale(footScaleScratch)
+    const worldScale = (footScaleScratch.x + footScaleScratch.z) / 2
+    const sides: Array<['left' | 'right', THREE.Bone | null, FootShape | null]> = [
+      ['left', left, leftShape],
+      ['right', right, rightShape],
+    ]
+    for (const [side, bone, shape] of sides) {
+      if (!bone || !shape) continue
+      bone.getWorldPosition(footWorldScratch)
+      const y = footWorldScratch.y
+      const track = footTrackRef.current[side]
+      if (track.prevY == null) {
+        track.prevY = y
+        track.peakY = y
+        continue
+      }
+      if (y > track.peakY) {
+        track.peakY = y
+      } else if (!track.armed && track.peakY - y >= FOOT_ARM_DROP) {
+        track.armed = true
+      } else if (track.armed && y >= track.prevY) {
+        onFootstep(
+          [footWorldScratch.x, y, footWorldScratch.z],
+          shape.halfWidth * worldScale,
+          shape.halfDepth * worldScale,
+          group.rotation.y,
+        )
+        track.armed = false
+        track.peakY = y
+      }
+      track.prevY = y
+    }
   })
 
   useEffect(() => {

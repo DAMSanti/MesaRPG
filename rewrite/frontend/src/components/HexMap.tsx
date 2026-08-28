@@ -10,17 +10,20 @@ import type {
 } from '../api'
 import { listMechAnnotations } from '../api'
 import { Mech3D } from './Mech3D'
-import { TerrainDecor, terrainSinkY } from './TerrainDecor'
+import { GROUND_FLUSH_TOP, TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
-import { terrainColor, terrainRotation, terrainTexture } from '../terrain'
+import { terrainColor, terrainTexture } from '../terrain'
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import {
-  BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationToY, GROUND_BASE_HEIGHT, HEX_SIZE, hexToWorld, mapCenter, worldToHex,
+  BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationBandRange, elevationToY, GROUND_BASE_HEIGHT, HEX_SIZE, hexToWorld,
+  mapCenter, WALK_SPEED, worldToHex,
 } from '../hexMath'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
+import { buildBlendedHexGeometry, buildDrapedHexCap, makeHexHeightAt } from '../hexTileGeometry'
+import { getStampVersion, RELIEF_SKIP_TERRAINS, stampDeformation } from '../terrainRelief'
 
 // Real user request: "no es muy largo hacer que las armas disparen de esas
 // zonas y los impactos se hagan en esos puntos?" — MechLab's own
@@ -251,16 +254,6 @@ export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, u
   return { activeAttack, onAttackEffectDone, waitForDrain }
 }
 
-// World units per second a unit visually walks between hexes at — hex
-// center-to-center spacing is √3 * HEX_SIZE (hexMath.ts's hexToWorld), so
-// this scales with HEX_SIZE too (was tuned as "hex every ~1.5s" against
-// the old radius-1 grid; ×HEX_SIZE preserves that same real-world pace
-// now that a hex is 30m across, not 1 world unit). Real user report: "el
-// movimiento de los mechs ahora mismo es MUUUUY rapido" — cut to well
-// under half its old value (was 3.5, ~one hex every 0.5s) so a multi-hex
-// path actually reads as a mech stepping across the board instead of a
-// blur.
-export const WALK_SPEED = 1.4 * HEX_SIZE
 // Below this distance (world units) a move is considered "arrived" —
 // small enough to be visually indistinguishable from exact, avoids the
 // interpolation asymptotically crawling the last fraction of a unit
@@ -419,22 +412,153 @@ const Tile = memo(function Tile({
       <meshStandardMaterial color="#241a10" roughness={0.9} />
     </mesh>
   )
+  // Real user request: "vamos a eliminar los saltos entre hexes... no
+  // suavices demasiado... se tiene que notar que son hexes de diferentes
+  // alturas aunque sus fronteras coincidan en altura" — each of this
+  // tile's 6 edges ramps toward whatever REAL neighbor sits there (a
+  // flush terrain — water/mud/building — or the map's own edge opts a
+  // side out, same flat vertical wall it always had), computed once in
+  // plain JS by buildBlendedHexGeometry (see its own doc comment for the
+  // cross-tile coherence reasoning). NOT rotated by terrainRotation —
+  // unlike the old flat cylinder, this mesh's own vertex positions now
+  // encode WHICH real-world edge ramps toward which real neighbor, and
+  // rotating the whole mesh would silently point each ramp at the wrong
+  // neighbor (texture variety trades off against that; texture still
+  // varies by terrainColor/hashTile-picked variant, just not by rotation
+  // on this surface specifically).
+  const neighborHeights = FOG_HEX_NEIGHBORS.map(([dq, dr]) => {
+    const neighbor = lookup.get(`${tile.q + dq},${tile.r + dr}`)
+    if (!neighbor) return null
+    if (RELIEF_SKIP_TERRAINS.has(tile.terrain) || RELIEF_SKIP_TERRAINS.has(neighbor.terrain)) return null
+    // Real user request: "entre tiles que pueden andar los mechs, las
+    // pendientes tienen que ser progresivas... para aquellas hexes
+    // juntas que no puedan caminar los mechs, por ejemplo altura 0
+    // junto altura 4, puedes hacer un 'barranco'" — movement.py's own
+    // step cost (`elevation_gain`, uncapped) makes a big jump merely
+    // very expensive rather than flatly illegal, so there's no single
+    // authoritative "walkable" cutoff to import; 2 levels matches the
+    // common real BattleTech read of "a mech can scramble up this" vs
+    // "this needs a real cliff." Past that, same flat wall every other
+    // opted-out edge gets — a big elevation gap misleadingly LOOKING
+    // walkable would be worse than the old flat cliff it replaced.
+    if (Math.abs(tile.elevation - neighbor.elevation) > 2) return null
+    return elevationToY(neighbor.terrain, neighbor.elevation)
+  })
+  // Real user report: water/swamp tiles' own within-hex orography could
+  // bulge the ground mesh up ABOVE TerrainDecor.tsx's own WaterSurface/
+  // MudSurface — those render at a FIXED GROUND_FLUSH_TOP regardless of
+  // what this file does, so any relief here that isn't kept strictly
+  // below that line pokes the real ground up through the water, exactly
+  // backwards from "el agua nunca tiene que quedar por encima del agua."
+  // For a flush terrain (terrainSinkY non-null), the ground mesh's own
+  // band becomes that terrain's REAL depth range instead of an elevation
+  // band: from just under the water's own surface line down to its real
+  // BattleTech-tuned bed depth (same SINK_DEPTH a mech's own feet already
+  // sink to) — still gets its own within-hex variation (a real uneven
+  // lake-bed/mud floor), just one that can never break the surface.
+  const flushSinkY = terrainSinkY(tile.terrain)
+  const [elevBandLow, elevBandHigh] = elevationBandRange(tile.elevation)
+  const meshOwnHeight = flushSinkY ?? height
+  // 'building' has no SINK_DEPTH (terrainSinkY returns null for it) but
+  // is just as flush by design — elevationToY's own doc comment: a
+  // building's sidewalk platform stays flat "unconditionally", real
+  // orography would contradict that same reasoning. bandLow===bandHigh
+  // collapses the clamp below to a single value regardless of noise,
+  // the same trick the water/swamp case uses.
+  const bandLow = flushSinkY ?? (tile.terrain === 'building' ? height : elevBandLow)
+  const bandHigh = flushSinkY != null
+    ? GROUND_FLUSH_TOP - 0.05
+    : (tile.terrain === 'building' ? height : elevBandHigh)
+  // Real user request: "quiero que JUSTO donde pisa el mech queden
+  // huellas, quiero crateres" — a footprint/crater lands at any moment
+  // during play (terrainRelief.ts's stampDeformation, called from this
+  // component's own footprint/impact-mark logic below), long after this
+  // tile's own geometry already built — this cheap per-frame poll is
+  // what notices "something stamped me" and forces a rebuild (same
+  // pattern an earlier, reverted shader attempt already used for texture
+  // arrival, just driving a rebuilt geometry instead of a swapped
+  // uniform this time).
+  const [stampVersion, setStampVersion] = useState(0)
+  const stampVersionRef = useRef(0)
+  useFrame(() => {
+    const v = getStampVersion(tile.q, tile.r)
+    if (v !== stampVersionRef.current) {
+      stampVersionRef.current = v
+      setStampVersion(v)
+    }
+  })
+  // Real user report (with screenshot): huellas/cráteres weren't
+  // showing at all, and zooming out revealed dark faceted "artefactos"
+  // scattered across the terrain instead. Root cause: this tile's own
+  // wedge mesh subdivides at a FIXED, coarse density (10 → outer-edge
+  // vertex spacing ≈ radius/10 ≈ 2.9 world units) tuned for the smooth
+  // large-scale elevation ramp/relief, not for a small stamp (a
+  // footprint's real halfWidth/halfDepth, or even a weapon crater's
+  // radius 3) — a stamp that size sits BELOW that vertex spacing, so
+  // baking it can land on zero nearby vertices (stamp invisible) or one
+  // lone vertex pulled down with flat neighbors on every side (a sharp
+  // single-point spike/facet under lighting — exactly the dark
+  // speckling reported, worse at a distance where the facet's small
+  // triangles alias). Only tiles that actually HAVE a stamp
+  // (stampVersion > 0, same signal already driving the rebuild above)
+  // pay for finer subdivision — the vast majority of tiles, never
+  // stamped, keep the cheap coarse mesh exactly as before.
+  const STAMP_DETAIL_SUBDIVISIONS = 32
+  const BASE_SUBDIVISIONS = 10
+  const subdivisions = stampVersion > 0 ? STAMP_DETAIL_SUBDIVISIONS : BASE_SUBDIVISIONS
+  const blendedGeometry = useMemo(
+    () => buildBlendedHexGeometry(HEX_SIZE * 0.98, meshOwnHeight, neighborHeights, subdivisions, 0.8, x, z, bandLow, bandHigh),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion],
+  )
+  // Real user correction: a first fix just raised LosDebugOverlay's own
+  // flat disc higher, clearing the terrain's bumps but reading as
+  // "floating over the hex's highest point" instead — "quiero que el
+  // overlay se ajuste al terreno... que parezca que lo cubre como una
+  // sabana". A real draped cap instead: the SAME heightAt this tile's
+  // own base mesh already uses (so it's guaranteed to sit flush against
+  // whatever that surface actually does — ramped, noisy, stamped), built
+  // only when at least one highlight is actually active on this tile
+  // (most tiles never are, so this doesn't cost anything map-wide).
+  // Shared by every highlight type currently active on this one tile —
+  // each gets its own small Y stacking offset applied via its own
+  // <mesh>'s position, not baked into the geometry, so one build serves
+  // all of them.
+  const anyHighlighted = losHighlighted || dragHighlighted || needsInitiativeHighlighted
+    || activeMoverHighlighted || moveHighlighted || pathPreviewHighlighted || targetableHighlighted
+  const HIGHLIGHT_CAP_SUBDIVISIONS = 6
+  const HIGHLIGHT_CAP_LIFT = HEX_SIZE * 0.02
+  const drapedHighlightCap = useMemo(() => {
+    if (!anyHighlighted) return null
+    const { heightAt, corner } = makeHexHeightAt(HEX_SIZE * 0.98, meshOwnHeight, neighborHeights, 0.8, x, z, bandLow, bandHigh)
+    return buildDrapedHexCap(heightAt, corner, HIGHLIGHT_CAP_SUBDIVISIONS, HIGHLIGHT_CAP_LIFT)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anyHighlighted, meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion])
   const terrainMesh = (
     <mesh
-      position={[0, height / 2, 0]}
-      rotation={[0, terrainRotation(tile.terrain, tile.q, tile.r), 0]}
+      position={[0, 0, 0]}
+      geometry={blendedGeometry}
       receiveShadow
-      castShadow
+      // Real user report: a diagonal shadow streak crossing several
+      // hexes, present since the very first wall-geometry attempt and
+      // still there with this one — the tile's own wall/ramp geometry
+      // casting a shadow onto ITSELF/its neighbors, not anything wrong
+      // with the directional light. Terrain never needs to shadow other
+      // terrain for the elevation/ramp to read correctly (mechs/trees
+      // still cast real shadows onto it via receiveShadow above) — only
+      // this self-shadowing was ever the problem, so this is the whole
+      // fix, not a workaround for a symptom.
+      castShadow={false}
       onPointerMove={onPointerMove}
       onPointerUp={(e) => {
         e.stopPropagation()
         onPointerUp?.(e)
       }}
     >
-      <cylinderGeometry args={[HEX_SIZE * 0.98, HEX_SIZE * 0.98, height, 6]} />
       <meshStandardMaterial
         color={terrainColor(tile.terrain, tile.q, tile.r)}
         map={terrainTexture(tile.terrain, tile.q, tile.r)}
+        side={THREE.DoubleSide}
       />
     </mesh>
   )
@@ -458,41 +582,58 @@ const Tile = memo(function Tile({
           hex-shaped) collider for every tile regardless, so dice always
           land on the table correctly either way. */}
       {!fogged && <TerrainDecor terrain={tile.terrain} height={height} q={tile.q} r={tile.r} physics={physics} />}
-      {losHighlighted && <LosDebugOverlay height={height} color="#39ff8f" />}
-      {dragHighlighted && <LosDebugOverlay height={height} color="#f5c542" y={height + 0.03 * HEX_SIZE} />}
-      {needsInitiativeHighlighted && <LosDebugOverlay height={height} color="#ff3b3b" opacity={0.45} y={height + 0.04 * HEX_SIZE} />}
-      {activeMoverHighlighted && <LosDebugOverlay height={height} color="#ffb020" opacity={0.5} y={height + 0.05 * HEX_SIZE} />}
-      {/* Real user request: from FirstPersonView's near-ground eye-level
-          camera, the old +0.12 gap read as visibly floating above the
-          hex — a small perspective effect a top-down camera never
-          revealed. Halving the whole stack (still staggered, just
-          tighter) keeps every highlight type distinguishable without
-          the floating look, in both this and GMView's own top-down use. */}
-      {moveHighlighted && <LosDebugOverlay height={height} color="#4a9eff" opacity={0.4} y={height + 0.06 * HEX_SIZE} />}
-      {pathPreviewHighlighted && <LosDebugOverlay height={height} color="#ffffff" opacity={0.55} y={height + 0.065 * HEX_SIZE} />}
-      {targetableHighlighted && <LosDebugOverlay height={height} color="#e35d5d" opacity={0.45} y={height + 0.07 * HEX_SIZE} />}
+      {drapedHighlightCap && (
+        <>
+          {losHighlighted && <LosDebugOverlay geometry={drapedHighlightCap} color="#39ff8f" />}
+          {dragHighlighted && <LosDebugOverlay geometry={drapedHighlightCap} color="#f5c542" yOffset={0.03 * HEX_SIZE} />}
+          {needsInitiativeHighlighted && <LosDebugOverlay geometry={drapedHighlightCap} color="#ff3b3b" opacity={0.45} yOffset={0.04 * HEX_SIZE} />}
+          {activeMoverHighlighted && <LosDebugOverlay geometry={drapedHighlightCap} color="#ffb020" opacity={0.5} yOffset={0.05 * HEX_SIZE} />}
+          {/* Real user request: from FirstPersonView's near-ground eye-level
+              camera, the old +0.12 gap read as visibly floating above the
+              hex — a small perspective effect a top-down camera never
+              revealed. Halving the whole stack (still staggered, just
+              tighter) keeps every highlight type distinguishable without
+              the floating look, in both this and GMView's own top-down use. */}
+          {moveHighlighted && <LosDebugOverlay geometry={drapedHighlightCap} color="#4a9eff" opacity={0.4} yOffset={0.06 * HEX_SIZE} />}
+          {pathPreviewHighlighted && <LosDebugOverlay geometry={drapedHighlightCap} color="#ffffff" opacity={0.55} yOffset={0.065 * HEX_SIZE} />}
+          {targetableHighlighted && <LosDebugOverlay geometry={drapedHighlightCap} color="#e35d5d" opacity={0.45} yOffset={0.07 * HEX_SIZE} />}
+        </>
+      )}
     </group>
   )
 }, tilePropsEqual)
 
 // Debug-only stand-in for VISION.md §4.2's real per-player vision-cone
-// fog (still unbuilt) — a flat translucent hex over every tile a chosen
-// unit currently has LoS to, so "does this mech see anything" is at least
+// fog (still unbuilt) — a translucent hex over every tile a chosen unit
+// currently has LoS to, so "does this mech see anything" is at least
 // answerable by eye today instead of invisible until the real feature
 // lands. See useUnitLosDebug in TableView.tsx.
 //
-// Uses cylinderGeometry, same as the tile mesh above, not circleGeometry —
-// circleGeometry's hexagon starts its first vertex along +X (cos/sin), while
-// cylinderGeometry's radial cross-section starts along +Z (sin/cos), a 90°
-// mismatch between the two geometry types' own conventions. Mixing them
-// made this overlay visibly rotated relative to the tile it's sitting on.
+// Real user report: "cuando hago zoom out a veces las tiles se rompen y
+// muestran cosas que 'estan debajo' como overlay amarillos" — this used
+// to be a flat cylinder at a fixed Y with a small clearance above the
+// tile's own flat `elevationToY` height; the terrain mesh itself stopped
+// being flat earlier this session (buildBlendedHexGeometry's own
+// within-hex noise/ramp), so its own bumps could poke above that thin
+// clearance and fail the disc's depth test right there — a real
+// mid-surface dropout, worse at a distance. First fix just raised the
+// disc's own clearance — real user correction: "no quiero que
+// simplemente eleves un overlay plano... quiero que el overlay se
+// ajuste al terreno... que parezca que lo cubre como una sabana". Now a
+// real draped cap (`geometry`, built by Tile's own drapedHighlightCap
+// using the EXACT SAME heightAt that tile's own base mesh already uses)
+// instead of a flat disc — it follows the real bumpy/ramped surface
+// directly, so there's no clearance to get wrong in the first place.
+// `yOffset` is only the SMALL relative stacking amount between several
+// simultaneously-active highlight types on the same tile (all sharing
+// the one draped geometry, each its own thin parallel sheet just above
+// the last), not a clearance against the terrain.
 function LosDebugOverlay({
-  height, color, y = height + 0.03 * HEX_SIZE, opacity = 0.32,
-}: { height: number; color: string; y?: number; opacity?: number }) {
+  geometry, color, yOffset = 0, opacity = 0.32,
+}: { geometry: THREE.BufferGeometry; color: string; yOffset?: number; opacity?: number }) {
   return (
-    <mesh position={[0, y, 0]}>
-      <cylinderGeometry args={[0.92 * HEX_SIZE, 0.92 * HEX_SIZE, 0.02 * HEX_SIZE, 6]} />
-      <meshBasicMaterial color={color} transparent opacity={opacity} depthWrite={false} />
+    <mesh geometry={geometry} position={[0, yOffset, 0]}>
+      <meshBasicMaterial color={color} transparent opacity={opacity} depthWrite={false} side={THREE.DoubleSide} />
     </mesh>
   )
 }
@@ -690,6 +831,12 @@ type UnitMarkerProps = {
    * floor at the dry-land elevation height while the surface covers its
    * ankles. */
   terrain: string
+  /** Full q,r→terrain lookup for the whole map — unlike `terrain` above
+   * (just THIS unit's own current/destination hex), this unit's own
+   * real-time footprint stamping (stepToward's queue-arrival branch)
+   * needs to gate EVERY intermediate hex a multi-hex walk actually
+   * crosses, not just the final one. */
+  terrainAt: Map<string, string>
   /** While this unit is the one being dragged, its local x/z follows the
    * pointer continuously (see HexMap's dragWorldPos) instead of snapping
    * to its stored q/r — "se mueve con el ratón" instead of only updating
@@ -794,12 +941,20 @@ type UnitMarkerProps = {
    * FirstPersonView leaves this unset (real scale). See that constant's
    * doc comment for why. */
   boardgameScale?: boolean
+  /** Forwarded straight to Mech3D's own `onFootstep` (see its doc
+   * comment) — real per-bone footfall, only fires for a chassis actually
+   * rigged with PieD/PieI (the Jenner today). The parent (this
+   * component's own default export) uses this to stamp a real oriented
+   * footprint AND to remember that this unit has real foot tracking, so
+   * its own geometric-approximation fallback loop (below) can skip it.
+   * Same unitMarkerPropsEqual exclusion as onWalkDone/onWalkStep above. */
+  onFootstep?: (worldPos: [number, number, number], footHalfWidth: number, footHalfDepth: number, rotationY: number) => void
 }
 
 const UnitMarker = memo(function UnitMarker({
-  unit, elevation, terrain, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
+  unit, elevation, terrain, terrainAt, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
   prone, shutdown, destroyedReason, boardgameScale,
-  onPointerDown, onPointerUp, onWalkDone, onWalkStep,
+  onPointerDown, onPointerUp, onWalkDone, onWalkStep, onFootstep,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
   // 'building' matches Tile's own fixed platform height (BUILDING_MIN_
@@ -902,6 +1057,35 @@ const UnitMarker = memo(function UnitMarker({
   // (facingRotationY) once there's no more route left to walk.
   const animatedRot = useRef<number>(facingRotationY)
 
+  // Real user report: drop a dragged mech and it visibly WALKED back to
+  // its original hex first, only THEN starting the real commanded move —
+  // backwards from "drag y drop... el mech snapea rapidamente a su
+  // posicion original y comienza el movimiento". Root cause: while
+  // dragging, `canWalk` is false and stepToward snaps `animatedPos`
+  // straight to the cursor every frame (no easing) — correct. The
+  // instant the drag ends, `dragPosition` clears, `canWalk` flips back
+  // to true, and `target` immediately resolves to `hexToWorld(unit.q,
+  // unit.r)` — the unit's real, server-confirmed hex, which at that
+  // exact moment is STILL THE OLD ONE (the move command's own walkPath
+  // hasn't arrived yet, that's an async round-trip). With no queued
+  // path yet, stepToward's normal "direct line to target" branch takes
+  // over and EASES from wherever the cursor dropped it toward that old
+  // hex — a real, visible walk-back, before the destination's real
+  // walkPath ever shows up to redirect it. Declared BEFORE the walkPath
+  // effect below (both fire in the same commit when a drag-drop
+  // immediately triggers a move) so animatedPos is already reset by the
+  // time that effect reads it for its own initial-heading check.
+  const prevDragPositionRef = useRef(dragPosition)
+  useEffect(() => {
+    if (prevDragPositionRef.current && !dragPosition) {
+      animatedPos.current = target
+      animatedY.current = baseY
+      animatedRot.current = facingRotationY
+    }
+    prevDragPositionRef.current = dragPosition
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dragPosition])
+
   // The real route (ReachableHex.path from movement.py, threaded down
   // as walkPath) — a queue of world-space waypoints (each carrying its
   // own resting height, via heightAt) stepToward below walks through one
@@ -914,6 +1098,17 @@ const UnitMarker = memo(function UnitMarker({
   // walkPath existed.
   const pathQueueRef = useRef<{ x: number; z: number; y: number }[]>([])
   const lastWalkPathRef = useRef<{ q: number; r: number }[] | undefined>(undefined)
+  // Real footprints, synced to this unit's own VISUAL arrival at each
+  // real waypoint (stepToward's own queue-arrival branch below) instead
+  // of a separate prop-watching effect — see that branch's own doc
+  // comment for the real bug this replaced. legStartRef is the world
+  // position the CURRENT leg started from (reset below whenever a fresh
+  // walkPath arrives, and updated to each waypoint just reached so the
+  // NEXT leg's own start is correct); footprintSideRef alternates which
+  // side of the travel direction each print lands on, a real walking
+  // gait instead of both feet landing on the centerline.
+  const legStartRef = useRef<[number, number]>(animatedPos.current)
+  const footprintSideRef = useRef(1)
   // Real user request: real Despegar→Saltar→Aterrizar with the miniature
   // actually rising and falling, not the same ground-hugging slide a
   // walk/run uses — movement.py's own jump resolution never produces a
@@ -963,6 +1158,10 @@ const UnitMarker = memo(function UnitMarker({
         const [x, z] = hexToWorld(p.q, p.r)
         return { x, z, y: heightAt(p.q, p.r) }
       })
+      // Fresh route — the first leg's own footprint trail starts from
+      // wherever the mech is RIGHT NOW, not wherever the previous,
+      // unrelated move's last leg happened to end.
+      legStartRef.current = animatedPos.current
       firstStepFiredEarlyRef.current = false
       const first = pathQueueRef.current[0]
       if (first) {
@@ -1031,6 +1230,42 @@ const UnitMarker = memo(function UnitMarker({
       animatedPos.current = [immediateTarget.x, immediateTarget.z]
       animatedY.current = immediateTarget.y
       if (queue.length > 0) {
+        // Real user report, blunt: the OLD footprint system (a separate
+        // useEffect reacting to the units/walkPaths PROPS) fired the
+        // instant the server confirmed a move — which happens
+        // immediately, long before this component's own SLOW visual
+        // walk animation actually finishes sliding across the board —
+        // "pinta las huellas por tiles que aun no ha pasado... segunda
+        // vez que le mando andar, no pinta nada" (footprints appeared on
+        // tiles the animation hadn't visually reached yet, or sometimes
+        // not at all — a data-driven effect racing an unrelated,
+        // independently-timed animation is exactly this kind of
+        // unreliable). Stamping HERE instead — the exact frame the
+        // visual walk itself arrives at a real waypoint, the same
+        // instant onWalkStep already fires for fog — ties footprints
+        // directly to what's actually on screen, with no separate
+        // timing to race against.
+        const arrivedHex = worldToHex(immediateTarget.x, immediateTarget.z)
+        if (canWalk && FOOTPRINT_TERRAINS.has(terrainAt.get(`${arrivedHex.q},${arrivedHex.r}`) ?? '')) {
+          const [legFromX, legFromZ] = legStartRef.current
+          const legDx = immediateTarget.x - legFromX
+          const legDz = immediateTarget.z - legFromZ
+          const legDist = Math.hypot(legDx, legDz) || 1
+          const travelAngle = Math.atan2(legDz, legDx)
+          const perpAngle = travelAngle + Math.PI / 2
+          const ux = legDx / legDist, uz = legDz / legDist
+          for (let step = 1; step <= STEPS_PER_HEX; step++) {
+            const backDist = (STEPS_PER_HEX - step) * STEP_SPACING
+            const side = -footprintSideRef.current
+            footprintSideRef.current = side
+            stampDeformation(
+              immediateTarget.x - ux * backDist + Math.cos(perpAngle) * side * 0.09 * HEX_SIZE,
+              immediateTarget.z - uz * backDist + Math.sin(perpAngle) * side * 0.09 * HEX_SIZE,
+              1.2, FOOTPRINT_DEPTH,
+            )
+          }
+        }
+        legStartRef.current = [immediateTarget.x, immediateTarget.z]
         // queue.length here is BEFORE the slice below — still counts
         // the waypoint just arrived at, so walkPath.length - queue.length
         // is that waypoint's own 0-based index in the original array.
@@ -1124,6 +1359,7 @@ const UnitMarker = memo(function UnitMarker({
               emissive={glowEmissive} emissiveIntensity={glowEmissiveIntensity}
               tintStrength={tintStrength}
               onLoaded={() => forceMeshRegistered((n) => n + 1)}
+              onFootstep={onFootstep}
             />
           </Suspense>
           {destroyedReason === 'structural' && (
@@ -1255,47 +1491,6 @@ interface DragState {
   startR: number
 }
 
-interface FootprintMark {
-  id: number
-  x: number
-  y: number
-  z: number
-  rot: number
-}
-
-// Standard cube-coordinate hex line-drawing (lerp in cube space, round
-// each step the same "fix up the largest-error axis" way worldToHex
-// already does for a raw continuous point) — every hex a straight walk
-// from (q1,r1) to (q2,r2) actually crosses, INCLUSIVE of the destination
-// but not the origin (same convention UnitMarker's own walkPath prop
-// doc comment describes). Used as the snow-footprint trail's path
-// source instead of trusting `walkPaths` alone: a real user report
-// ("las huellas no solo se tienen que dejar cuando se llegue a la
-// casilla de nieve... tambien tienen que quedar marcada cuando esa
-// casilla de nieve es solo parte del camino") turned out to trace back
-// to walkPaths not reliably still holding this move's route by the time
-// the footprint effect below observes the position change — this
-// geometric fallback needs no such timing to line up, it only needs the
-// two endpoints, which `units` always has.
-function hexLine(q1: number, r1: number, q2: number, r2: number): { q: number; r: number }[] {
-  const x1 = q1, z1 = r1, y1 = -x1 - z1
-  const x2 = q2, z2 = r2, y2 = -x2 - z2
-  const n = Math.max(Math.abs(x1 - x2), Math.abs(y1 - y2), Math.abs(z1 - z2))
-  const result: { q: number; r: number }[] = []
-  for (let i = 1; i <= n; i++) {
-    const t = i / n
-    const x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t, z = z1 + (z2 - z1) * t
-    let rx = Math.round(x), ry = Math.round(y), rz = Math.round(z)
-    const dx = Math.abs(rx - x), dy = Math.abs(ry - y), dz = Math.abs(rz - z)
-    if (dx > dy && dx > dz) rx = -ry - rz
-    else if (dy > dz) ry = -rx - rz
-    else rz = -rx - ry
-    result.push({ q: rx, r: rz })
-  }
-  return result
-}
-
-const MAX_FOOTPRINTS = 600
 // Evenly-spaced prints per hex crossed, not just one at its far end —
 // "quiero mas de una footprint por tile, en la direccion del
 // movimiento", real user request after a single-print-per-hex version
@@ -1310,92 +1505,19 @@ const STEPS_PER_HEX = 3
 // just crossed," always exactly STEPS_PER_HEX of them regardless of the
 // hex's real size, same as before the rescale).
 const STEP_SPACING = 0.3 * HEX_SIZE
-
-/** One mech-foot print — a single blocky, rectangular pad, not a
- * heel-and-toe pair (that read as a human shoe's curved sole, not a
- * mech's — "con la forma de un pie de mech, no de un zapato", real user
- * report with a reference image of an actual boot-sole silhouette to
- * avoid). Sharp box edges read as mechanical on sight, where the
- * previous two soft rounded blobs didn't.
- *
- * Sitting ON TOP of the ground (bottom flush at `mark.y`, same as
- * TerrainDecor.tsx's Pebbles), not recessed a little BELOW it — an
- * earlier version tried exactly that for a true "dent" look, but the
- * ground tile underneath (HexMap.tsx's Tile terrainMesh) is a SOLID
- * opaque cylinder reaching all the way down from its own top, not a thin
- * shell with empty space beneath — anything positioned even slightly
- * below that top surface is simply buried inside it, fully hidden from
- * every angle including straight down. Confirmed by temporarily swapping
- * in a giant, unmissable debug sphere at the exact same recessed
- * coordinates: it rendered fine, proving the position/pipeline itself
- * was never the problem, only being on the wrong side of the ground's
- * own solid surface. */
-function FootprintMesh({ mark }: { mark: FootprintMark }) {
-  return (
-    <mesh position={[mark.x, mark.y + 0.015, mark.z]} rotation={[0, mark.rot, 0]}>
-      <boxGeometry args={[0.16, 0.03, 0.26]} />
-      <meshStandardMaterial color="#343941" roughness={0.95} />
-    </mesh>
-  )
-}
-
-/** A mech's compressed-snow trail, left behind wherever it's crossed a
- * 'snow' tile — "que se queden las huellas de los mechs que anden por la
- * nieve", real user request. `marks` is owned by HexMap itself (see its
- * own footprints state/effect below), not per-unit, since a trail needs
- * to persist after the mech that made it has moved on, possibly off the
- * map entirely. */
-function FootprintTrail({ marks }: { marks: FootprintMark[] }) {
-  return (
-    <group>
-      {marks.map((m) => <FootprintMesh key={m.id} mark={m} />)}
-    </group>
-  )
-}
-
-interface ImpactMark {
-  id: number
-  x: number
-  y: number
-  z: number
-  rot: number
-}
-
-const MAX_IMPACT_MARKS = 150
-
-/** A single missed shot's scorch mark — real user request: "los disparos
- * fallados deben golpear el suelo... y deben dejar marcas en el
- * mapa/tile que golpean". Same "sit flush on TOP of the ground" reasoning
- * as FootprintMesh above (the terrain mesh is a solid opaque cylinder,
- * anything recessed below its top surface is just buried and invisible)
- * — a dark, irregular scorch circle plus a couple of short radial
- * scuff-marks so it reads as a blast, not a dropped coin. */
-function ImpactMarkMesh({ mark }: { mark: ImpactMark }) {
-  // MECH-factor scaled (tuned by eye against the mech, same family as
-  // FOG_HEIGHT/MechExplosionOnce's debris above) — a blast mark roughly
-  // proportionate to a mech's own footprint, not the hex grid.
-  const s = MODEL_SCALE / 1.65
-  return (
-    <group position={[mark.x, mark.y + 0.012 * s, mark.z]} rotation={[0, mark.rot, 0]}>
-      <mesh rotation={[-Math.PI / 2, 0, 0]}>
-        <circleGeometry args={[0.34 * s, 16]} />
-        <meshStandardMaterial color="#1a1512" roughness={1} transparent opacity={0.82} />
-      </mesh>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.001, 0]}>
-        <ringGeometry args={[0.2 * s, 0.34 * s, 16]} />
-        <meshStandardMaterial color="#3a2a1c" roughness={1} transparent opacity={0.5} />
-      </mesh>
-    </group>
-  )
-}
-
-function ImpactMarkTrail({ marks }: { marks: ImpactMark[] }) {
-  return (
-    <group>
-      {marks.map((m) => <ImpactMarkMesh key={m.id} mark={m} />)}
-    </group>
-  )
-}
+// Real user request: "quiero las huellas en todos los terrenos blandos,
+// llanura, colina, bosque, bosque denso, nieve" — was 'snow'-only.
+// Deliberately excludes water/water_deep/swamp (already flush/no relief
+// — see RELIEF_SKIP_TERRAINS), road/rough/rubble (hard surfaces, no
+// "blando" reading), and building (a flat platform, same reasoning).
+const FOOTPRINT_TERRAINS = new Set(['plains', 'hills', 'forest', 'light_forest', 'snow'])
+// Real user report (with screenshot): footprints weren't reading as
+// visible dents at all — 0.25 was shallow enough to get lost against the
+// terrain's own ambient relief noise (amplitude ~3.6, see
+// terrainRelief.ts's RELIEF_AMPLITUDE). Module-level (not component-
+// local) since UnitMarker's own real-time footprint stamping needs it
+// too, not just the outer component's real-bone-tracked path.
+const FOOTPRINT_DEPTH = 0.45
 
 // Real user request (asked repeatedly this week — "ya te he pedido esto
 // 3 veces"): "estas pintando niebla por cada tile... quiero que hagas 1
@@ -2112,32 +2234,58 @@ export function HexMap({
   onTileClickRef.current = onTileClick
   onUnitDragEndRef.current = onUnitDragEnd
 
-  // Snow footprint trail (FootprintTrail above). prevUnitTileRef tracks
-  // each unit's last-seen "q,r" across renders so a real position CHANGE
-  // (not just a re-render) can be detected; footprintSeqRef hands out
-  // stable-across-renders ids for React's key prop. Both refs, not
-  // state — neither needs to trigger its own re-render, only `footprints`
-  // (the actual persisted marks) does.
-  const prevUnitTileRef = useRef<Map<number, string>>(new Map())
-  // Which foot (-1 left, 1 right) landed LAST for this unit — toggled on
-  // every step so consecutive prints alternate sides down the path, a
-  // real walking gait, instead of both feet landing on top of each other
-  // at every single hex (real user report, with a reference image:
-  // "podemos hacer pisadas en la direccion del movimiento"). A single
-  // print per hex crossed still read as too sparse to that same report
-  // ("quiero mas de una footprint por tile, en la direccion del
-  // movimiento") — STEPS_PER_HEX interpolates a few evenly-spaced steps
-  // along each hex-to-hex segment instead of only marking its far end.
-  const footprintSideRef = useRef<Map<number, number>>(new Map())
-  const footprintSeqRef = useRef(0)
-  const [footprints, setFootprints] = useState<FootprintMark[]>([])
+  // Real bone-tracked footstep (chassis rigged with PieD/PieI, the
+  // Jenner today — see Mech3D.tsx's own onFootstep doc comment). Real
+  // user report, blunt: this alone wasn't reliable enough yet (several
+  // rounds of real, measured bugs — see Mech3D.tsx's own onFootstep/
+  // WALK_CYCLE_TIME_SCALE doc comments), so UnitMarker's own real-time,
+  // path-interpolation-driven footprint stamping (stepToward's queue-
+  // arrival branch, NOT animation-timing-dependent) now ALWAYS runs too,
+  // guaranteeing a footprint on every hex crossed regardless of whether
+  // this real path also fires. realFootstepUnitIds is tracked here only
+  // as a future hook (currently unread) for re-suppressing that
+  // deterministic fallback once real bone tracking is solid enough to
+  // trust alone.
+  const realFootstepUnitIds = useRef<Set<number>>(new Set())
+  // Real per-chassis foot (Mech3D.tsx's getFootShape) can be genuinely
+  // tiny — smaller than even the finer stamped-tile mesh can shape
+  // cleanly — so real footsteps get floored to a legible minimum half-
+  // size; the shape stays whatever aspect ratio the real foot has (a
+  // clamped-up ellipse, not a circle), just never smaller than what the
+  // terrain can actually render as a distinct mark. FOOTPRINT_DEPTH
+  // itself is module-level now (UnitMarker's own footprint stamping,
+  // below, needs it too).
+  const MIN_FOOTPRINT_HALF_SIZE = 1
+  const handleUnitFootstep = (
+    unitId: number,
+    worldPos: [number, number, number],
+    footHalfWidth: number,
+    footHalfDepth: number,
+    rotationY: number,
+  ) => {
+    realFootstepUnitIds.current.add(unitId)
+    const { q, r } = worldToHex(worldPos[0], worldPos[2])
+    const key = `${q},${r}`
+    if (!FOOTPRINT_TERRAINS.has(terrainAt.get(key) ?? '')) return
+    stampDeformation(
+      worldPos[0], worldPos[2],
+      Math.max(footHalfWidth, MIN_FOOTPRINT_HALF_SIZE), FOOTPRINT_DEPTH,
+      Math.max(footHalfDepth, MIN_FOOTPRINT_HALF_SIZE), rotationY,
+    )
+  }
   // Scorch marks for missed shots — real user request: "los disparos
   // fallados deben golpear el suelo... y deben dejar marcas en el
-  // mapa/tile que golpean" (see ImpactMarkTrail above and AttackEffect's
-  // own onMissGround, wired in at this component's render site below).
-  // Same stable-id-ref/capped-state pattern as the footprint trail.
-  const impactMarkSeqRef = useRef(0)
-  const [impactMarks, setImpactMarks] = useState<ImpactMark[]>([])
+  // mapa/tile que golpean" (AttackEffect's own onMissGround, wired in at
+  // this component's render site below). Real user request: "quiero
+  // crateres de las armas... 3D, no decals" —
+  // stampDeformation (terrainRelief.ts) leaves a real gouge in the
+  // ground mesh itself instead of a flat scorch decal (the old
+  // ImpactMark/ImpactMarkMesh system this replaced). Radius/depth tuned
+  // by eye against the now-real-meters scale (HEX_SIZE=30/tile,
+  // MODEL_SCALE=10-tall mech) — a real weapon impact reads as a
+  // noticeably bigger, deeper gouge than a mech's own footprint below.
+  const IMPACT_CRATER_RADIUS = 3
+  const IMPACT_CRATER_DEPTH = 1.2
   const addImpactMark = (pos: [number, number, number]) => {
     // Real user report: the mark floated slightly above the ground, and
     // one landing off the edge of the map got drawn anyway (shown
@@ -2153,82 +2301,9 @@ export function HexMap({
     const { q, r } = worldToHex(pos[0], pos[2])
     const key = `${q},${r}`
     if (!terrainAt.has(key)) return
-    impactMarkSeqRef.current += 1
-    const y = groundYAt(q, r)
-    setImpactMarks((old) => [
-      ...old,
-      { id: impactMarkSeqRef.current, x: pos[0], y, z: pos[2], rot: Math.random() * Math.PI * 2 },
-    ].slice(-MAX_IMPACT_MARKS))
+    if (RELIEF_SKIP_TERRAINS.has(terrainAt.get(key) ?? '')) return
+    stampDeformation(pos[0], pos[2], IMPACT_CRATER_RADIUS, IMPACT_CRATER_DEPTH)
   }
-  useEffect(() => {
-    const prevTiles = prevUnitTileRef.current
-    const sides = footprintSideRef.current
-    const added: FootprintMark[] = []
-    for (const u of units) {
-      const key = `${u.q},${u.r}`
-      const prevKey = prevTiles.get(u.id)
-      if (prevKey !== undefined && prevKey !== key) {
-        const [prevQStr, prevRStr] = prevKey.split(',')
-        const prevQ = Number(prevQStr), prevR = Number(prevRStr)
-        // walkPaths (see this component's own doc comment) is the real
-        // hex-by-hex route just taken, preferred when present since a
-        // real move can curve around blocked hexes a straight line
-        // wouldn't; hexLine (above) reconstructs the geometric straight
-        // path otherwise — covers drag-placement moves (no route data
-        // at all) and, in practice, most walks: walkPaths isn't
-        // reliably still holding this specific move's route by the time
-        // this effect observes the resulting position change.
-        const path = walkPaths?.get(u.id) ?? hexLine(prevQ, prevR, u.q, u.r)
-        let [fromX, fromZ] = hexToWorld(prevQ, prevR)
-        for (const hex of path) {
-          const [x, z] = hexToWorld(hex.q, hex.r)
-          if (terrainAt.get(`${hex.q},${hex.r}`) === 'snow') {
-            const dx = x - fromX, dz = z - fromZ
-            const dist = Math.hypot(dx, dz) || 1
-            const angle = Math.atan2(dz, dx)
-            const perpAngle = angle + Math.PI / 2
-            // Unit vector back along the travel direction — steps are
-            // placed walking backward from the hex's own center, not
-            // interpolated across the full inter-hex distance (~1.9
-            // units): that earlier version put the first step or two
-            // still inside the PREVIOUS (often non-snow) tile, not this
-            // one — "alguna pisada la pinta fuera de la nieve", real
-            // user report. STEP_SPACING * (STEPS_PER_HEX - 1) stays
-            // safely under a hex's own ~0.95 radius.
-            const ux = dx / dist, uz = dz / dist
-            const elev = elevationAt.get(`${hex.q},${hex.r}`) ?? 0
-            // The snow's own surface height — FootprintMesh builds its
-            // geometry UP from this itself, no offset needed here.
-            const y = GROUND_BASE_HEIGHT + elev * ELEVATION_STEP
-            for (let step = 1; step <= STEPS_PER_HEX; step++) {
-              const backDist = (STEPS_PER_HEX - step) * STEP_SPACING
-              const side = -(sides.get(u.id) ?? 1)
-              sides.set(u.id, side)
-              footprintSeqRef.current += 1
-              added.push({
-                id: footprintSeqRef.current,
-                x: x - ux * backDist + Math.cos(perpAngle) * side * 0.09,
-                y,
-                z: z - uz * backDist + Math.sin(perpAngle) * side * 0.09,
-                rot: angle,
-              })
-            }
-          }
-          fromX = x
-          fromZ = z
-        }
-      }
-      prevTiles.set(u.id, key)
-    }
-    if (added.length > 0) {
-      setFootprints((old) => [...old, ...added].slice(-MAX_FOOTPRINTS))
-    }
-    // terrainAt/elevationAt/hexToWorld intentionally excluded — terrainAt
-    // and elevationAt are rebuilt (new Map identity) every render, and
-    // depending on them would rerun this on every render instead of only
-    // on a real unit move; hexToWorld is a stable pure import.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [units, walkPaths])
 
   const endDrag = () => {
     dragRef.current = null
@@ -2284,8 +2359,6 @@ export function HexMap({
 
   return (
     <group position={[-centerX, 0, -centerZ]}>
-      <FootprintTrail marks={footprints} />
-      <ImpactMarkTrail marks={impactMarks} />
       {map.tiles.map((tile) => (
         <Tile
           key={`${tile.q},${tile.r}`} tile={tile} lookup={lookup}
@@ -2324,6 +2397,7 @@ export function HexMap({
           unit={unit}
           elevation={elevationAt.get(`${unit.q},${unit.r}`) ?? 0}
           terrain={terrainAt.get(`${unit.q},${unit.r}`) ?? 'plains'}
+          terrainAt={terrainAt}
           dragPosition={dragRef.current?.unit.id === unit.id ? (dragWorldPos ?? undefined) : undefined}
           physics={physics}
           worldOffset={[centerX, centerZ]}
@@ -2338,6 +2412,8 @@ export function HexMap({
           boardgameScale={boardgameScale}
           onWalkDone={() => onUnitWalkDone?.(unit.id)}
           onWalkStep={(index) => onUnitWalkStep?.(unit.id, index)}
+          onFootstep={(worldPos, footHalfWidth, footHalfDepth, rotationY) =>
+            handleUnitFootstep(unit.id, worldPos, footHalfWidth, footHalfDepth, rotationY)}
           onPointerDown={() => {
             dragRef.current = { unit, startQ: unit.q, startR: unit.r }
             setHover({ q: unit.q, r: unit.r })
