@@ -83,8 +83,9 @@ const MECH_COLOR_BOOST = 1.7
  * instant it came off. */
 export interface SeveredLimbInfo {
   location: string
-  geometry: THREE.BufferGeometry
-  material: THREE.Material
+  /** The .glb it belongs to, so the fallen piece can find the very same
+   * mesh again without anything having to hold on to the geometry. */
+  modelUrl: string
   worldX: number
   worldY: number
   worldZ: number
@@ -285,7 +286,7 @@ const LIMB_MESH_NAMES: Record<string, readonly string[]> = {
 }
 
 /** The location a mesh stands for, or null if it is not a severable limb. */
-function limbLocationOfMesh(name: string): string | null {
+export function limbLocationOfMesh(name: string): string | null {
   const key = name.trim().toLowerCase()
   for (const [location, names] of Object.entries(LIMB_MESH_NAMES)) {
     if (names.includes(key)) return location
@@ -763,11 +764,9 @@ function Mech3DModel({
         mesh.updateWorldMatrix(true, false)
         const position = new THREE.Vector3()
         mesh.getWorldPosition(position)
-        const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
         onLimbSevered({
           location,
-          geometry: mesh.geometry,
-          material,
+          modelUrl: url,
           worldX: position.x,
           worldY: position.y,
           worldZ: position.z,

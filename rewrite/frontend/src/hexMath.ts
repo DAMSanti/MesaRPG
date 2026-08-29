@@ -40,7 +40,25 @@ export function hexToWorld(q: number, r: number): [number, number] {
 // Moved here (was HexMap.tsx-local) so Mech3D.tsx can read it too
 // without a circular import (HexMap.tsx itself imports Mech3D) — see
 // WALK_CYCLE_TIME_SCALE below, its own reason for needing it.
-export const WALK_SPEED = 1.4 * HEX_SIZE
+// Slowed again, and this time for a reason that only appeared once the
+// board became real metres. Real user report: "la velocidad de andar debe
+// ser bastante mas lenta... ahora las casillas miden 30m de largo".
+//
+// It IS scaled by HEX_SIZE, so the time to cross one hex never changed
+// when the map grew — taking the report literally (slow it by the same
+// factor the map grew, 30x) would mean 37 SECONDS per hex, which is not a
+// game. What actually changed is that the mech is now seen against a hex
+// that is 30 real metres wide, and at 1.4 it was crossing that in 1,24s:
+// 24 m/s, 87 km/h. Canon BattleTech is close to that (a 7-MP Jenner does
+// 1,43 s/hex on a ten-second turn) but it does not READ as walking — an
+// eleven-metre machine moving at motorway speed looks like it is sliding.
+//
+// 0.5 puts it at 3,46s per hex, 8,7 m/s, 31 km/h — which is what a mech
+// that tall walking in proportion to its own height actually looks like.
+//
+// WALK_CYCLE_TIME_SCALE below is derived FROM this, so the gait follows
+// automatically: still one full stride per hex, just a slower one.
+export const WALK_SPEED = 0.5 * HEX_SIZE
 
 // Real user report (with screenshot/description): a multi-hex walk only
 // ever left ONE footprint pair, always right near the DESTINATION hex,

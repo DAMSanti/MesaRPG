@@ -8,7 +8,7 @@ import * as THREE from 'three'
 import type {
   AttackResult, HexTileData, MapData, Mech, MechAnnotation, Unit,
 } from '../api'
-import { listMechAnnotations } from '../api'
+import { addBoardMark, listBoardMarks, listMechAnnotations } from '../api'
 import { Mech3D } from './Mech3D'
 import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
@@ -35,7 +35,7 @@ import {
 import { getStampVersion, RELIEF_SKIP_TERRAINS, stampDeformation } from '../terrainRelief'
 import { TILE_RAMP_FRACTION, tileHeightInputs } from '../tileHeightField'
 import { useProfiledFrame } from './PerfProbe'
-import { dropLimb, droppedLimbList, droppedLimbVersion } from '../droppedLimbs'
+import { adoptSavedLimb, clearDroppedLimbs, dropLimb, droppedLimbList, droppedLimbVersion } from '../droppedLimbs'
 import { FallenLimb } from './FallenLimb'
 
 // Real user request: "no es muy largo hacer que las armas disparen de esas
@@ -2915,6 +2915,46 @@ export function HexMap({
   const [limbVersion, setLimbVersion] = useState(droppedLimbVersion())
   const fallenLimbs = useMemo(() => droppedLimbList(), [limbVersion])
 
+  // Whatever this board was already carrying. Wreckage from a previous
+  // session, or from a limb that came off on somebody else's screen —
+  // adoptSavedLimb puts those straight on the ground rather than replaying
+  // the fall, which would rain arms every time anyone opened the map.
+  useEffect(() => {
+    if (map.id == null) return
+    let cancelled = false
+    // A different board's wreckage would simply be wrong.
+    clearDroppedLimbs()
+    setLimbVersion(droppedLimbVersion())
+    listBoardMarks(map.id, 'limb')
+      .then((marks) => {
+        if (cancelled) return
+        for (const mark of marks) {
+          const data = mark.data as {
+            unitId?: number
+            location?: string
+            dropY?: number
+            facing?: number
+            modelUrl?: string
+          }
+          if (!data.location || !data.modelUrl) continue
+          adoptSavedLimb({
+            key: `${data.unitId ?? mark.id}:${data.location}`,
+            x: mark.x,
+            z: mark.z,
+            dropY: data.dropY ?? 0,
+            facing: data.facing ?? 0,
+            modelUrl: data.modelUrl,
+            location: data.location,
+          })
+        }
+        setLimbVersion(droppedLimbVersion())
+      })
+      // A board with no scenery is a board; failing to fetch it is not
+      // worth interrupting a game over.
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [map.id])
+
   // A limb that has just come off, on its way to the ground. The board
   // owns this rather than the unit does, because wreckage belongs to the
   // place it fell: the mech walks on, the arm stays.
@@ -2924,16 +2964,28 @@ export function HexMap({
     // position is the world one with the centre added back.
     const x = info.worldX + centerX
     const z = info.worldZ + centerZ
-    dropLimb({
+    const isNew = dropLimb({
       key: `${unitId}:${info.location}`,
       x,
       z,
-      y: 0,
       dropY: info.worldY,
       facing: info.facing,
-      geometry: info.geometry,
-      material: info.material,
+      modelUrl: info.modelUrl,
+      location: info.location,
     })
+    // Fire and forget, and only for a limb nobody had recorded yet. A limb
+    // the player just watched fall off is a limb that has fallen off:
+    // holding it back until a POST returns would trade a cosmetic
+    // inconsistency for a visible stutter in the middle of a fight.
+    if (isNew && map.id != null) {
+      addBoardMark(map.id, 'limb', x, z, {
+        unitId,
+        location: info.location,
+        dropY: info.worldY,
+        facing: info.facing,
+        modelUrl: info.modelUrl,
+      }).catch(() => {})
+    }
     // The store is module-level, so it cannot re-render anything by
     // itself; mirroring its version into state is what puts the new limb
     // on screen.
@@ -3144,6 +3196,10 @@ export function HexMap({
           }}
           onDone={() => onAttackEffectDone?.()}
           onImpact={() => onAttackImpact?.(activeAttack)}
+          groundYAt={(x, z) => {
+            const hex = worldToHex(x, z)
+            return groundYAt(hex.q, hex.r)
+          }}
           onMissGround={addImpactMark}
         />
         )

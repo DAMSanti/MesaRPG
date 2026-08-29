@@ -1,6 +1,8 @@
-import { useRef } from 'react'
+import { useMemo, useRef } from 'react'
+import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import type { DroppedLimb } from '../droppedLimbs'
+import { limbLocationOfMesh } from './Mech3D'
 import { useProfiledFrame } from './PerfProbe'
 
 /** A severed limb on its way to the ground, and then lying on it.
@@ -31,6 +33,25 @@ const LIMB_THROW = 3.2
 
 export function FallenLimb({ limb, groundY }: { limb: DroppedLimb; groundY: number }) {
   const ref = useRef<THREE.Group>(null)
+  // Resolved from the model rather than carried in the record, which is
+  // what lets a limb be something the server can store: the same few
+  // numbers describe one that just fell and one restored from a previous
+  // session. useGLTF is cached, and the mech this came off is already
+  // loaded, so this costs nothing.
+  const { scene } = useGLTF(limb.modelUrl)
+  const piece = useMemo(() => {
+    let found: { geometry: THREE.BufferGeometry; material: THREE.Material } | null = null
+    scene.traverse((object) => {
+      if (found) return
+      const mesh = object as THREE.Mesh
+      if (!mesh.isMesh || limbLocationOfMesh(mesh.name) !== limb.location) return
+      found = {
+        geometry: mesh.geometry,
+        material: Array.isArray(mesh.material) ? mesh.material[0] : mesh.material,
+      }
+    })
+    return found as { geometry: THREE.BufferGeometry; material: THREE.Material } | null
+  }, [scene, limb.location])
 
   // Everything random about this limb, drawn once from its own stable seed.
   const rnd = (n: number) => {
@@ -83,11 +104,15 @@ export function FallenLimb({ limb, groundY }: { limb: DroppedLimb; groundY: numb
     )
   })
 
+  // A model with no separate mesh for this limb has nothing to drop — the
+  // mech simply loses it from its silhouette, which is what already
+  // happens for every single-mesh chassis.
+  if (!piece) return null
   return (
     <group ref={ref} position={[limb.x, limb.dropY, limb.z]} rotation={[0, limb.facing, 0]}>
       <mesh
-        geometry={limb.geometry}
-        material={limb.material}
+        geometry={piece.geometry}
+        material={piece.material}
         userData={{ perfGroup: 'mechs' }}
         castShadow
         receiveShadow

@@ -130,6 +130,25 @@ CREATE TABLE IF NOT EXISTS hex_tiles (
     UNIQUE (map_id, q, r)
 );
 
+CREATE TABLE IF NOT EXISTS board_marks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    map_id INTEGER NOT NULL REFERENCES maps(id) ON DELETE CASCADE,
+    -- 'limb', 'crater', 'footprint'. Not constrained, so adding a kind
+    -- later needs no migration -- see board_marks.MARK_KINDS.
+    kind TEXT NOT NULL,
+    -- Board coordinates, the same space hexToWorld returns on the client.
+    -- Stored as real world positions rather than as (q, r) because these
+    -- things do not land on hex centres: a limb falls where it falls.
+    x REAL NOT NULL,
+    z REAL NOT NULL,
+    -- Whatever that kind needs, as JSON: the location and facing of a
+    -- limb, the radius and depth of a crater, the size of a footprint.
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_board_marks_map ON board_marks(map_id);
+
 CREATE TABLE IF NOT EXISTS units (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     campaign_id INTEGER NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,

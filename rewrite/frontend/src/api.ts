@@ -147,6 +147,41 @@ export interface Visibility {
 export const listMaps = (campaignId: number) =>
   request<MapData[]>(`/api/campaigns/${campaignId}/maps`)
 
+/** Something left lying on a map. One shape for severed limbs, weapon
+ * craters and mech footprints alike — see the backend's board_marks.py on
+ * why those three share a table. `data` carries whatever that kind needs. */
+export interface BoardMark {
+  id: number
+  map_id: number
+  kind: 'limb' | 'crater' | 'footprint'
+  /** Board coordinates, the same space hexToWorld returns. Real positions,
+   * not hex centres: a limb falls where it falls. */
+  x: number
+  z: number
+  data: Record<string, unknown>
+  created_at: string
+}
+
+export const listBoardMarks = (mapId: number, kind?: BoardMark['kind']) =>
+  request<BoardMark[]>(`/api/maps/${mapId}/marks${kind ? `?kind=${kind}` : ''}`)
+
+export const addBoardMark = (
+  mapId: number,
+  kind: BoardMark['kind'],
+  x: number,
+  z: number,
+  data?: Record<string, unknown>,
+) =>
+  request<BoardMark>(`/api/maps/${mapId}/marks`, {
+    method: 'POST',
+    body: JSON.stringify({ kind, x, z, data }),
+  })
+
+export const clearBoardMarks = (mapId: number, kind?: BoardMark['kind']) =>
+  request<{ removed: number }>(`/api/maps/${mapId}/marks${kind ? `?kind=${kind}` : ''}`, {
+    method: 'DELETE',
+  })
+
 export const createMap = (campaignId: number, name: string, width: number, height: number) =>
   request<MapData>(`/api/campaigns/${campaignId}/maps`, {
     method: 'POST',

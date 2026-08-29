@@ -290,6 +290,10 @@ const PPC_ARC_HZ = 22
 const PPC_PARTICLES = 56
 const PPC_HEAD = 0.42 * MECH_FACTOR
 const PPC_TAIL_LEN = 3.2 * MECH_FACTOR
+/** How far above the ground the bolt is kept when the terrain would
+ * otherwise swallow it. Roughly chest height on a mech, so a bolt clearing
+ * a ridge still reads as a shot passing over it rather than skimming. */
+const PPC_GROUND_CLEARANCE = 0.55 * MECH_FACTOR
 
 const UP_AXIS = new THREE.Vector3(0, 1, 0)
 const SIDE_AXIS = new THREE.Vector3(1, 0, 0)
@@ -565,8 +569,17 @@ function LaserAttack({
  * painted on: one at the muzzle for the launch, one riding WITH the bolt
  * so it sweeps the terrain it passes over, and one at the impact. */
 function PpcAttack({
-  from, to, color, travelMs, tailMs,
-}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; tailMs: number }) {
+  from, to, color, travelMs, tailMs, groundYAt,
+}: {
+  from: THREE.Vector3
+  to: THREE.Vector3
+  color: string
+  travelMs: number
+  tailMs: number
+  /** Ground height under any point of the board, so the bolt can be kept
+   * above it. */
+  groundYAt?: (x: number, z: number) => number
+}) {
   const headRef = useRef<THREE.Group>(null)
   const coreRef = useRef<THREE.Mesh>(null)
   const haloRef = useRef<THREE.Mesh>(null)
@@ -636,6 +649,17 @@ function PpcAttack({
     const die = (1 - impactT) * (1 - impactT)
 
     ppcBolt.lerpVectors(from, to, travelT)
+    // Real user report: "el arma PPC, a veces el ataque viaja por debajo
+    // del suelo". A PPC is the one shot here that flies flat and slow, so
+    // a straight line from a muzzle to a target lower down the map cuts
+    // clean through any rise in between — and at 0,43s per hex there is
+    // plenty of time to watch it do it. Riding over the terrain fixes it
+    // without turning the bolt into a lob: it only ever climbs, never
+    // dips, so a shot across flat ground is exactly as flat as before.
+    if (groundYAt) {
+      const floor = groundYAt(ppcBolt.x, ppcBolt.z) + PPC_GROUND_CLEARANCE
+      if (ppcBolt.y < floor) ppcBolt.y = floor
+    }
     // The tail can only be as long as the bolt has actually flown, or at
     // launch it would stick out through the back of the mech.
     const tailLen = Math.min(PPC_TAIL_LEN, travelT * path.dist)
@@ -1233,7 +1257,7 @@ const MIN_MISS_LATERAL = 0.8 * HEX_SIZE
  * duration has played out. Mounted fresh (a new `key`) per attack_result
  * by whichever caller renders it — see HexMap's own activeAttack prop. */
 export function AttackEffect({
-  data, onDone, onMissGround, onImpact,
+  data, onDone, onMissGround, onImpact, groundYAt,
 }: {
   data: AttackEffectData
   onDone: () => void
@@ -1258,6 +1282,9 @@ export function AttackEffect({
    * arrives after its real travel time, a laser the moment the beam
    * connects (after its charge), a flamer partway through its jet. */
   onImpact?: () => void
+  /** Ground height anywhere on the board, in the same space `from`/`to` are
+   * in. Used to keep a flat-flying shot from tunnelling through a hill. */
+  groundYAt?: (x: number, z: number) => number
 }) {
   const category = weaponEffectCategory(data.weaponName)
   const color = CATEGORY_COLOR[category]
@@ -1339,7 +1366,14 @@ export function AttackEffect({
       />
     )
   }
-  if (category === 'ppc') return <PpcAttack from={from} to={to} color={color} travelMs={travelMs} tailMs={IMPACT_TAIL_MS} />
+  if (category === 'ppc') {
+    return (
+      <PpcAttack
+        from={from} to={to} color={color}
+        travelMs={travelMs} tailMs={IMPACT_TAIL_MS} groundYAt={groundYAt}
+      />
+    )
+  }
   if (category === 'missileArc' || category === 'missileDirect' || category === 'rocket') {
     const kind = category === 'rocket'
       ? MISSILE_KINDS.rocket

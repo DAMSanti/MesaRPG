@@ -15,7 +15,7 @@ from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconne
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import campaigns, db, dice_resolution, dice_styles, equipment, events, mapgen, maps, mech_annotations, mech_templates, rolls, systems, table_session, units
+from . import board_marks, campaigns, db, dice_resolution, dice_styles, equipment, events, mapgen, maps, mech_annotations, mech_templates, rolls, systems, table_session, units
 from .systems.battletech import combat, mechs, melee, movement, pilots, psr, turns, weapons
 from .systems.dnd5e import characters as dnd_characters
 from .systems.dnd5e import combat as dnd_combat
@@ -869,6 +869,48 @@ def get_map(map_id: int) -> dict:
     if not m:
         raise HTTPException(404, f"Map {map_id} not found")
     return m
+
+
+class BoardMarkIn(BaseModel):
+    kind: str
+    x: float
+    z: float
+    data: dict | None = None
+
+
+@app.get("/api/maps/{map_id}/marks")
+def list_board_marks(map_id: int, kind: str | None = None) -> list[dict]:
+    """Everything the board is carrying: severed limbs, and later craters
+    and footprints. Read once when a client opens a map — see
+    board_marks.py on why the three share one table."""
+    if not maps.get_map(map_id):
+        raise HTTPException(404, f"Map {map_id} not found")
+    return board_marks.marks_for_map(map_id, kind)
+
+
+@app.post("/api/maps/{map_id}/marks")
+async def add_board_mark(map_id: int, body: BoardMarkIn) -> dict:
+    m = maps.get_map(map_id)
+    if not m:
+        raise HTTPException(404, f"Map {map_id} not found")
+    try:
+        mark = board_marks.add_mark(map_id, body.kind, body.x, body.z, body.data)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    # Broadcast so every other view drops the same limb in the same place,
+    # instead of only the client that happened to witness it. The socket is
+    # per CAMPAIGN, not per map, so the map's own campaign is what to send
+    # it to.
+    await manager.broadcast(m["campaign_id"], {"type": "board_mark", "mark": mark})
+    return mark
+
+
+@app.delete("/api/maps/{map_id}/marks")
+def clear_board_marks(map_id: int, kind: str | None = None) -> dict:
+    """Wipes the scenery — for a fresh battle on the same terrain."""
+    if not maps.get_map(map_id):
+        raise HTTPException(404, f"Map {map_id} not found")
+    return {"removed": board_marks.clear_marks(map_id, kind)}
 
 
 @app.delete("/api/maps/{map_id}")
