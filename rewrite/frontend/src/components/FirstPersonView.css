@@ -653,3 +653,41 @@ button.fp-phase-pill.clickable:hover {
 .fp-melee-arm-picker .fp-melee-option {
   text-align: center;
 }
+
+/* Boot progress, over the power-on static. Real user request: "quiza una
+   barra de carga en la pantalla de ruido gris cuando entramos a FPV
+   estaria bien" — the cockpit already waited for the real asset loads
+   rather than for a timer, but with nothing on screen saying so a long
+   wait was indistinguishable from a freeze. Styled as cockpit telemetry
+   rather than as a web spinner, to stay inside the fiction. */
+.fp-boot-load {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%);
+  width: min(420px, 56vw);
+  pointer-events: none;
+}
+
+.fp-boot-label {
+  margin-bottom: 7px;
+  font: 600 11px/1 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  letter-spacing: 0.22em;
+  color: rgba(150, 220, 255, 0.82);
+  text-shadow: 0 0 8px rgba(90, 190, 255, 0.55);
+}
+
+.fp-boot-track {
+  height: 3px;
+  background: rgba(150, 220, 255, 0.16);
+  border: 1px solid rgba(150, 220, 255, 0.3);
+}
+
+.fp-boot-fill {
+  height: 100%;
+  background: rgba(150, 220, 255, 0.9);
+  box-shadow: 0 0 10px rgba(90, 190, 255, 0.8);
+  /* Eased rather than stepped: asset loads land in lumps, and an unsmoothed
+     bar jumps in chunks that read as stalling. */
+  transition: width 0.25s ease-out;
+}

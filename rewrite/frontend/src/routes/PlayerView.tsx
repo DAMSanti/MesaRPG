@@ -53,9 +53,10 @@ import {
 import { activeAttackPilotIds, activeMoverPilotId } from '../rounds'
 import { suggestPilotColor } from '../pilotColors'
 import { DIE_STYLES, buildHeldByMap } from '../dieStyles'
-import { MECH_CHASSIS_ASSETS } from '../mechAssets'
+import { MECH_CHASSIS_ASSETS, resolveMechModelUrl } from '../mechAssets'
 import { groupChassisByWeightClass } from '../weightClass'
 import './PlayerView.css'
+import { useGLTF } from '@react-three/drei'
 
 function usePilotId() {
   const [params, setParams] = useSearchParams()
@@ -75,6 +76,27 @@ export function PlayerView() {
   const [campaign, setCampaign] = useState<Campaign | null>(null)
   const [pilots, setPilots] = useState<Pilot[]>([])
   const [mechs, setMechs] = useState<Mech[]>([])
+
+  // Real user request: "cuando cargue playerview, que vaya descargando
+  // assets para el FPV".
+  //
+  // The board's own models — plants, trees, rocks — already start
+  // downloading when this module is imported, because their components
+  // preload at import time. The MECHS cannot: which chassis are on the
+  // table is only known once the API answers, so nothing fetched them
+  // until the cockpit itself mounted and asked. Measured on a cold load,
+  // that put the first mech .glb at t+36s, well after everything else had
+  // finished, and it is exactly the wait the player sits through staring
+  // at the boot static.
+  //
+  // Kicking them off here means they download while the character sheet is
+  // being read. useGLTF.preload fills the same cache the cockpit reads, so
+  // by the time it mounts they are already there — and if the player never
+  // opens the cockpit, the cost was some idle bandwidth.
+  useEffect(() => {
+    const urls = new Set(mechs.map((m) => resolveMechModelUrl(m.chassis, m.model)))
+    for (const url of urls) useGLTF.preload(url)
+  }, [mechs])
   const [units, setUnits] = useState<Unit[]>([])
   const [campaignEvents, setCampaignEvents] = useState<CampaignEvent[]>([])
   const [weaponId, setWeaponId] = useState<number | ''>('')

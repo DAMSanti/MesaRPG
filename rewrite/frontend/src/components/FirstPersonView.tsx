@@ -1357,7 +1357,15 @@ export function FirstPersonView({
   const [booted, setBooted] = useState(false)
   const [poweringOn, setPoweringOn] = useState(false)
   const [sceneSettled, setSceneSettled] = useState(false)
-  const { active: assetsLoading } = useProgress()
+  const { active: assetsLoading, progress: loadProgress, loaded, total } = useProgress()
+  // The bar only ever climbs. useProgress's own percentage drops back when
+  // a new batch of loads is discovered mid-flight — which is normal here,
+  // since the mechs are queued once the API answers — and a progress bar
+  // that goes backwards reads as a bug rather than as honesty.
+  const [shownProgress, setShownProgress] = useState(0)
+  useEffect(() => {
+    setShownProgress((prev) => Math.max(prev, loadProgress))
+  }, [loadProgress])
   const bootStartRef = useRef(Date.now())
   const assetsStartedRef = useRef(false)
   const readyRef = useRef(false)
@@ -1483,6 +1491,23 @@ export function FirstPersonView({
       {!booted && (
         <div className={`fp-boot${poweringOn ? ' poweron' : ''}`}>
           <div className="fp-static" />
+          {/* Real user request: "quiza una barra de carga en la pantalla de
+              ruido gris cuando entramos a FPV estaria bien". The wait was
+              always until the assets were actually in — never a fixed
+              timer — but with nothing on screen saying so, a long one was
+              indistinguishable from a hang. Hidden during the power-on
+              flash so it does not survive into the reveal. */}
+          {!poweringOn && (
+            <div className="fp-boot-load">
+              <div className="fp-boot-label">
+                CARGANDO SISTEMAS
+                {total > 0 ? ` · ${loaded}/${total}` : ''}
+              </div>
+              <div className="fp-boot-track">
+                <div className="fp-boot-fill" style={{ width: `${Math.round(shownProgress)}%` }} />
+              </div>
+            </div>
+          )}
         </div>
       )}
       {map && (
