@@ -1291,6 +1291,15 @@ async def report_pending_roll(campaign_id: int, pending_roll_id: int, body: Pend
     dice_resolution.delete_pending(pending_roll_id)
     collected = pending["collected"] + [(pending["next_purpose"], body.dice)]
 
+    # Same `rolls` history table initiative's own report endpoint logs
+    # into — this is the real physical-dice counterpart of the auto-roll
+    # logging in dice_resolution.run_step, so every roll this app makes
+    # (auto or physical) ends up trackable the same way, not just
+    # initiative's.
+    for die_value in body.dice:
+        if 1 <= die_value <= 6:
+            rolls.insert_roll(campaign_id, "d6", die_value, pending["pilot_id"], label=f"{pending['kind']}:{pending['next_purpose']}")
+
     if pending["kind"] not in ("attack", "melee", "stand_up", "heat_phase"):
         raise HTTPException(404, f"Unknown pending-roll kind {pending['kind']!r}")
 

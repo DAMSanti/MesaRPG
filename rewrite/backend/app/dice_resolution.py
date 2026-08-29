@@ -31,7 +31,7 @@ and moves on. `run_step` drives exactly ONE step:
 
 import json
 
-from . import campaigns, db
+from . import campaigns, db, rolls
 from .dice_source import NeedsRoll, RandomDice, SuppliedDice
 from .systems.battletech import pilots
 
@@ -87,6 +87,16 @@ def run_step(decide_fn, collected: list, *, campaign_id: int, kind: str, step: s
                     values = [d1, d2]
                 else:
                     values = [rd.next_1d6(need.purpose, need.pilot_id)]
+                # Same `rolls` history table initiative's own report
+                # endpoint already logs to — every auto-rolled die a
+                # resolution needs now lands there too, tagged
+                # "kind:purpose" (e.g. "attack:to_hit"), so the real
+                # distribution can be audited later same as initiative's
+                # was. The physical-mode counterpart of this is logged in
+                # main.py's report_pending_roll, right where the real
+                # reported values arrive.
+                for value in values:
+                    rolls.insert_roll(campaign_id, "d6", value, need.pilot_id, label=f"{kind}:{need.purpose}")
                 collected.append((need.purpose, values))
                 continue
             pending_id = _persist_pending(
