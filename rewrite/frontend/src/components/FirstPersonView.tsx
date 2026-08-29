@@ -1615,6 +1615,12 @@ export function FirstPersonView({
                 />
                 <Suspense fallback={null}>
                   <HexMap
+                    // Regions, and with them the level of detail: past six
+                    // hexes this cockpit shows billboards instead of trees,
+                    // which turns a region's forty-odd draw calls into one.
+                    // Regions alone measured worse (see HexMap's own
+                    // cullRegions note) — it is the pairing that pays.
+                    cullRegions
                     map={map}
                     units={sceneUnits}
                     activeAttack={activeAttackVfx}

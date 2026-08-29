@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react'
+import { useLoader } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import type { HexTileData } from '../api'
@@ -870,6 +871,205 @@ export function vegetationRegion(q: number, r: number, span: number | null): str
   return `${Math.floor(q / span)},${Math.floor(r / span)}`
 }
 
+/** Distance, in world units, past which a region stops drawing real
+ * plants and shows a billboard of its trees instead — the user's own call,
+ * "el LoD a partir de 6 hexes", in the cockpit.
+ *
+ * Hex spacing is sqrt(3) * HEX_SIZE, so this is six hexes of real board. */
+export const LOD_DISTANCE = 6 * Math.sqrt(3) * HEX_SIZE
+
+/** Smallest board on which the level of detail is worth switching on.
+ *
+ * Regions are not free: this board holds ~4.300 plant instances spread over
+ * ~96 species-variants, about 45 to a batch, so cutting it into regions
+ * takes plants from 96 draw calls to 521 — a 5,4x multiplier. LOD wins back
+ * only the regions it can hide. Measured in the cockpit on the 120-tile
+ * board, three of five regions went to billboards, so:
+ *
+ *   split      x5,4 draws
+ *   hidden     60% of regions
+ *   net        x2,2 draws  -> a loss, 60 fps down to 48
+ *
+ * Break-even needs more than 1 - 1/5,4 = 82% of regions hidden, and with
+ * 6-hex regions and a 6-hex LOD radius that means a board of roughly 650
+ * tiles — about 33x20 hexes, five times this one. Below that the honest
+ * thing is to leave every species as one batch, which is why this is a
+ * board-size test and not a preference. */
+export const LOD_MIN_TILES = 650
+/** Regions swap back to full detail a little nearer than they swapped out
+ * of it. Without the gap a region sitting exactly on the line flickers
+ * between a forest and a billboard as the camera breathes. */
+const LOD_HYSTERESIS = 0.88
+
+/** The baked billboards, four trees in one 2x2 sheet — see the bake script
+ * in the tooling notes. One sheet is what makes a whole distant region cost
+ * ONE draw call: with a texture per tree it would cost four. */
+const IMPOSTOR_ATLAS_URL = '/models/trees/impostor-atlas.png'
+const IMPOSTOR_COLS = 2
+
+/** Where each mass tree sits in the sheet.
+ *
+ * `frame` over `height` is how much taller the baked square tile is than
+ * the tree inside it: the bake frames the model's own longest dimension in
+ * a square, so the quad has to be that much bigger than the tree it stands
+ * for or every distant tree would come out slightly short. */
+const IMPOSTOR_TILES: Record<string, { col: number; row: number; frameRatio: number }> = {
+  'eu43-1-mass': { col: 0, row: 0, frameRatio: 223.02 / 218.64 },
+  'eu43-4-mass': { col: 1, row: 0, frameRatio: 458.51 / 449.52 },
+  'eu43-5-mass': { col: 0, row: 1, frameRatio: 625.32 / 613.06 },
+  'eu43-7-mass': { col: 1, row: 1, frameRatio: 759.54 / 744.65 },
+}
+
+function impostorTileFor(url: string) {
+  const name = url.split('/').pop()?.replace('.glb', '') ?? ''
+  return IMPOSTOR_TILES[name] ?? null
+}
+
+const impostorVertexShader = /* glsl */ `
+  attribute vec2 aTile;
+  varying vec2 vUv;
+  varying float vTint;
+  void main() {
+    // Yaw-only billboard: a tree leans with the terrain, never with the
+    // camera's pitch. Turning it on both axes would tip whole forests
+    // backwards the moment you looked up.
+    vec3 instancePos = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+    // Scale rides in the instance matrix's own columns, so one shared unit
+    // quad serves every tree.
+    float sx = length(instanceMatrix[0].xyz);
+    float sy = length(instanceMatrix[1].xyz);
+    vec3 toCam = cameraPosition - instancePos;
+    toCam.y = 0.0;
+    // Degenerate only if the camera is exactly overhead, where a
+    // yaw-billboard has no meaningful facing anyway.
+    vec3 right = length(toCam) > 0.0001
+      ? normalize(cross(vec3(0.0, 1.0, 0.0), normalize(toCam)))
+      : vec3(1.0, 0.0, 0.0);
+    vec3 world = instancePos + right * (position.x * sx) + vec3(0.0, position.y * sy, 0.0);
+    vUv = (uv + aTile) / ${IMPOSTOR_COLS}.0;
+    // Same hashed per-instance tone spread the real trees get, so a
+    // billboard forest is not four colours repeated.
+    vTint = fract(sin(instancePos.x * 12.9898 + instancePos.z * 78.233) * 43758.5453);
+    gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+  }
+`
+
+const impostorFragmentShader = /* glsl */ `
+  uniform sampler2D uMap;
+  varying vec2 vUv;
+  varying float vTint;
+  void main() {
+    vec4 texel = texture2D(uMap, vUv);
+    // Cut, not blended: a sorted-transparency forest of billboards is a
+    // sorting problem, and an alpha test has none. The threshold is low
+    // because the bake's own antialiased edges thin out under mipmaps.
+    if (texel.a < 0.35) discard;
+    gl_FragColor = vec4(texel.rgb * (0.88 + vTint * 0.24), 1.0);
+  }
+`
+
+/** One region's worth of distant trees, as camera-facing billboards.
+ *
+ * This is the whole point of the level of detail: a region that would cost
+ * forty-odd draw calls of real plants costs ONE of these. It is also why
+ * regions came back — you cannot swap distant trees for billboards while
+ * every tree on the board is a single batch. */
+function ImpostorBatch({ instances, meshRef }: {
+  instances: { matrices: THREE.Matrix4[]; tiles: Float32Array }
+  meshRef: React.RefObject<THREE.InstancedMesh | null>
+}) {
+  const texture = useLoader(THREE.TextureLoader, IMPOSTOR_ATLAS_URL)
+  const geometry = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(1, 1)
+    // Origin at the foot, so scaling by a tree's height grows it upward
+    // out of the ground instead of around its own middle.
+    geo.translate(0, 0.5, 0)
+    return geo
+  }, [])
+  const material = useMemo(() => new THREE.ShaderMaterial({
+    vertexShader: impostorVertexShader,
+    fragmentShader: impostorFragmentShader,
+    uniforms: { uMap: { value: texture } },
+  }), [texture])
+
+  useEffect(() => {
+    texture.colorSpace = THREE.SRGBColorSpace
+    texture.needsUpdate = true
+  }, [texture])
+  useEffect(() => () => { material.dispose(); geometry.dispose() }, [material, geometry])
+
+  useEffect(() => {
+    const mesh = meshRef.current
+    if (!mesh) return
+    instances.matrices.forEach((m, i) => mesh.setMatrixAt(i, m))
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.geometry.setAttribute('aTile', new THREE.InstancedBufferAttribute(instances.tiles, 2))
+    mesh.computeBoundingSphere()
+  }, [instances, meshRef])
+
+  if (instances.matrices.length === 0) return null
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[geometry, material, instances.matrices.length]}
+      userData={{ perfGroup: 'árboles' }}
+      visible={false}
+      frustumCulled
+    />
+  )
+}
+
+/** One cullable region: its real plants, its billboard stand-in, and the
+ * switch between them.
+ *
+ * Both sets exist from the start and only their `visible` flag moves. The
+ * alternative — mounting and unmounting batches as the camera walks — would
+ * rebuild geometry mid-flight and hitch exactly when the player is moving,
+ * which is the one moment a frame drop is felt.
+ *
+ * The test is against the region's CENTRE rather than its nearest corner.
+ * A corner test would flip a region the moment its edge crossed the line,
+ * which for a region several hexes across means swapping trees that are
+ * still close enough to look at. */
+function VegetationRegion({ regionKey, center, buckets, impostor, lodDistance }: {
+  regionKey: string
+  center: THREE.Vector3
+  buckets: { key: string; variant: Variant; matrices: THREE.Matrix4[] }[]
+  impostor: { matrices: THREE.Matrix4[]; tiles: Float32Array } | null
+  /** World units past which this region shows its billboards, or null to
+   * never do that — which is every view except the cockpit. */
+  lodDistance: number | null
+}) {
+  const fullRef = useRef<THREE.Group>(null)
+  const impostorRef = useRef<THREE.InstancedMesh>(null)
+  const far = useRef(false)
+
+  useProfiledFrame('LOD vegetación', (state) => {
+    if (lodDistance === null) return
+    const distance = state.camera.position.distanceTo(center)
+    // Hysteresis: out at the line, back in a little nearer than it.
+    const threshold = far.current ? lodDistance * LOD_HYSTERESIS : lodDistance
+    const next = distance > threshold
+    if (next === far.current) return
+    far.current = next
+    if (fullRef.current) fullRef.current.visible = !next
+    if (impostorRef.current) impostorRef.current.visible = next
+  })
+
+  return (
+    <>
+      <group ref={fullRef}>
+        {buckets.map((b) => (
+          <VegetationBatch key={b.key} variant={b.variant} matrices={b.matrices} />
+        ))}
+      </group>
+      {impostor && lodDistance !== null && (
+        <ImpostorBatch key={`${regionKey}:imp`} instances={impostor} meshRef={impostorRef} />
+      )}
+    </>
+  )
+}
+
 function GrassCarpet({ tiles, tilesKey, lookup, regionSpan }: {
   tiles: HexTileData[]
   tilesKey: string
@@ -1036,13 +1236,17 @@ function GrassCarpetBatch({ tint, tiles, tilesKey, lookup, budget }: {
   )
 }
 
-export function GroundVegetation({ tiles, lookup, regionSpan }: {
+export function GroundVegetation({ tiles, lookup, regionSpan, lodDistance }: {
   tiles: HexTileData[]
   lookup: Map<string, HexTileData>
   /** Hexes across one cullable region, or null for one batch per species
    * across the whole board. See VEGETATION_REGION_SPAN for the measured
    * reason this is a per-view decision. */
   regionSpan: number | null
+  /** World units past which a region swaps its plants for billboards, or
+   * null for no level of detail at all. Only meaningful with regions: with
+   * one batch per species across the board there is nothing to swap. */
+  lodDistance?: number | null
 }) {
   /** Everything below is keyed on this rather than on `tiles` itself.
    *
@@ -1128,7 +1332,83 @@ export function GroundVegetation({ tiles, lookup, regionSpan }: {
         }
       }
     }
-    return [...out.entries()].map(([key, b]) => ({ key, ...b }))
+    // Regrouped by region, because the level of detail switches a whole
+    // region at once and each one needs its own centre to measure from.
+    const regions = new Map<string, {
+      key: string
+      buckets: { key: string; variant: Variant; matrices: THREE.Matrix4[] }[]
+      sum: THREE.Vector3
+      count: number
+      impostorMatrices: THREE.Matrix4[]
+      impostorTiles: number[]
+    }>()
+    for (const [key, bucket] of out) {
+      const regionKey = key.slice(0, key.indexOf(':'))
+      let region = regions.get(regionKey)
+      if (!region) {
+        region = {
+          key: regionKey,
+          buckets: [],
+          sum: new THREE.Vector3(),
+          count: 0,
+          impostorMatrices: [],
+          impostorTiles: [],
+        }
+        regions.set(regionKey, region)
+      }
+      region.buckets.push({ key, ...bucket })
+      for (const matrix of bucket.matrices) {
+        region.sum.x += matrix.elements[12]
+        region.sum.y += matrix.elements[13]
+        region.sum.z += matrix.elements[14]
+        region.count++
+      }
+    }
+
+    // The billboards, built from the same placements the real trees use so
+    // a swap lands a tree exactly where its model stood. Only the mass
+    // trees: heroes are roughly one in thirty and are the ones you look at,
+    // so they keep their geometry at any distance.
+    for (const tile of tiles) {
+      if (!VEGETATED.has(tile.terrain)) continue
+      const [wx, wz] = hexToWorld(tile.q, tile.r)
+      const regionKey = vegetationRegion(tile.q, tile.r, regionSpan)
+      const region = regions.get(regionKey)
+      if (!region) continue
+      const surfaceAt = makeTileHeightSampler(tile, lookup)
+      for (const placement of placeTile(tile)) {
+        const species = SPECIES[placement.species]
+        const tile2d = impostorTileFor(species.url)
+        if (!tile2d) continue
+        const size = placement.scale * tile2d.frameRatio
+        dummy.position.set(
+          wx + placement.x,
+          surfaceAt(placement.x, placement.z) - placement.scale * (species.sink ?? 0),
+          wz + placement.z,
+        )
+        // No rotation: the shader turns the quad to face the camera, and a
+        // rotation baked in here would fight it.
+        dummy.rotation.set(0, 0, 0)
+        dummy.scale.set(size, size, size)
+        dummy.updateMatrix()
+        region.impostorMatrices.push(dummy.matrix.clone())
+        region.impostorTiles.push(tile2d.col, tile2d.row)
+      }
+    }
+
+    return [...regions.values()].map((region) => ({
+      key: region.key,
+      buckets: region.buckets,
+      center: region.count > 0
+        ? region.sum.clone().multiplyScalar(1 / region.count)
+        : new THREE.Vector3(),
+      impostor: region.impostorMatrices.length > 0
+        ? {
+          matrices: region.impostorMatrices,
+          tiles: new Float32Array(region.impostorTiles),
+        }
+        : null,
+    }))
     // Deliberately keyed on the tiles' CONTENT, not on the array holding
     // them — see `tilesKey` below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1136,9 +1416,20 @@ export function GroundVegetation({ tiles, lookup, regionSpan }: {
 
   return (
     <>
+      {/* The carpet stays at full detail at any distance on purpose. It
+          covers the ground continuously, so dropping it past the level-of-
+          detail line would draw a visible circle of bare ground around the
+          player — and it is two draw calls, not forty. */}
       <GrassCarpet tiles={tiles} tilesKey={tilesKey} lookup={lookup} regionSpan={regionSpan} />
-      {buckets.map((b) => (
-        <VegetationBatch key={b.key} variant={b.variant} matrices={b.matrices} />
+      {buckets.map((region) => (
+        <VegetationRegion
+          key={region.key}
+          regionKey={region.key}
+          center={region.center}
+          buckets={region.buckets}
+          impostor={region.impostor}
+          lodDistance={regionSpan === null ? null : (lodDistance ?? null)}
+        />
       ))}
     </>
   )

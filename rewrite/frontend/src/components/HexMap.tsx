@@ -12,7 +12,7 @@ import { listMechAnnotations } from '../api'
 import { Mech3D } from './Mech3D'
 import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
-import { GroundVegetation, VEGETATION_REGION_SPAN } from './GroundVegetation'
+import { GroundVegetation, LOD_DISTANCE, LOD_MIN_TILES, VEGETATION_REGION_SPAN } from './GroundVegetation'
 import { GroundClutter } from './GroundClutter'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { computeRiverFlow } from '../riverFlow'
@@ -2663,7 +2663,12 @@ export function HexMap({
   // Which way the water runs, worked out from the shape of the whole board
   // at once — a tile cannot tell on its own whether it is a river or a pond.
   // See riverFlow.ts.
-  const vegetationRegionSpan = cullRegions ? VEGETATION_REGION_SPAN : null
+  // A view asks for the level of detail; the BOARD decides whether it can
+  // pay for it. Regions multiply draw calls and LOD wins them back only on
+  // what it can hide, so below LOD_MIN_TILES the split costs more than the
+  // hiding saves — measured, not assumed.
+  const lodWorthwhile = (cullRegions ?? false) && map.tiles.length >= LOD_MIN_TILES
+  const vegetationRegionSpan = lodWorthwhile ? VEGETATION_REGION_SPAN : null
   const riverFlow = useMemo(() => computeRiverFlow(map.tiles).direction, [map.tiles])
   // Same resting-height formula UnitMarker computes for itself (restY),
   // generalized to an arbitrary hex so a walking mech's Y can interpolate
@@ -2953,7 +2958,11 @@ export function HexMap({
       {/* Grooves and blend strips for the whole board, merged by region
           — 404 draw calls down to a couple of dozen, see TerrainSkin. */}
       <TerrainSkin tiles={map.tiles} lookup={lookup} />
-      <GroundVegetation tiles={map.tiles} lookup={lookup} regionSpan={vegetationRegionSpan} />
+      <GroundVegetation
+        tiles={map.tiles} lookup={lookup}
+        regionSpan={vegetationRegionSpan}
+        lodDistance={lodWorthwhile ? LOD_DISTANCE : null}
+      />
       {/* Leaf litter, pebbles and grass tufts, batched for the whole board
           instead of scattered as loose meshes per tile — 733 draw calls
           down to 7, see GroundClutter.tsx. */}
