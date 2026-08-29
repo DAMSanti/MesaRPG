@@ -88,6 +88,20 @@ de su tile" bug a real user report already caught on `RealRock`, designed around
 instead). Height is left to fall out of the model's own actual proportions rather than forcing a uniform
 box.
 
+- `missile-arc.glb`, `missile-direct.glb`, `missile-rocket.glb` — three meshes extracted from ["Missile & Bomb Collection - Fighter
+  Jets - Free"](https://sketchfab.com/3d-models/missile-bomb-collection-fighter-jets-free) by
+  [bohmerang](https://sketchfab.com/bohmerang), licensed
+  [CC-BY-NC-SA 4.0](http://creativecommons.org/licenses/by-nc-sa/4.0/). **Used as an explicit user-approved
+  placeholder** ("si encuentras alguno con licencia mas restrictiva, podemos ponerlo com oplaceholder") pending
+  a commercial-friendly (CC0/CC-BY) replacement, since this collection's NC-SA terms don't clear it for
+  eventual commercial use. The user supplied the full 16-model collection and, after reviewing rendered
+  previews of all sixteen, assigned one model per weapon type: `Object_34` (the AGM-114 Hellfire body) to
+  arcing LRM fire, `Object_26` to direct-fire SRM/MRM/ATM/MML, and `Object_32` to unguided rocket launchers.
+  Each is extracted with its world transform baked in, re-centred on its own bounding box and rotated so its
+  nose runs along local +Z, which is the shape AttackEffects' own orientation code expects. `missile-hellfire.glb`
+  was the earlier single-model version of this same mesh and has been superseded by `missile-arc.glb`.
+
+<!-- superseded, kept for provenance:
 - `missile-hellfire.glb` — a single AGM-114 Hellfire mesh extracted from ["Missile & Bomb Collection - Fighter
   Jets - Free"](https://sketchfab.com/3d-models/missile-bomb-collection-fighter-jets-free) by
   [bohmerang](https://sketchfab.com/bohmerang), licensed
@@ -104,6 +118,7 @@ box.
   the 'mg' (machine-gun) category reuses the same `Missile`/`MissileAttack` components but keeps the original
   flat additive-glow-sprite look (`realModel={false}`) since a burst of real missile bodies reads wrong for
   bullets.
+-->
 
 Real tree models were tried twice. First as low-poly `.glb` meshes (Kenney's CC0 Nature Kit), but every
 variant's canopy material turned out to be an unnaturally teal/turquoise green in-engine (not a rendering

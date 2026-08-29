@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { useFrame } from '@react-three/fiber'
 import { useTexture } from '@react-three/drei'
 import { RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { resolveDieStyle, type DieMarkingKind, type DieTextureSet } from '../dieStyles'
 import { GROUND_BASE_HEIGHT, HEX_SIZE } from '../hexMath'
-import { DynamicLight } from './DynamicLight'
+import { acquireLight, releaseLight, setPoolLight } from './LightPool'
+import { useProfiledFrame } from './PerfProbe'
 
 // Real user request: "los dados deben tener los lados y los vertices
 // ligeramente redondeados" — a real d6's edges/corners are never
@@ -373,7 +373,7 @@ function DieCausticsProjector({ bodyRef, color }: { bodyRef: RefObject<RapierRig
   const materialRef = useRef<THREE.MeshBasicMaterial>(null)
   const texture = useMemo(() => getCausticsTexture(), [])
 
-  useFrame((_, delta) => {
+  useProfiledFrame('dados', (_, delta) => {
     const body = bodyRef.current
     const group = groupRef.current
     const mat = materialRef.current
@@ -461,10 +461,24 @@ const VANISH_DURATION_MS = 550
 // waiting for perfect physical stillness.
 const SETTLE_TIMEOUT_MS = 3500
 
+/** See the JSX note below on why 600 rather than a plain 2. */
+const DIE_LIGHT_INTENSITY = 600
+// Scratch vector — a table full of dice re-reading their world position
+// every frame should not allocate for it.
+const dieLightPos = new THREE.Vector3()
+
 export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled, vanishing, onVanished }: DieProps) {
   const bodyRef = useRef<RapierRigidBody>(null)
   const meshRef = useRef<THREE.Mesh>(null)
   const settledRef = useRef(false)
+  // A slot in the shared light pool rather than a light of this die's own.
+  // Mounting a real point light per die changed the scene's light COUNT,
+  // which recompiles every shader in the scene — the same bug that was
+  // killing the frame rate during missile volleys, measured in
+  // LightPool.tsx. A table where several pilots roll in their own time
+  // mounts and unmounts a stream of these. -1 means the pool was full and
+  // this die simply goes unlit.
+  const lightSlot = useRef(-1)
   const mountTimeRef = useRef(Date.now())
   const vanishStartRef = useRef<number | null>(null)
   const vanishedRef = useRef(false)
@@ -497,6 +511,7 @@ export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled,
   const rustTextures = useTexture(DIE_TEXTURE_URLS.rust)
 
   const look = useMemo(() => resolveDieStyle(style, color), [style, color])
+  const lightColor = useMemo(() => new THREE.Color(look.color), [look.color])
 
   // MeshPhysicalMaterial rather than MeshStandardMaterial — a strict
   // superset (same roughness/metalness/map), so the no-style path (both
@@ -621,7 +636,28 @@ export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled,
   // callback prop). The elapsed-time fallback lives in the same poll
   // (not a separate setTimeout) so it can't be silently cancelled by an
   // unrelated remount clearing a timer early.
-  useFrame(() => {
+  useEffect(() => {
+    if (!look.transmission) return
+    const slot = acquireLight()
+    lightSlot.current = slot
+    return () => {
+      releaseLight(slot)
+      lightSlot.current = -1
+    }
+  }, [look.transmission])
+
+  useProfiledFrame('dados', () => {
+    // Written every frame from the die's WORLD position, because the light
+    // used to be a child of the mesh and rode its transform for free; the
+    // pool's lights live at the scene root instead.
+    if (lightSlot.current >= 0 && meshRef.current && !vanishedRef.current) {
+      meshRef.current.getWorldPosition(dieLightPos)
+      setPoolLight(
+        lightSlot.current, dieLightPos.x, dieLightPos.y, dieLightPos.z,
+        lightColor, DIE_LIGHT_INTENSITY, DIE_SIZE * 4,
+      )
+    }
+
     if (!settledRef.current && onSettled) {
       const asleep = bodyRef.current?.isSleeping()
       const elapsed = Date.now() - mountTimeRef.current
@@ -644,6 +680,25 @@ export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled,
       onVanished?.()
     }
   })
+
+  // Real bug found by auditing the tracked initiative-roll history (830
+  // real physical throws logged in the `rolls` table): face 2 — the
+  // local +Y normal in FACE_LOCAL_NORMALS above, i.e. whichever face is
+  // already pointing world-up BEFORE any physics runs — landed ~26% of
+  // the time instead of the expected ~16.7% (chi2=65 on 5 df), because
+  // every die spawned at the SAME identity rotation every single throw
+  // and only the angular velocity below was randomized. With a fixed
+  // starting orientation and a near-fixed flight trajectory (spawn/
+  // linear velocity in PhysicalDiceThrow.tsx are derived from the
+  // rolling pilot's own stable id, not randomized), the die kept
+  // settling back near where it started more often than true uniform
+  // spin would. Randomizing the starting orientation itself removes
+  // that bias at its source. Computed once per mount (this die's own
+  // single throw), not per frame.
+  const initialRotation = useMemo<[number, number, number]>(
+    () => [Math.random() * Math.PI * 2, Math.random() * Math.PI * 2, Math.random() * Math.PI * 2],
+    [],
+  )
 
   useEffect(() => {
     const body = bodyRef.current
@@ -681,33 +736,28 @@ export function Die({ spawn, color = '#eef1ef', style, throwVelocity, onSettled,
       <RigidBody
         ref={bodyRef}
         position={spawn}
+        rotation={initialRotation}
         type={settled ? 'fixed' : undefined}
         colliders="cuboid"
         restitution={0.3}
         friction={0.6}
       >
-        <mesh ref={meshRef} castShadow material={materials} geometry={geometry}>
+        <mesh ref={meshRef} castShadow material={materials} geometry={geometry} userData={{ perfGroup: 'dados' }}>
           {/* Real user request: "los dados de cristal quiero que tengan
-              una pequeña luz que no castee sombras en el centro" — a
-              child of the die's own mesh, not a separate tracked object,
-              so it rides along with every tumble/bounce for free (same
-              transform Rapier already drives via `meshRef`). Non-shadow-
-              casting (DynamicLight's own default) — a shadow-casting
-              light bouncing/spinning with the die would be a much
-              stranger effect than the subtle internal sparkle asked
-              for, on top of the real render cost of a shadow map that
-              has to keep re-rendering every frame the die moves. */}
-          {/* Real user report: "no se ve la luz" — three.js's default
-              lighting is physically-correct (candela units, real
-              inverse-square falloff), so a point light's actual
-              contribution at distance d is roughly intensity/d². At the
-              die's own surface (d≈DIE_SIZE/2≈13-14 units), intensity=2
-              works out to ~0.01 — completely imperceptible next to the
-              scene's own ambient/directional light. 600 puts a
-              genuinely visible ~3 contribution at that same distance. */}
-          {look.transmission ? (
-            <DynamicLight position={[0, 0, 0]} color={look.color} intensity={600} distance={DIE_SIZE * 4} />
-          ) : null}
+              una pequeña luz que no castee sombras en el centro". That
+              light used to be a <DynamicLight> child right here, riding
+              the die's own transform for free — but one real point light
+              per die changes the scene's light COUNT, which recompiles
+              every shader in the scene (measured in LightPool.tsx). It
+              now comes from the shared pool, fed this die's world
+              position each frame by the lightSlot effect above.
+
+              Its brightness comes from a real user report, "no se ve la
+              luz": three.js's lighting is physically correct (candela
+              units, inverse-square falloff), so at the die's own surface
+              (d ≈ DIE_SIZE/2 ≈ 13-14 units) an intensity of 2 works out
+              to ~0.01 and is invisible next to the scene's ambient. 600
+              puts a genuinely visible ~3 at that same distance. */}
         </mesh>
       </RigidBody>
       {/* A sibling of the RigidBody, not a child of it — a caustic

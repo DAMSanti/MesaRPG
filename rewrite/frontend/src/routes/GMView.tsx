@@ -93,6 +93,9 @@ import {
   type WeaponStats,
 } from '../api'
 import './GMView.css'
+import { PerfProbe } from '../components/PerfProbe'
+import { PerfHud } from '../components/PerfHud'
+import { FrameGate, useRenderPolicy } from '../components/RenderPolicy'
 
 /** The BattleTech GM screen — everything this file did before Fase R4
  * (D&D 5e as a second system). Renamed, otherwise untouched: see the
@@ -766,6 +769,7 @@ function GMViewBattletech() {
   const [draggingSidebarMech, setDraggingSidebarMech] = useState<Mech | null>(null)
   const [sidebarDragPos, setSidebarDragPos] = useState<{ x: number; y: number } | null>(null)
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
+  const renderPolicy = useRenderPolicy()
   const raycastToGroundRef = useRef<((clientX: number, clientY: number) => [number, number] | null) | null>(null)
 
   // ---- editar/eliminar (from the pilot/mech menus above) ----
@@ -1260,7 +1264,13 @@ function GMViewBattletech() {
                 1:20000 to 1:500 (40x), while empirically staying well
                 clear of where a normal "whole board" zoom-out actually
                 sits. */}
-            <Canvas shadows camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 1 * HEX_SIZE, far: 500 * HEX_SIZE }}>
+            <Canvas
+              shadows
+              camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 1 * HEX_SIZE, far: 500 * HEX_SIZE }}
+            >
+              {/* First child on purpose — see TableView's own note. */}
+              <PerfProbe />
+              <FrameGate policy={renderPolicy} />
               <color attach="background" args={['#0f1a18']} />
               <ambientLight intensity={0.6} />
               <directionalLight
@@ -1326,6 +1336,7 @@ function GMViewBattletech() {
                   drag/rotate release, real user report). */}
               <OrbitControls enablePan enableRotate={!isDraggingUnit} minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
             </Canvas>
+            <PerfHud />
           </div>
         )}
 

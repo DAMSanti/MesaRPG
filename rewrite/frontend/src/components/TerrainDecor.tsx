@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
+import {useThree} from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import { CuboidCollider, RigidBody } from '@react-three/rapier'
 import * as THREE from 'three'
-import { hashTile, buildingKind, plainsGroundVariant } from '../terrain'
+import { hashTile, buildingKind } from '../terrain'
 import { GROUND_BASE_HEIGHT, HEX_SIZE } from '../hexMath'
 import {
   getWaterDisturbers, MAX_WATER_DISTURBERS, WATER_DISTURB_RANGE,
 } from '../waterDisturbance'
 import { MODEL_SCALE } from './Mech3D'
+import { useProfiledFrame } from './PerfProbe'
 
 // MECH-factor multiplier — this file's tree/rock/building/decor scales
 // were all tuned by eye against the mech (MODEL_SCALE), not the hex grid,
@@ -246,7 +247,7 @@ useGLTF.preload(BUILDING_MODEL_URLS[0])
 // reused by every LeafLitter instance; only the plane's own tint
 // (vertex-free — meshStandardMaterial's own `color`) varies per leaf, so
 // one shape serves every autumn hue without rebaking the canvas per colour.
-type LeafShape = 'oval' | 'lobed' | 'maple'
+export type LeafShape = 'oval' | 'lobed' | 'maple'
 const leafTextureCache = new Map<LeafShape, THREE.Texture>()
 function drawLeafPath(ctx: CanvasRenderingContext2D, size: number, shape: LeafShape) {
   const c = size / 2
@@ -285,7 +286,7 @@ function drawLeafPath(ctx: CanvasRenderingContext2D, size: number, shape: LeafSh
     ctx.closePath()
   }
 }
-function getLeafTexture(shape: LeafShape): THREE.Texture {
+export function getLeafTexture(shape: LeafShape): THREE.Texture {
   const cached = leafTextureCache.get(shape)
   if (cached) return cached
   const size = 64
@@ -313,170 +314,11 @@ function getLeafTexture(shape: LeafShape): THREE.Texture {
 // each time without needing per-tile state. Deliberately sparse (most
 // calls return nothing) per the "sin mucha densidad, desperdigado" ask —
 // a light dusting of personality, not a lawn's worth of geometry.
-const LEAF_SHAPES: LeafShape[] = ['oval', 'lobed', 'maple']
-function LeafLitter({ q, r }: { q: number; r: number }) {
-  const seed = hashTile(q, r, 'leaf-litter')
-  if (seed % 100 >= 45) return null
-  const count = 1 + (seed % 2)
-  const colors = ['#a8702f', '#c78a35', '#8a5a26', '#b5893a', '#d9a441', '#7a4a1f']
-  return (
-    <group>
-      {Array.from({ length: count }, (_, i) => {
-        const s = hashTile(q, r, `leaf-${i}`)
-        const angle = (s % 360) * (Math.PI / 180)
-        // dist is a position offset (HEX-factor); size/y-clearance are the
-        // leaf's own visible size (MECH-factor) — same split as the tree/
-        // rock scatter above.
-        const dist = (0.12 + ((s >>> 8) % 100) / 100 * 0.6) * HEX_SIZE
-        const size = (0.08 + ((s >>> 16) % 100) / 100 * 0.07) * MECH_FACTOR
-        const shape = LEAF_SHAPES[s % LEAF_SHAPES.length]
-        return (
-          <mesh
-            key={i}
-            position={[Math.cos(angle) * dist, 0.015 * MECH_FACTOR, Math.sin(angle) * dist]}
-            rotation={[-Math.PI / 2, 0, (s % 628) / 100]}
-          >
-            <planeGeometry args={[size, size]} />
-            <meshStandardMaterial
-              map={getLeafTexture(shape)} color={colors[s % colors.length]}
-              transparent alphaTest={0.4} side={THREE.DoubleSide}
-            />
-          </mesh>
-        )
-      })}
-    </group>
-  )
-}
-
-// Small scattered rocks/gravel — plains' answer to "piedrecitas", also
-// used lightly on bare-dirt-variant plains tiles where they read
-// naturally as part of the ground. Cheap low-poly icosahedra (never a
-// perfect sphere — a rock silhouette needs visible facets), tinted from
-// a narrow grey/tan range so a cluster still reads as "stones", not
-// confetti.
-function Pebbles({ q, r }: { q: number; r: number }) {
-  const seed = hashTile(q, r, 'pebbles')
-  if (seed % 100 >= 35) return null
-  const count = 1 + (seed % 3)
-  const colors = ['#8b8378', '#6f6a62', '#a39a8a', '#5f5b54']
-  return (
-    <group>
-      {Array.from({ length: count }, (_, i) => {
-        const s = hashTile(q, r, `pebble-${i}`)
-        const angle = (s % 360) * (Math.PI / 180)
-        const dist = (0.08 + ((s >>> 8) % 100) / 100 * 0.7) * HEX_SIZE
-        const size = (0.02 + ((s >>> 16) % 100) / 100 * 0.035) * MECH_FACTOR
-        const flat = 0.55 + ((s >>> 20) % 100) / 100 * 0.3
-        return (
-          <mesh
-            key={i}
-            position={[Math.cos(angle) * dist, size * flat * 0.5, Math.sin(angle) * dist]}
-            rotation={[(s % 628) / 100, ((s >>> 4) % 628) / 100, ((s >>> 9) % 628) / 100]}
-            scale={[1, flat, 1]}
-            castShadow
-          >
-            <icosahedronGeometry args={[size, 0]} />
-            <meshStandardMaterial color={colors[s % colors.length]} roughness={0.95} flatShading />
-          </mesh>
-        )
-      })}
-    </group>
-  )
-}
-
-// Two visually distinct "species" instead of one repeated blade cluster
-// — a fine three-blade tuft (as before) and a bushier, rounder clump —
-// each with its own small colour range so a field doesn't read as one
-// model copy-pasted. A dirt-variant plains tile (see
-// terrain.ts::plainsGroundVariant) gets noticeably sparser grass, since
-// bare earth patches shouldn't be as overgrown as the grass tiles around
-// them.
-// Three visually distinct "species" — a fine three-blade tuft, a
-// bushier rounder clump, and a tall sparse dry-grass pair — each with
-// its own colour range so a field doesn't read as one model
-// copy-pasted. Threshold/count bumped well up from the original "light
-// dusting" density per direct feedback ("hay pocas, variedad y
-// cantidad") — most plains tiles now carry several clusters, not a
-// minority carrying one. A dirt-variant plains tile (see
-// terrain.ts::plainsGroundVariant) still gets noticeably sparser grass,
-// since bare earth patches shouldn't be as overgrown as the grass tiles
-// around them.
-function GrassTufts({ q, r, sparse }: { q: number; r: number; sparse: boolean }) {
-  const seed = hashTile(q, r, 'grass-tuft')
-  const threshold = sparse ? 45 : 92
-  if (seed % 100 >= threshold) return null
-  const count = (sparse ? 1 : 2) + (seed % 4)
-  return (
-    <group>
-      {Array.from({ length: count }, (_, i) => {
-        const s = hashTile(q, r, `tuft-${i}`)
-        const angle = (s % 360) * (Math.PI / 180)
-        // dist (position offset) is HEX-factor; bladeScale feeds every
-        // species' own group `scale` below, so folding MECH_FACTOR in
-        // here scales each blade's own geometry without touching their
-        // individual local constants.
-        const dist = (0.08 + ((s >>> 8) % 100) / 100 * 0.7) * HEX_SIZE
-        const bladeScale = (0.7 + ((s >>> 16) % 100) / 100 * 0.5) * MECH_FACTOR
-        const px = Math.cos(angle) * dist
-        const pz = Math.sin(angle) * dist
-        const species = (s >>> 24) % 3
-        if (species === 0) {
-          // Bushy round clump — several short blades fanned around a
-          // center point.
-          const palette = ['#5c8a3f', '#4a7332', '#6b9748']
-          const blades = 5
-          return (
-            <group key={i} position={[px, 0, pz]} rotation={[0, (s % 628) / 100, 0]} scale={bladeScale * 0.85}>
-              {Array.from({ length: blades }, (_, b) => {
-                const bAng = (b / blades) * Math.PI * 2
-                return (
-                  <mesh
-                    key={b}
-                    position={[Math.cos(bAng) * 0.02, 0.045, Math.sin(bAng) * 0.02]}
-                    rotation={[Math.sin(bAng) * 0.3, 0, Math.cos(bAng) * 0.3]}
-                    castShadow
-                  >
-                    <coneGeometry args={[0.012, 0.09, 3]} />
-                    <meshStandardMaterial color={palette[b % palette.length]} />
-                  </mesh>
-                )
-              })}
-            </group>
-          )
-        }
-        if (species === 1) {
-          // Tall, sparse dry-grass pair — thinner and taller than the
-          // other two species, pale straw tones instead of green, reads
-          // as a different plant entirely rather than the same blade
-          // recoloured.
-          const palette = ['#a89a4e', '#8f8240', '#b8ab63']
-          return (
-            <group key={i} position={[px, 0, pz]} rotation={[0, (s % 628) / 100, 0]} scale={bladeScale * 1.15}>
-              {[-1, 1].map((lean) => (
-                <mesh key={lean} position={[lean * 0.012, 0.09, 0]} rotation={[0, 0, lean * 0.22]} castShadow>
-                  <coneGeometry args={[0.007, 0.18, 3]} />
-                  <meshStandardMaterial color={palette[lean === -1 ? 0 : 1]} />
-                </mesh>
-              ))}
-            </group>
-          )
-        }
-        // Fine three-blade tuft — the original species.
-        const palette = ['#4d7a3d', '#3f6b34', '#5a8a44']
-        return (
-          <group key={i} position={[px, 0, pz]} rotation={[0, (s % 628) / 100, 0]} scale={bladeScale}>
-            {[-1, 0, 1].map((lean) => (
-              <mesh key={lean} position={[lean * 0.015, 0.055, 0]} rotation={[0, 0, lean * 0.35]} castShadow>
-                <coneGeometry args={[0.01, 0.11, 3]} />
-                <meshStandardMaterial color={palette[lean === 0 ? 0 : 1]} />
-              </mesh>
-            ))}
-          </group>
-        )
-      })}
-    </group>
-  )
-}
+export const LEAF_SHAPES: LeafShape[] = ['oval', 'lobed', 'maple']
+// LeafLitter, Pebbles and GrassTufts used to live here, drawing their
+// scatter as loose per-tile <mesh> elements. They are now batched across
+// the whole board by GroundClutter.tsx — same placement hashes, same look,
+// 733 draw calls down to 7. See that file for the measurements.
 
 // Absolute world height (not an offset — every tile group sits at y=0,
 // see HexMap.tsx's Tile, so this is already world-space) a liquid/mud
@@ -909,7 +751,7 @@ function WaterSurface({ terrain, q, r, flow }: {
   // scene-space disturber list.
   const meshRef = useRef<THREE.Mesh>(null)
   const tileWorld = useMemo(() => new THREE.Vector3(), [])
-  useFrame((state) => {
+  useProfiledFrame('agua', (state) => {
     if (meshRef.current) meshRef.current.getWorldPosition(tileWorld)
     const t = state.clock.elapsedTime + phase
     uniforms.uTime.value = state.clock.elapsedTime
@@ -970,7 +812,7 @@ function MudBubbles({ q, r }: { q: number; r: number }) {
   const bottomY = GROUND_FLUSH_TOP - SINK_DEPTH.swamp
   const riseFrom = bottomY + SINK_DEPTH.swamp * 0.2
   const riseTo = GROUND_FLUSH_TOP + 0.015 * MECH_FACTOR
-  useFrame((state) => {
+  useProfiledFrame('barro', (state) => {
     const t = state.clock.elapsedTime
     seeds.forEach((seed, i) => {
       const mesh = meshRefs.current[i]
@@ -1100,21 +942,14 @@ export function TerrainDecor({
     // nothing. Bringing collision back means having the component that
     // actually places the trees place them, since it is the only thing that
     // knows where they ended up.
-    return (
-      <group position={[0, height, 0]}>
-        <LeafLitter q={q} r={r} />
-      </group>
-    )
+    // The litter on the ground is GroundClutter's job now, batched across
+    // the whole board, so a forest tile has nothing of its own to draw —
+    // an empty <group> here would still be an object per tile.
+    return null
   }
-  if (terrain === 'plains') {
-    const dirt = plainsGroundVariant(q, r) === 'dirt'
-    return (
-      <group position={[0, height, 0]}>
-        <GrassTufts q={q} r={r} sparse={dirt} />
-        <Pebbles q={q} r={r} />
-      </group>
-    )
-  }
+  // Plains tufts and pebbles likewise come from GroundClutter now, so a
+  // plains tile has nothing of its own left to draw.
+  if (terrain === 'plains') return null
   if (terrain === 'building') {
     const kind = buildingKind(q, r)
     const seed = hashTile(q, r, 'building-decor')
@@ -1196,7 +1031,7 @@ export function TerrainDecor({
     const seed = hashTile(q, r, 'rough-decor')
     const count = 1 + (seed % 2)
     return (
-      <group position={[0, height, 0]}>
+      <group position={[0, height, 0]} userData={{ perfGroup: 'decoración' }}>
         {Array.from({ length: count }, (_, i) => {
           const s = hashTile(q, r, `rough-rock-${i}`)
           const angle = (s % 360) * (Math.PI / 180)
@@ -1224,7 +1059,7 @@ export function TerrainDecor({
     const seed = hashTile(q, r, 'rubble-decor')
     const count = 1 + (seed % 3)
     return (
-      <group position={[0, height, 0]}>
+      <group position={[0, height, 0]} userData={{ perfGroup: 'decoración' }}>
         {Array.from({ length: count }, (_, i) => {
           const s = hashTile(q, r, `rubble-chunk-${i}`)
           const angle = (s % 360) * (Math.PI / 180)

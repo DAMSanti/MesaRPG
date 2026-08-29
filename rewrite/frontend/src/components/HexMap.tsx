@@ -1,7 +1,7 @@
 import {
   memo, Suspense, useCallback, useEffect, useMemo, useRef, useState,
 } from 'react'
-import { useFrame, type ThreeEvent } from '@react-three/fiber'
+import {type ThreeEvent} from '@react-three/fiber'
 import { CuboidCollider, RigidBody, type RapierRigidBody } from '@react-three/rapier'
 import { Select } from '@react-three/postprocessing'
 import * as THREE from 'three'
@@ -12,7 +12,9 @@ import { listMechAnnotations } from '../api'
 import { Mech3D } from './Mech3D'
 import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
-import { GroundVegetation } from './GroundVegetation'
+import { GroundVegetation, VEGETATION_REGION_SPAN } from './GroundVegetation'
+import { GroundClutter } from './GroundClutter'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { computeRiverFlow } from '../riverFlow'
 import { setWaterDisturbers } from '../waterDisturbance'
 import { hashTile, terrainColor, terrainTexture } from '../terrain'
@@ -26,11 +28,13 @@ import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
+import { LightPool } from './LightPool'
 import {
   buildBlendedHexGeometry, buildDrapedHexCap, buildEdgeBlendPatch, buildHexGrooveRing, makeHexHeightAt,
 } from '../hexTileGeometry'
 import { getStampVersion, RELIEF_SKIP_TERRAINS, stampDeformation } from '../terrainRelief'
 import { TILE_RAMP_FRACTION, tileHeightInputs } from '../tileHeightField'
+import { useProfiledFrame } from './PerfProbe'
 
 // Real user request: "no es muy largo hacer que las armas disparen de esas
 // zonas y los impactos se hagan en esos puntos?" — MechLab's own
@@ -453,7 +457,7 @@ const Tile = memo(function Tile({
   // uniform this time).
   const [stampVersion, setStampVersion] = useState(0)
   const stampVersionRef = useRef(0)
-  useFrame(() => {
+  useProfiledFrame('terreno', () => {
     const v = getStampVersion(tile.q, tile.r)
     if (v !== stampVersionRef.current) {
       stampVersionRef.current = v
@@ -515,91 +519,17 @@ const Tile = memo(function Tile({
     return buildDrapedHexCap(heightAt, capBoundary, HIGHLIGHT_CAP_SUBDIVISIONS, HIGHLIGHT_CAP_LIFT)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anyHighlighted, meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion])
-  const neighborTerrains = FOG_HEX_NEIGHBORS.map(([dq, dr]) => lookup.get(`${tile.q + dq},${tile.r + dr}`)?.terrain ?? null)
-  const blendStrips = useMemo(() => {
-    if (TEXTURE_BLEND_SKIP_TERRAINS.has(tile.terrain)) return []
-    const { heightAt, capBoundary } = makeHexHeightAt(
-      HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TILE_RAMP_FRACTION, x, z, bandLow, bandHigh,
-    )
-    const ownTexture = terrainTexture(tile.terrain, tile.q, tile.r)
-    const ownColor = terrainColor(tile.terrain)
-    const strips: { geometry: THREE.BufferGeometry; neighborTerrain: string; neighborQ: number; neighborR: number }[] = []
-    for (let k = 0; k < 6; k++) {
-      const neighborTerrain = neighborTerrains[k]
-      if (!neighborTerrain) continue
-      if (TEXTURE_BLEND_SKIP_TERRAINS.has(neighborTerrain)) continue
-      const [dq, dr] = FOG_HEX_NEIGHBORS[k]
-      const neighborQ = tile.q + dq
-      const neighborR = tile.r + dr
-      // Comparing the actual RESOLVED texture instance (not the
-      // `terrain` string) catches both cross-terrain AND same-terrain-
-      // different-variant borders (plains-grass next to plains-dirt is
-      // the same `terrain` string but a genuinely different texture) —
-      // terrainTexture() returns one shared, cached instance per real
-      // terrain+variant combination, so `!==` here means "these two
-      // tiles will genuinely render different pixels."
-      //
-      // The material COLOR has to be part of that test, not just the
-      // texture: forest and light_forest share one forest-floor photo
-      // and differ ONLY by their canopy-shadow multiply (terrainColor),
-      // so a texture-only check skipped those borders entirely — and
-      // they were among the harshest edges left on the board, a nearly
-      // black hex butted straight against a pale one. Two tiles render
-      // different pixels if EITHER half of (texture, color) differs.
-      if (terrainTexture(neighborTerrain, neighborQ, neighborR) === ownTexture
-        && terrainColor(neighborTerrain) === ownColor) continue
-      // Real user report (with screenshot): a single-owner-per-edge rule
-      // (an arbitrary (q,r) tiebreak deciding which of the two tiles gets
-      // to draw a strip at all) made every tile blend on some arbitrary
-      // subset of its 6 edges and hard-cut the rest — "los hex se estan
-      // degradando de forma diferente en los lados de la izquierda que en
-      // los de la derecha... las esquinas donde se juntan 3 hexes estan
-      // fatal": the owned edges tapered smoothly into a shared corner
-      // while the un-owned edge right next to it had nothing at all,
-      // reading as a broken/lopsided corner. Every tile now draws its OWN
-      // strip on EVERY differing-neighbor edge — fully symmetric, no
-      // ownership decision needed. This does NOT reintroduce the earlier
-      // "two-sided" bug: each strip lives entirely inside its OWNER's own
-      // hex (offset inward from that tile's own edge), so this tile's
-      // strip and the neighbor's own strip toward US occupy disjoint
-      // geometry in disjoint tiles — they only ever touch exactly at the
-      // shared edge line itself, never overlap.
-      const { width, noiseOffsetX, noiseOffsetZ, flipped } = blendBorderParams(tile.q, tile.r, neighborQ, neighborR)
-      strips.push({
-        geometry: buildEdgeBlendPatch(
-          HEX_SIZE, heightAt, capBoundary, k, width,
-          TEXTURE_BLEND_SEGMENTS_ALONG, TEXTURE_BLEND_SEGMENTS_IN, TEXTURE_BLEND_LIFT,
-          x, z, noiseOffsetX, noiseOffsetZ, flipped,
-        ),
-        neighborTerrain,
-        neighborQ,
-        neighborR,
-      })
-    }
-    return strips
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tile.terrain, tile.q, tile.r, meshOwnHeight, JSON.stringify(neighborHeights), JSON.stringify(neighborTerrains), x, z, bandLow, bandHigh, stampVersion])
-  // The dark groove between tiles. A RING along this tile's own border that
-  // follows the real ground height, not a slab under the whole tile — see
-  // buildHexGrooveRing for why the slab version kept surfacing through
-  // dipped ground and riverbeds however far down it was pushed, and why no
-  // terrain needs a special case for it any more.
-  const grooveGeometry = useMemo(() => {
-    const { heightAt, capBoundary } = makeHexHeightAt(
-      HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TILE_RAMP_FRACTION, x, z, bandLow, bandHigh,
-    )
-    return buildHexGrooveRing(HEX_SIZE, heightAt, capBoundary, GROOVE_SEGMENTS, GROOVE_DROP, GROOVE_SKIRT)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [meshOwnHeight, JSON.stringify(neighborHeights), x, z, bandLow, bandHigh, stampVersion])
-  const groove = (
-    <mesh geometry={grooveGeometry} receiveShadow>
-      <meshStandardMaterial color="#241a10" roughness={0.9} side={THREE.DoubleSide} />
-    </mesh>
-  )
+  // The groove ring and the texture-blend strips used to be built and
+  // drawn right here, per tile: 120 draw calls for one flat brown colour
+  // plus 284 for the strips, together more than a third of everything the
+  // board drew. They are the same geometry now, built by the same
+  // functions, but collected into merged per-region batches — see
+  // TerrainSkin below.
   const terrainMesh = (
     <mesh
       position={[0, 0, 0]}
       geometry={blendedGeometry}
+      userData={{ perfGroup: 'terreno' }}
       receiveShadow
       // Real user report: a diagonal shadow streak crossing several
       // hexes, present since the very first wall-geometry attempt and
@@ -629,52 +559,16 @@ const Tile = memo(function Tile({
       />
     </mesh>
   )
-  // Real, ordinary transparent meshes — see buildEdgeBlendPatch's own
-  // doc comment for why NOT a custom shader. depthWrite=false +
-  // polygonOffset both guard against z-fighting with the base terrain
-  // mesh underneath (which this sits just above via TEXTURE_BLEND_LIFT
-  // by design). Rendered AFTER terrainMesh (both in JSX order and
-  // three.js's own opaque-then-transparent pass) so the fade is visibly
-  // on top of the real base texture, not hidden behind it.
-  //
-  // Real bug found live (isolated with a strict bisection — solid color
-  // → visible, +vertexColors alone → visible white fade, +map on
-  // MeshStandardMaterial → completely invisible, same +map on
-  // MeshBasicMaterial → works): MeshStandardMaterial's own vertex-alpha
-  // handling doesn't combine correctly with a `map` in this three.js
-  // version, silently dropping the whole strip to zero alpha everywhere.
-  //
-  // Second real bug, also only visible live (real user report + screenshot:
-  // "esto no es un blend, es un halo/aura brillante"): MeshBasicMaterial
-  // is UNLIT — it always renders at full raw texture*color brightness,
-  // regardless of the scene's ambient/directional lighting or shadows. The
-  // base terrain mesh right underneath is a real lit MeshStandardMaterial,
-  // dimmer wherever shaded. Alpha-fading a fully-bright unlit patch over
-  // dimmer lit terrain reads as a glowing highlight, not a material
-  // transition — true regardless of which texture got sampled.
-  // MeshLambertMaterial keeps the same simple (non-PBR) shading model that
-  // dodges the first bug, but still responds to the scene's real lights,
-  // so the strip now shades the same as the ground around it.
-  const blendOverlays = blendStrips.map((strip, i) => (
-    <mesh key={i} geometry={strip.geometry} receiveShadow={false} castShadow={false}>
-      <meshLambertMaterial
-        map={terrainTexture(strip.neighborTerrain, strip.neighborQ, strip.neighborR)}
-        color={terrainColor(strip.neighborTerrain)}
-        vertexColors
-        transparent
-        depthWrite={false}
-        polygonOffset
-        polygonOffsetFactor={-4}
-        polygonOffsetUnits={-4}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
-  ))
+  // The long note that used to sit here — why these strips are ordinary
+  // transparent meshes rather than a shader, why MeshLambert rather than
+  // MeshStandard (Standard silently drops vertex alpha when combined with
+  // a map in this three.js version) and rather than MeshBasic (an unlit
+  // strip fading over lit ground reads as a glowing halo, a real user
+  // report) — now lives on blendMaterialFor, which builds the merged
+  // strips' shared material.
   return (
     <group position={[x, 0, z]}>
-      {groove}
       {physics ? <RigidBody type="fixed" colliders="hull">{terrainMesh}</RigidBody> : terrainMesh}
-      {blendOverlays}
       {tile.terrain === 'road' && !fogged && (
         <RoadMarkings q={tile.q} r={tile.r} height={height} lookup={lookup} gridType="hex" worldPos={hexToWorld} />
       )}
@@ -800,7 +694,7 @@ function SteamPuff({
 }: { seed: number; xOff: number; yBase: number; zOff: number; size: number }) {
   const ref = useRef<THREE.Mesh>(null)
   const cycleSeconds = 2.2
-  useFrame((state) => {
+  useProfiledFrame('vapor', (state) => {
     const t = ((state.clock.elapsedTime + seed) % cycleSeconds) / cycleSeconds
     if (!ref.current) return
     ref.current.position.set(xOff, yBase + t * 0.9, zOff)
@@ -862,7 +756,7 @@ function ExplosionDebris({
 }: { dir: THREE.Vector3; speed: number; size: number; delay: number }) {
   const ref = useRef<THREE.Mesh>(null)
   const start = useRef<number | null>(null)
-  useFrame((state) => {
+  useProfiledFrame('explosiones', (state) => {
     if (start.current === null) start.current = state.clock.elapsedTime
     const elapsed = state.clock.elapsedTime - start.current - delay
     if (elapsed < 0 || !ref.current) {
@@ -1409,7 +1303,7 @@ const UnitMarker = memo(function UnitMarker({
   // setNextKinematicTranslation/Rotation below actually do each frame.
   const rigidBodyRef = useRef<RapierRigidBody>(null)
   const groupRef = useRef<THREE.Group>(null)
-  useFrame((_state, delta) => {
+  useProfiledFrame('unidades (movim.)', (_state, delta) => {
     stepToward(delta)
     const [x, z] = animatedPos.current
     const y = animatedY.current
@@ -1775,6 +1669,211 @@ function fogHexCorner(cx: number, cz: number, i: number): [number, number] {
 // hexToWorld's own trigonometry: neighbor k's direction always points
 // exactly through the midpoint of that edge).
 const FOG_HEX_NEIGHBORS: [number, number][] = [[1, 0], [1, -1], [0, -1], [-1, 0], [-1, 1], [0, 1]]
+
+/** How many hexes across one merged terrain-skin batch covers.
+ *
+ * The tension: bigger regions mean fewer draw calls, but a footprint or a
+ * crater rebuilds a whole region (every geometry in it is a function of
+ * its tile's own stamp version), and a region that spans the map would
+ * rebuild the map on every step a mech takes. Four is a compromise picked
+ * against the real board: ~16 tiles per batch takes 120 grooves and 284
+ * strips down to roughly a dozen batches each, while a footstep rebuilds
+ * a sixteenth of the board rather than all of it. */
+const TERRAIN_BATCH_SPAN = 4
+
+/** Materials for the merged strips, shared across every batch that needs
+ * the same one. Sharing matters twice over: fewer materials is fewer
+ * shader-program binds per frame (the thing that makes each draw call cost
+ * ~21µs on this board), and it is what lets two regions with the same
+ * neighbouring terrain be two draws instead of two draws AND two
+ * materials. */
+const blendMaterialCache = new Map<string, THREE.MeshLambertMaterial>()
+
+function blendMaterialFor(terrain: string, q: number, r: number): THREE.MeshLambertMaterial {
+  const texture = terrainTexture(terrain, q, r)
+  const color = terrainColor(terrain)
+  const key = `${texture?.uuid ?? 'none'}|${color}`
+  let material = blendMaterialCache.get(key)
+  if (!material) {
+    // Every setting here is the per-tile material this replaces, verbatim
+    // — see the long note that used to sit on it: MeshLambert rather than
+    // Standard because Standard drops vertex alpha when combined with a
+    // map in this three.js version, and rather than Basic because an
+    // unlit strip fading over lit ground reads as a glowing halo.
+    material = new THREE.MeshLambertMaterial({
+      map: texture,
+      color,
+      vertexColors: true,
+      transparent: true,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
+      side: THREE.DoubleSide,
+    })
+    blendMaterialCache.set(key, material)
+  }
+  return material
+}
+
+const grooveMaterial = new THREE.MeshStandardMaterial({
+  color: '#241a10', roughness: 0.9, side: THREE.DoubleSide,
+})
+
+interface SkinBatch {
+  key: string
+  geometry: THREE.BufferGeometry
+  material: THREE.Material
+  groove: boolean
+}
+
+/** Builds one region's merged geometry: every groove ring in it as one
+ * mesh, and its blend strips as one mesh per neighbouring material.
+ *
+ * The per-tile builders are called exactly as Tile called them, and their
+ * output is tile-LOCAL (Tile placed it with a positioned group), so each
+ * geometry is translated into world space before merging. */
+function buildSkinBatches(
+  tiles: HexTileData[], lookup: Map<string, HexTileData>, keyPrefix: string,
+): SkinBatch[] {
+  const grooves: THREE.BufferGeometry[] = []
+  const strips = new Map<string, { material: THREE.Material; parts: THREE.BufferGeometry[] }>()
+
+  for (const tile of tiles) {
+    const [x, z] = hexToWorld(tile.q, tile.r)
+    const {
+      meshOwnHeight, neighborHeights, neighborBands, bandLow, bandHigh,
+    } = tileHeightInputs(tile, lookup)
+    const { heightAt, capBoundary } = makeHexHeightAt(
+      HEX_SIZE, meshOwnHeight, neighborHeights, neighborBands, TILE_RAMP_FRACTION, x, z, bandLow, bandHigh,
+    )
+
+    const groove = buildHexGrooveRing(HEX_SIZE, heightAt, capBoundary, GROOVE_SEGMENTS, GROOVE_DROP, GROOVE_SKIRT)
+    groove.translate(x, 0, z)
+    grooves.push(groove)
+
+    if (TEXTURE_BLEND_SKIP_TERRAINS.has(tile.terrain)) continue
+    const ownTexture = terrainTexture(tile.terrain, tile.q, tile.r)
+    const ownColor = terrainColor(tile.terrain)
+    for (let k = 0; k < 6; k++) {
+      const [dq, dr] = FOG_HEX_NEIGHBORS[k]
+      const neighborQ = tile.q + dq
+      const neighborR = tile.r + dr
+      const neighborTerrain = lookup.get(`${neighborQ},${neighborR}`)?.terrain ?? null
+      if (!neighborTerrain) continue
+      if (TEXTURE_BLEND_SKIP_TERRAINS.has(neighborTerrain)) continue
+      // Two tiles render different pixels if EITHER half of
+      // (texture, colour) differs — forest and light_forest share one
+      // photo and differ only by their canopy-shadow multiply.
+      if (terrainTexture(neighborTerrain, neighborQ, neighborR) === ownTexture
+        && terrainColor(neighborTerrain) === ownColor) continue
+      const { width, noiseOffsetX, noiseOffsetZ, flipped } = blendBorderParams(tile.q, tile.r, neighborQ, neighborR)
+      const geometry = buildEdgeBlendPatch(
+        HEX_SIZE, heightAt, capBoundary, k, width,
+        TEXTURE_BLEND_SEGMENTS_ALONG, TEXTURE_BLEND_SEGMENTS_IN, TEXTURE_BLEND_LIFT,
+        x, z, noiseOffsetX, noiseOffsetZ, flipped,
+      )
+      geometry.translate(x, 0, z)
+      const material = blendMaterialFor(neighborTerrain, neighborQ, neighborR)
+      let bucket = strips.get(material.uuid)
+      if (!bucket) { bucket = { material, parts: [] }; strips.set(material.uuid, bucket) }
+      bucket.parts.push(geometry)
+    }
+  }
+
+  const out: SkinBatch[] = []
+  const mergedGroove = grooves.length > 0 ? mergeGeometries(grooves, false) : null
+  // mergeGeometries copies everything it is given, so the per-tile pieces
+  // are rubbish the moment the merge is done.
+  grooves.forEach((g) => g.dispose())
+  if (mergedGroove) {
+    out.push({ key: `${keyPrefix}:groove`, geometry: mergedGroove, material: grooveMaterial, groove: true })
+  }
+  for (const [id, bucket] of strips) {
+    const merged = mergeGeometries(bucket.parts, false)
+    bucket.parts.forEach((g) => g.dispose())
+    if (merged) out.push({ key: `${keyPrefix}:strip:${id}`, geometry: merged, material: bucket.material, groove: false })
+  }
+  return out
+}
+
+/** One region's worth of merged grooves and blend strips.
+ *
+ * It watches its own tiles' stamp versions the same way Tile watches its
+ * own: a footprint or a crater changes the ground those rings and strips
+ * sit on, so the batch has to be rebuilt. Only this region's, though —
+ * that is the whole reason the board is cut into regions at all. */
+const TerrainSkinRegion = memo(function TerrainSkinRegion({
+  tiles, lookup, regionKey,
+}: { tiles: HexTileData[]; lookup: Map<string, HexTileData>; regionKey: string }) {
+  const [stamps, setStamps] = useState('')
+  const stampsRef = useRef('')
+  useProfiledFrame('terreno', () => {
+    let key = ''
+    for (const tile of tiles) key += `${getStampVersion(tile.q, tile.r)},`
+    if (key !== stampsRef.current) {
+      stampsRef.current = key
+      setStamps(key)
+    }
+  })
+
+  const batches = useMemo(
+    () => buildSkinBatches(tiles, lookup, regionKey),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tiles, lookup, regionKey, stamps],
+  )
+
+  useEffect(() => () => {
+    // Materials are shared and cached board-wide; the merged geometry is
+    // this batch's own and nothing else will free it.
+    batches.forEach((b) => b.geometry.dispose())
+  }, [batches])
+
+  return (
+    <>
+      {batches.map((b) => (
+        <mesh
+          key={b.key}
+          geometry={b.geometry}
+          material={b.material}
+          userData={{ perfGroup: b.groove ? 'terreno' : 'terreno (blend)' }}
+          receiveShadow={b.groove}
+          castShadow={false}
+        />
+      ))}
+    </>
+  )
+})
+
+/** The board's grooves and texture-blend strips, merged by region.
+ *
+ * These carry no pointer handlers and no colliders — they are pure
+ * surface dressing — which is exactly why they can be merged without
+ * touching how a tile is picked, dragged onto, or collided with. The
+ * terrain mesh itself still draws per tile for that reason. */
+function TerrainSkin({ tiles, lookup }: { tiles: HexTileData[]; lookup: Map<string, HexTileData> }) {
+  const regions = useMemo(() => {
+    const out = new Map<string, HexTileData[]>()
+    for (const tile of tiles) {
+      const key = `${Math.floor(tile.q / TERRAIN_BATCH_SPAN)},${Math.floor(tile.r / TERRAIN_BATCH_SPAN)}`
+      const bucket = out.get(key)
+      if (bucket) bucket.push(tile)
+      else out.set(key, [tile])
+    }
+    return [...out.entries()].map(([key, regionTiles]) => ({ key, tiles: regionTiles }))
+    // Keyed on content, not on the array identity a session refetch
+    // replaces — same reasoning as GroundVegetation's own tilesKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tiles.map((t) => `${t.q},${t.r},${t.terrain},${t.elevation}`).join('|')])
+
+  return (
+    <>
+      {regions.map((region) => (
+        <TerrainSkinRegion key={region.key} regionKey={region.key} tiles={region.tiles} lookup={lookup} />
+      ))}
+    </>
+  )
+}
 function fogEdgeCornerIndices(neighborIndex: number): [number, number] {
   return [(neighborIndex + 1) % 6, (neighborIndex + 2) % 6]
 }
@@ -1991,6 +2090,11 @@ const fogVertexShader = /* glsl */ `
   uniform float uDisplaceScale;
   varying vec3 vWorldPosition;
   varying float vCapFactor;
+  // The shape's own plane, which after this geometry's rotateX(+90deg) is
+  // the mesh's XZ: a shape point (sx, sy) extruded to depth d lands at
+  // (sx, -d, sy). Passed on so the fragment stage can look itself up in
+  // the region's distance map — see buildFogEdgeMap.
+  varying vec2 vShapeXZ;
   void main() {
     vec4 worldPos = modelMatrix * vec4(position, 1.0);
     float heightT = clamp((worldPos.y - uBaseY) / max(0.0001, uTopY - uBaseY), 0.0, 1.0);
@@ -2006,6 +2110,7 @@ const fogVertexShader = /* glsl */ `
     worldPos.y += (fogValueNoise(worldPos.xz * (0.4 * uNoiseScale) + flow * 0.6) - 0.5) * lift * 0.35;
     vWorldPosition = worldPos.xyz;
     vCapFactor = abs(normal.y);
+    vShapeXZ = position.xz;
     gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `
@@ -2025,8 +2130,20 @@ const fogFragmentShader = /* glsl */ `
   // the top face. Same falloff shape, different knobs per caller.
   uniform float uFadeStart;
   uniform float uFadeAmount;
+  /** How hard the noise pushes the soft edge in and out. */
+  uniform float uEdgeNoise;
+  /** Fraction of the fog left standing at the boundary itself. */
+  uniform float uEdgeFloor;
+  /** Distance to the region's own outline, rasterised — see buildFogEdgeMap.
+   * Red channel: 0 on the boundary, 1 once the variant's own edgeFade
+   * distance inside it. */
+  uniform sampler2D uEdgeMap;
+  /** The rectangle that map covers, as (minX, minZ, width, height), in the
+   * same shape coordinates vShapeXZ carries. */
+  uniform vec4 uEdgeRect;
   varying vec3 vWorldPosition;
   varying float vCapFactor;
+  varying vec2 vShapeXZ;
 
   void main() {
     float heightT = clamp((vWorldPosition.y - uBaseY) / max(0.0001, uTopY - uBaseY), 0.0, 1.0);
@@ -2041,7 +2158,38 @@ const fogFragmentShader = /* glsl */ `
     // at one scale never produces, real smoke reads as several sizes of
     // curl at once.
     float wisp = fogFbm(vWorldPosition.xz * (2.4 * uNoiseScale) + flow * 2.2, 2);
-    float density = heightDensity * capSoftness * (0.72 + n * 0.55 + wisp * 0.18);
+    // Real user request: "los extremos de la niebla, quiero que le metas
+    // ruido gausiano o algo de eso para que quede difuminado."
+    //
+    // A fog region is an extruded polygon, so without this its silhouette
+    // is exactly that: a wall of mist stopping dead along a straight hex
+    // edge. Fading it out towards the boundary is the first half. The
+    // second is that a clean fade still reads as a manufactured gradient,
+    // with the polygon's own straight edges legible inside it — so the
+    // fade's threshold is perturbed by the same fbm that already drives
+    // the fog's body. Cheap, and coherent with the swirl instead of
+    // fighting it: the boundary wanders in and out, and what you see is
+    // mist thinning irregularly rather than a shape being cross-faded.
+    //
+    // Two octaves at different scales: the coarse one moves the whole edge
+    // around, the fine one frays it.
+    float edgeCoarse = fogFbm(vWorldPosition.xz * (0.55 * uNoiseScale) - flow * 0.8, 2) - 0.5;
+    float edgeFine = fogFbm(vWorldPosition.xz * (1.9 * uNoiseScale) + flow * 1.4, 2) - 0.5;
+    float edgeNoise = edgeCoarse * 0.72 + edgeFine * 0.28;
+    vec2 edgeUv = (vShapeXZ - uEdgeRect.xy) / uEdgeRect.zw;
+    float edgeDist = texture2D(uEdgeMap, edgeUv).r;
+    // uEdgeFloor is how much of the fog SURVIVES at the very boundary.
+    // Zero dissolves the edge completely, which is right for the thick
+    // top-down variant. The cockpit's veil is already only a tenth
+    // opaque, and from inside your own visible area what you actually
+    // look at IS the region's boundary — dissolving that left nothing at
+    // all to see (real user report: "en FPV no se ve la niebla"). A floor
+    // keeps the veil and only takes the hard line off it.
+    float edgeFade = mix(
+      uEdgeFloor, 1.0,
+      smoothstep(0.0, 1.0, clamp(edgeDist + edgeNoise * uEdgeNoise, 0.0, 1.0))
+    );
+    float density = heightDensity * capSoftness * edgeFade * (0.72 + n * 0.55 + wisp * 0.18);
     vec3 tint = mix(uColor * 0.86, min(uColor * 1.18, vec3(1.0)), n * 0.7 + wisp * 0.3);
     gl_FragColor = vec4(tint, clamp(density, 0.0, 1.0) * uOpacity);
   }
@@ -2069,9 +2217,116 @@ const fogFragmentShader = /* glsl */ `
 // nowhere near "sutil" — dropped low enough that the SAME stacking nets
 // out to a genuinely faint veil instead.
 const FOG_VARIANTS = {
-  blocking: { height: FOG_HEIGHT, color: '#e3e8e8', opacity: 0.95, fadeStart: 0.15, fadeAmount: 0.28, displaceScale: 1 },
-  subtle: { height: FOG_HEIGHT_SUBTLE, color: '#eef2f2', opacity: 0.15, fadeStart: 0.04, fadeAmount: 0.94, displaceScale: 0.3 },
+  // edgeFade / edgeFloor: how wide the soft boundary is, and how much fog
+  // survives at the boundary itself. They differ per variant because the
+  // two are looked at from completely different places. The thick top-down
+  // fog is seen from above, so its boundary is an outline on the ground and
+  // can dissolve to nothing. The cockpit's veil is seen edge-on from inside
+  // your own visible area, so its boundary is the whole thing you look at —
+  // dissolve that and there is nothing left, which is exactly what happened.
+  blocking: {
+    height: FOG_HEIGHT, color: '#e3e8e8', opacity: 0.95, fadeStart: 0.15, fadeAmount: 0.28,
+    displaceScale: 1, edgeFade: HEX_SIZE * 0.34, edgeFloor: 0,
+  },
+  subtle: {
+    height: FOG_HEIGHT_SUBTLE, color: '#eef2f2', opacity: 0.15, fadeStart: 0.04, fadeAmount: 0.94,
+    displaceScale: 0.3, edgeFade: HEX_SIZE * 0.16, edgeFloor: 0.55,
+  },
 } as const
+
+/** How far the noise may shift that edge, as a fraction of the fade band.
+ * At 0.55 the boundary wanders over half the band's width, which is what
+ * turns a clean gradient into something that looks torn. */
+const FOG_EDGE_NOISE = 0.55
+
+/** Shortest distance from a point to a line segment, in 2D. */
+function distanceToSegment(
+  px: number, py: number, ax: number, ay: number, bx: number, by: number,
+): number {
+  const dx = bx - ax
+  const dy = by - ay
+  const lengthSq = dx * dx + dy * dy
+  // A degenerate segment is just its own endpoint.
+  const t = lengthSq > 0
+    ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lengthSq))
+    : 0
+  return Math.hypot(px - (ax + dx * t), py - (ay + dy * t))
+}
+
+/** The region's distance-to-outline, rasterised into a small texture.
+ *
+ * A per-VERTEX distance field was the obvious approach, and it silently
+ * produced nothing: ExtrudeGeometry triangulates a shape from the contour's
+ * own points and adds no interior vertices at all, so EVERY vertex of a fog
+ * region sits exactly ON its boundary. The attribute came out zero
+ * everywhere, the fade multiplied the whole volume by zero, and the fog
+ * disappeared — which is how this was found, from the outside, as "la
+ * niebla ha desaparecido".
+ *
+ * A texture does not care where the vertices are. Its resolution comes from
+ * the fade band rather than from the region's size, so the gradient always
+ * gets about three texels to cross however big the region is, and bilinear
+ * filtering carries the rest. */
+function buildFogEdgeMap(shape: THREE.Shape, fade: number): {
+  texture: THREE.DataTexture
+  rect: THREE.Vector4
+} {
+  const contours: THREE.Vector2[][] = [shape.getPoints(1)]
+  for (const hole of shape.holes) contours.push(hole.getPoints(1))
+
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const points of contours) {
+    for (const point of points) {
+      if (point.x < minX) minX = point.x
+      if (point.x > maxX) maxX = point.x
+      if (point.y < minY) minY = point.y
+      if (point.y > maxY) maxY = point.y
+    }
+  }
+  const width = Math.max(1e-3, maxX - minX)
+  const height = Math.max(1e-3, maxY - minY)
+
+  // Roughly three texels across the fade band, capped so an enormous
+  // region cannot turn this into a real cost.
+  const target = fade / 3
+  const cols = Math.max(8, Math.min(160, Math.ceil(width / target)))
+  const rows = Math.max(8, Math.min(160, Math.ceil(height / target)))
+
+  const data = new Uint8Array(cols * rows * 4)
+  for (let j = 0; j < rows; j++) {
+    // Texel CENTRES, so a sampled value stands for the position it is at.
+    const y = minY + ((j + 0.5) / rows) * height
+    for (let i = 0; i < cols; i++) {
+      const x = minX + ((i + 0.5) / cols) * width
+      let best = Infinity
+      for (const points of contours) {
+        for (let k = 0; k < points.length; k++) {
+          const a = points[k]
+          const b = points[(k + 1) % points.length]
+          const d = distanceToSegment(x, y, a.x, a.y, b.x, b.y)
+          if (d < best) best = d
+        }
+      }
+      const o = (j * cols + i) * 4
+      data[o] = Math.round(Math.min(1, best / fade) * 255)
+      data[o + 3] = 255
+    }
+  }
+
+  const texture = new THREE.DataTexture(data, cols, rows, THREE.RGBAFormat)
+  texture.magFilter = THREE.LinearFilter
+  texture.minFilter = THREE.LinearFilter
+  // Clamped, not wrapped: a fragment landing a hair outside the rectangle
+  // should read the nearest edge, never the far side's.
+  texture.wrapS = THREE.ClampToEdgeWrapping
+  texture.wrapT = THREE.ClampToEdgeWrapping
+  texture.needsUpdate = true
+
+  return { texture, rect: new THREE.Vector4(minX, minY, width, height) }
+}
 
 /** One real merged region's own body — see this section's own top
  * comment and buildFogRegions's doc comment for the "why" and the
@@ -2124,7 +2379,9 @@ function FogRegionMesh({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shape, height])
   const color = useMemo(() => new THREE.Color(variant.color), [variant.color])
-  useFrame((state) => {
+  const edgeMap = useMemo(() => buildFogEdgeMap(shape, variant.edgeFade), [shape, variant.edgeFade])
+  useEffect(() => () => edgeMap.texture.dispose(), [edgeMap])
+  useProfiledFrame('niebla', (state) => {
     for (const mat of materialRefs.current) {
       if (mat) mat.uniforms.uTime.value = seed + state.clock.elapsedTime
     }
@@ -2147,23 +2404,39 @@ function FogRegionMesh({
         // worth writing down because it is not obvious from the shader. The
         // fragment stage samples noise at `worldPos.xz * (0.5 * uNoiseScale)
         // + uFlowDir * uTime`, so a feature holds still when
-        // `worldPos * scale + flow * t` is constant — its world velocity is
-        // `|uFlowDir| / scale`. With uNoiseScale = 1/HEX_SIZE, the HEX_SIZE
-        // divisions cancel and the constant below IS that velocity, near
-        // enough (0.5 vs the vertex stage's 0.35 aside).
+        // `worldPos * scale + flow * t` is constant, and its world velocity
+        // is therefore `|uFlowDir| / scale`.
         //
-        // It used to be 0.05, which works out at ten centimetres a second:
-        // real, but far too slow to see, and reported as such ("el
-        // movimiento es imperceptible, quiero que sea relativamente
-        // rapido"). At 1.5 the layers drift at roughly 3, 1.9 and 4 metres a
-        // second, which reads as a real breeze rather than a still image.
-        const FOG_DRIFT_SPEED = 1.5
+        // Two bugs lived in that division, and both are fixed below.
+        //
+        // The first was aiming at the wrong target. An earlier pass raised
+        // this from 0.05 (ten centimetres a second) to 1.5, reasoning that
+        // roughly 3 metres a second is a real breeze — which it is, and a
+        // BattleTech hex really is 30 metres across, so the units were
+        // honest. But you look at this board from far enough away to see
+        // ten hexes at once, and at 3 m/s a wisp takes seventeen seconds to
+        // cross one of them. Physically right, visually a still image: the
+        // user watched it and concluded the fog "no se habia movido nunca".
+        // What matters here is how much of a HEX goes past per second, so
+        // that is what the constant now says.
+        //
+        // The second was that `scale` above is per layer, so each layer's
+        // noise SIZE was silently setting its SPEED: the third layer drifted
+        // 6,7x faster than the second purely because its features are
+        // smaller. Folding the sample scale in here makes FOG_DRIFT_SPEED an
+        // honest world speed and leaves each layer's own flowSpeed as the
+        // only thing deciding its pace.
+        const FOG_DRIFT_SPEED = 0.45 * HEX_SIZE
+        // Matches the fragment stage's own first (and visually dominant)
+        // sample, `vWorldPosition.xz * (0.5 * uNoiseScale)`.
+        const sampleScale = (0.5 * layer.noiseScale) / HEX_SIZE
+        const drift = FOG_DRIFT_SPEED * layer.flowSpeed * sampleScale
         const flowDir = [
-          Math.cos(layer.flowAngle) * FOG_DRIFT_SPEED * layer.flowSpeed / HEX_SIZE,
-          Math.sin(layer.flowAngle) * FOG_DRIFT_SPEED * layer.flowSpeed / HEX_SIZE,
+          Math.cos(layer.flowAngle) * drift,
+          Math.sin(layer.flowAngle) * drift,
         ]
         return (
-          <mesh key={i} position={[0, layerTopY, 0]} geometry={geometry}>
+          <mesh key={i} position={[0, layerTopY, 0]} geometry={geometry} userData={{ perfGroup: 'niebla' }}>
             <shaderMaterial
               ref={(el) => { materialRefs.current[i] = el }}
               vertexShader={fogVertexShader}
@@ -2186,6 +2459,10 @@ function FogRegionMesh({
                 // staying proportionate to — and clamped under — one
                 // hex's own radius, see FOG_VARIANTS' own doc comment).
                 uDisplaceScale: { value: variant.displaceScale * HEX_SIZE },
+                uEdgeNoise: { value: FOG_EDGE_NOISE },
+                uEdgeFloor: { value: variant.edgeFloor },
+                uEdgeMap: { value: edgeMap.texture },
+                uEdgeRect: { value: edgeMap.rect },
               }}
               transparent
               depthWrite={false}
@@ -2203,11 +2480,35 @@ export function HexMap({
   moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, walkMovementTypes, outlineUnitIds, heatByUnitId,
   proneUnitIds, shutdownUnitIds,
   destroyedReasonByUnitId,
-  teamVisibleHexes, fogSubtle, physics, activeAttack, onAttackEffectDone, onUnitWalkDone, onUnitWalkStep,
+  teamVisibleHexes, fogSubtle, physics, cullRegions, activeAttack, onAttackEffectDone, onUnitWalkDone, onUnitWalkStep,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange, boardgameScale,
 }: {
   map: MapData
   units: Unit[]
+  /** Cut the vegetation into cullable regions instead of one batch per
+   * species across the whole board.
+   *
+   * NO VIEW SETS THIS TODAY, and the measurements are why. Regions trade
+   * draw calls for culling, and after the decor was instanced and the
+   * terrain skin merged, nothing on this board is GPU-bound any more —
+   * draw calls are the wall in every view, so the trade is the wrong way
+   * round everywhere. Measured in the cockpit, the one place it was
+   * supposed to pay:
+   *
+   *   with regions     43 fps, 23,2 ms, 521 + 120 vegetation draws
+   *   without          60 fps, 16,7 ms,  96 +  32
+   *
+   * with GPU time sitting at 2,0 ms of that 23,2 either way.
+   *
+   * The dial is kept, and deliberately, for two reasons. The balance can
+   * shift back — cut draw calls far enough and the GPU becomes the limit
+   * again. And regions are the natural unit for level of detail: you
+   * cannot swap distant trees for their impostor cards while every tree on
+   * the board is one batch. Paired with LOD the arithmetic even inverts,
+   * because a far region collapses to a single impostor draw instead of
+   * one per species — which is the point at which turning this back on
+   * should pay for itself rather than cost. See VEGETATION_REGION_SPAN. */
+  cullRegions?: boolean
   /** Debug-only LoS overlay (see LosDebugOverlay above) — tiles a chosen unit currently sees, as "q,r" keys. */
   losDebugHexes?: Set<string>
   /** Pilot ids that still need to roll initiative this round (manual
@@ -2362,6 +2663,7 @@ export function HexMap({
   // Which way the water runs, worked out from the shape of the whole board
   // at once — a tile cannot tell on its own whether it is a river or a pond.
   // See riverFlow.ts.
+  const vegetationRegionSpan = cullRegions ? VEGETATION_REGION_SPAN : null
   const riverFlow = useMemo(() => computeRiverFlow(map.tiles).direction, [map.tiles])
   // Same resting-height formula UnitMarker computes for itself (restY),
   // generalized to an arbitrary hex so a walking mech's Y can interpolate
@@ -2648,7 +2950,14 @@ export function HexMap({
           because the visible set changes on every step and every turn, and
           each change rebuilt the whole board's vegetation. Grass and ground
           props are short enough that the fog volume covers them anyway. */}
-      <GroundVegetation tiles={map.tiles} lookup={lookup} />
+      {/* Grooves and blend strips for the whole board, merged by region
+          — 404 draw calls down to a couple of dozen, see TerrainSkin. */}
+      <TerrainSkin tiles={map.tiles} lookup={lookup} />
+      <GroundVegetation tiles={map.tiles} lookup={lookup} regionSpan={vegetationRegionSpan} />
+      {/* Leaf litter, pebbles and grass tufts, batched for the whole board
+          instead of scattered as loose meshes per tile — 733 draw calls
+          down to 7, see GroundClutter.tsx. */}
+      <GroundClutter tiles={map.tiles} lookup={lookup} regionSpan={vegetationRegionSpan} />
       {fogRegions.map((region, i) => (
         <FogRegionMesh
           key={`fog-region-${i}`} shape={region.shape} baseY={region.baseY}
@@ -2723,6 +3032,11 @@ export function HexMap({
         />
         )
       })()}
+      {/* Mounted once with the board and never unmounted, because what
+          costs frames is not a light's brightness but the scene's light
+          COUNT changing — see LightPool.tsx for the measurements that
+          traced the missile-volley frame drop to exactly that. */}
+      <LightPool />
     </group>
   )
 }

@@ -1,6 +1,6 @@
 import { useRef } from 'react'
-import { useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
+import { useProfiledFrame } from './PerfProbe'
 
 /** Real user request: "quiero iluminación dinámica... cuando los mechs
  * disparen un láser producirán un destello rojo que iluminará lo que
@@ -61,7 +61,7 @@ export function DynamicLight({
 }) {
   const ownRef = useRef<THREE.PointLight>(null)
   const seed = useRef(Math.random() * 1000)
-  useFrame((state) => {
+  useProfiledFrame('luces', (state) => {
     if (!flicker) return
     const light = lightRef?.current ?? ownRef.current
     if (!light) return

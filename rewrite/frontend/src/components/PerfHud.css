@@ -1,0 +1,211 @@
+/* Dev overlay: dense, monospace, always legible over a 3D board. Kept in
+   its own file with a `perf-` prefix so it can never collide with a
+   view's own styles. */
+
+.perf-hud-open {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 9000;
+  padding: 2px 7px;
+  font: 11px/1.4 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: #9fb2c6;
+  background: rgba(12, 16, 22, 0.72);
+  border: 1px solid rgba(120, 150, 180, 0.28);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.perf-hud-open:hover {
+  color: #e6eef6;
+  border-color: rgba(120, 150, 180, 0.6);
+}
+
+.perf-hud {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 9000;
+  width: 340px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 8px 10px 10px;
+  font: 11px/1.45 ui-monospace, "SFMono-Regular", Consolas, monospace;
+  color: #cfdae6;
+  background: rgba(10, 14, 20, 0.9);
+  border: 1px solid rgba(120, 150, 180, 0.28);
+  border-radius: 6px;
+  backdrop-filter: blur(6px);
+  user-select: none;
+}
+
+.perf-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.perf-fps {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: #7fd6a0;
+}
+
+.perf-fps em {
+  display: block;
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: #6d7f92;
+}
+
+.perf-fps-cpu, .perf-fps-physics { color: #ffb340; }
+.perf-fps-gpu { color: #ff8a6b; }
+.perf-fps-idle { color: #6d7f92; }
+
+.perf-head-nums { flex: 1; }
+.perf-head-nums b { color: #e6eef6; font-weight: 700; }
+
+.perf-head-actions { display: flex; gap: 4px; }
+
+.perf-head-actions button {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  font: inherit;
+  color: #9fb2c6;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(120, 150, 180, 0.25);
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.perf-head-actions button:hover { color: #fff; background: rgba(255, 255, 255, 0.14); }
+
+.perf-verdict {
+  margin: 7px 0 6px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-weight: 700;
+  background: rgba(127, 214, 160, 0.12);
+  color: #7fd6a0;
+}
+
+.perf-verdict span { font-weight: 400; color: #9fb2c6; }
+.perf-verdict-cpu, .perf-verdict-physics { background: rgba(255, 179, 64, 0.12); color: #ffb340; }
+.perf-verdict-gpu { background: rgba(255, 138, 107, 0.12); color: #ff8a6b; }
+.perf-verdict-idle { background: rgba(140, 160, 180, 0.1); color: #8fa0b2; }
+
+.perf-graph { margin: 6px 0 2px; }
+
+.perf-graph canvas {
+  display: block;
+  width: 320px;
+  height: 64px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 3px;
+}
+
+.perf-graph-key {
+  display: flex;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 9.5px;
+  color: #6d7f92;
+}
+
+.perf-graph-key i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-radius: 1px;
+}
+
+.perf-section-title {
+  display: flex;
+  justify-content: space-between;
+  margin: 9px 0 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: #8fa0b2;
+  border-bottom: 1px solid rgba(120, 150, 180, 0.18);
+  padding-bottom: 2px;
+}
+
+.perf-hint { font-weight: 400; letter-spacing: 0; text-transform: none; color: #5d6f82; }
+
+.perf-table { width: 100%; border-collapse: collapse; }
+.perf-table td { padding: 1px 0; vertical-align: middle; }
+
+.perf-label {
+  max-width: 130px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.perf-num {
+  width: 42px;
+  text-align: right;
+  padding-right: 6px !important;
+  font-variant-numeric: tabular-nums;
+}
+
+.perf-dim { color: #6d7f92; }
+
+.perf-bar-cell { width: 90px; }
+
+.perf-bar {
+  display: block;
+  height: 6px;
+  min-width: 1px;
+  background: #4e9ad6;
+  border-radius: 2px;
+}
+
+.perf-bar-render { background: #7a6ad8; }
+.perf-bar-physics { background: #d8a44e; }
+.perf-bar-gap { background: #3d4a5c; }
+
+.perf-row-strong td { color: #e6eef6; }
+.perf-row-gap td { color: #8fa0b2; }
+
+.perf-meta {
+  margin-top: 3px;
+  font-size: 10px;
+  color: #7d8fa2;
+  word-break: break-word;
+}
+
+.perf-events { display: flex; flex-direction: column; gap: 1px; }
+
+.perf-event {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.perf-event-text {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.perf-event-shader .perf-event-text { color: #ffb340; }
+.perf-event-asset .perf-event-text { color: #8fb8d8; }
+
+.perf-foot {
+  margin-top: 8px;
+  padding-top: 5px;
+  font-size: 9.5px;
+  line-height: 1.4;
+  color: #5d6f82;
+  border-top: 1px solid rgba(120, 150, 180, 0.18);
+}

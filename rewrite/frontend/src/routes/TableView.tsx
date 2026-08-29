@@ -22,6 +22,9 @@ import {
 import { FACTION_COLORS } from '../factions'
 import { SquareMap } from '../components/SquareMap'
 import './TableView.css'
+import { PerfProbe, PerfPhysicsProbe } from '../components/PerfProbe'
+import { PerfHud } from '../components/PerfHud'
+import { FrameGate, useRenderPolicy } from '../components/RenderPolicy'
 
 const REVEAL_CINEMATIC_AUTO_CLOSE_MS = 7000
 
@@ -71,6 +74,7 @@ function InitiativeDice({
  * see the real `TableView` export at the bottom of this file. */
 function TableViewBattletech() {
   const campaignId = useCampaignId()
+  const renderPolicy = useRenderPolicy()
   const {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, lastMelee, activeMapId, roundState, initiativeRollRequest,
     physicalRollRequest, movementStarted, heatPhaseResult, rosterVersion, unitWalked,
@@ -538,7 +542,14 @@ function TableViewBattletech() {
           per-tile bug; a first, more aggressive far cut clipped the whole
           map at a normal "zoomed all the way out" distance, a real
           regression, not a fix). */}
-      <Canvas shadows camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 1 * HEX_SIZE, far: 500 * HEX_SIZE }}>
+      <Canvas
+        shadows
+        camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 1 * HEX_SIZE, far: 500 * HEX_SIZE }}
+      >
+        {/* First child on purpose: it closes each frame's measurements,
+            and R3F runs same-priority frame callbacks in mount order. */}
+        <PerfProbe />
+        <FrameGate policy={renderPolicy} />
         <color attach="background" args={['#0f1a18']} />
         {/* Real user report: "los dados de jade se ven muy oscuros,
             quiza la escena tenga poca luz" — bumped alongside the
@@ -581,6 +592,7 @@ function TableViewBattletech() {
             under the same accel) — scaling gravity by HEX_SIZE too keeps
             the exact same fall/bounce TIMING, just at the new scale. */}
         <Physics gravity={[0, -9.81 * HEX_SIZE, 0]}>
+          <PerfPhysicsProbe />
           {/* Real user report: a die that rolled off a tile into a gap
               fell straight through — this used to render OUTSIDE
               <Physics> entirely (a plain visual mesh, no collider at
@@ -674,6 +686,7 @@ function TableViewBattletech() {
             without the endless slow spin. */}
         <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
       </Canvas>
+      <PerfHud />
 
       {revealCinematicUnit && (
         // key={revealCinematicUnitId} forces a full remount for every new

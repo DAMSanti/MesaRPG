@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { useFrame } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import type { HexTileData } from '../api'
 import { HEX_SIZE, hexToWorld } from '../hexMath'
 import { groundVariant, hashTile, terrainColor, type GroundVariant } from '../terrain'
 import { GRASS_COVER, isGrassTerrain, makeGrassDensitySampler, treeGroveAt } from '../grassPatches'
-import { tileSurfaceAt } from '../tileHeightField'
+import { makeTileHeightSampler } from '../tileHeightField'
+import { useProfiledFrame } from './PerfProbe'
 
 /** Real user request: "necesito que encuentres y descargues packs de
  * vegetacion, plantas, arbustos, decoracion para estas tiles, ten en cuenta
@@ -629,45 +629,6 @@ function placeTile(tile: HexTileData): Placement[] {
 
 /** Resolution of the per-tile height grid below. 12 spans a 30m hex at ~5m
  * steps, which is finer than any real slope changes over. */
-const HEIGHT_GRID = 12
-
-/** The tile's real ground height, sampled from a small precomputed grid
- * instead of evaluated directly.
- *
- * `tileSurfaceAt` is not cheap — six edge ramps, three octaves of noise and a
- * stamp lookup per call — and the carpet asks for hundreds of thousands of
- * heights. Done directly that is tens of millions of trigonometric calls and
- * several seconds of frozen page on load. A 13x13 grid per tile costs 169
- * evaluations and answers every one of them by interpolation, and the error
- * is centimetres on a surface whose own features are metres wide: invisible
- * under a plant, and the exact same surface the tile's mesh draws at the
- * points that matter. */
-function makeTileHeightSampler(tile: HexTileData, lookup: Map<string, HexTileData>) {
-  const heightAt = tileSurfaceAt(tile, lookup)
-  const span = HEX_SIZE * 2
-  const step = span / HEIGHT_GRID
-  const grid = new Float32Array((HEIGHT_GRID + 1) * (HEIGHT_GRID + 1))
-  for (let j = 0; j <= HEIGHT_GRID; j++) {
-    for (let i = 0; i <= HEIGHT_GRID; i++) {
-      grid[j * (HEIGHT_GRID + 1) + i] = heightAt(-HEX_SIZE + i * step, -HEX_SIZE + j * step)
-    }
-  }
-  return (x: number, z: number): number => {
-    const fx = Math.min(HEIGHT_GRID - 0.0001, Math.max(0, (x + HEX_SIZE) / step))
-    const fz = Math.min(HEIGHT_GRID - 0.0001, Math.max(0, (z + HEX_SIZE) / step))
-    const i = fx | 0
-    const j = fz | 0
-    const tx = fx - i
-    const tz = fz - j
-    const row = j * (HEIGHT_GRID + 1) + i
-    const a = grid[row]
-    const b = grid[row + 1]
-    const c = grid[row + HEIGHT_GRID + 1]
-    const d = grid[row + HEIGHT_GRID + 2]
-    return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz
-  }
-}
-
 /** A fast deterministic 0..1 stream for one tile. xorshift rather than a
  * fresh hash per draw, because the carpet pulls five numbers per card and
  * hashing each one turns into real time at half a million cards. */
@@ -877,21 +838,57 @@ function makeCarpetMaterial(tint: string) {
  * per-instance colour would be another three floats on every one of hundreds
  * of thousands of cards, for a value that only ever takes two or three
  * distinct settings. */
-function GrassCarpet({ tiles, tilesKey, lookup }: {
+/** How many hexes across one cullable region of vegetation is.
+ *
+ * A batch that spans the whole map cannot be frustum-culled in any useful
+ * way, which is why these all carried `frustumCulled={false}`: in the
+ * first-person view, where you see a narrow cone of the board, every plant
+ * on it was still being submitted. Measured, vegetation is 54% of the GPU
+ * time, so that is a lot to be throwing away.
+ *
+ * Splitting by region fixes it, but not for free, and the first attempt
+ * measured badly enough to change the design. There are ~96 distinct
+ * plant species-variants holding only ~4.300 instances between them —
+ * about 45 instances per draw — so cutting the board into regions took
+ * plants from 96 draws to 521 and the whole board from 670 to 1.756. GPU
+ * time did fall exactly as predicted (7,8 → 2,5 ms: the culling works),
+ * but the CPU cost of five times the draw calls swamped it and GM view
+ * went from 51 fps to 24.
+ *
+ * So this is not a global setting. It is worth doing where the camera sees
+ * a narrow slice of the board and culling can throw most of it away — the
+ * first-person cockpit — and it is worth NOT doing where the camera sees
+ * the whole board at once, because there culling can discard nothing and
+ * the extra draws are pure loss. A view passes `null` to keep one batch
+ * per species, exactly as before. */
+export const VEGETATION_REGION_SPAN = 6
+
+/** Which cullable region a tile belongs to, or one shared region when
+ * `span` is null. */
+export function vegetationRegion(q: number, r: number, span: number | null): string {
+  if (span === null) return '*'
+  return `${Math.floor(q / span)},${Math.floor(r / span)}`
+}
+
+function GrassCarpet({ tiles, tilesKey, lookup, regionSpan }: {
   tiles: HexTileData[]
   tilesKey: string
   lookup: Map<string, HexTileData>
+  regionSpan: number | null
 }) {
   const groups = useMemo(() => {
-    const byTint = new Map<string, HexTileData[]>()
+    // Keyed by tint AND region: one batch per tint per region, so each has
+    // real bounds and can be culled when the camera looks elsewhere.
+    const byTint = new Map<string, { tint: string; tiles: HexTileData[] }>()
     for (const t of tiles) {
       // GRASS terrain only. VEGETATED is deliberately wider than this (water
       // is in it, for its stones), and using it here would carpet a river.
       if (!isGrassTerrain(t.terrain)) continue
       const tint = carpetTintFor(t.terrain)
-      const list = byTint.get(tint)
-      if (list) list.push(t)
-      else byTint.set(tint, [t])
+      const key = `${tint}|${vegetationRegion(t.q, t.r, regionSpan)}`
+      const group = byTint.get(key)
+      if (group) group.tiles.push(t)
+      else byTint.set(key, { tint, tiles: [t] })
     }
     // The card budget is for the WHOLE board, so it has to be worked out
     // across every group at once and handed down as one shared factor.
@@ -905,13 +902,13 @@ function GrassCarpet({ tiles, tilesKey, lookup }: {
       budget: wanted > CARPET_MAX_CARDS ? CARPET_MAX_CARDS / wanted : 1,
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tilesKey])
+  }, [tilesKey, regionSpan])
 
   return (
     <>
-      {groups.groups.map(([tint, group]) => (
+      {groups.groups.map(([key, group]) => (
         <GrassCarpetBatch
-          key={tint} tint={tint} tiles={group} tilesKey={tilesKey}
+          key={key} tint={group.tint} tiles={group.tiles} tilesKey={tilesKey}
           lookup={lookup} budget={groups.budget}
         />
       ))}
@@ -1012,35 +1009,40 @@ function GrassCarpetBatch({ tint, tiles, tilesKey, lookup, budget }: {
     mesh.instanceMatrix = new THREE.InstancedBufferAttribute(matrices.array, 16)
     mesh.instanceMatrix.needsUpdate = true
     mesh.count = matrices.count
+    // Bounds over the instances actually written, which is what makes this
+    // batch cullable now that it covers one region rather than the map.
+    mesh.computeBoundingSphere()
   }, [matrices])
 
-  useFrame((state) => { uniforms.uTime.value = state.clock.elapsedTime })
+  useProfiledFrame('hierba (viento)', (state) => { uniforms.uTime.value = state.clock.elapsedTime })
 
   if (matrices.count === 0) return null
   return (
     <instancedMesh
       ref={ref}
       args={[getGrassCardGeometry(), material, matrices.count]}
+      userData={{ perfGroup: 'hierba' }}
       receiveShadow
       castShadow={false}
-      // Declarative, NOT set in an effect. An instanced mesh is frustum-
-      // culled against the bounds of ONE instance sitting at the origin, so
-      // the whole batch vanishes the moment the camera looks away from the
-      // board's centre — and a batch spans the map by definition, so culling
-      // it as a unit is meaningless anyway. Doing it in an effect meant it
-      // only applied if the ref happened to be attached when that effect
-      // ran, which is the likely cause of a real user report of forest tiles
-      // with no trees in the first-person view (camera far from the origin)
-      // while the same tiles were fine from the top-down ones (camera over
-      // the centre, so the test passed by accident).
-      frustumCulled={false}
+      // Culling is ON again, which it could not be while one batch covered
+      // the whole board. The old comment here blamed three.js for testing
+      // "one instance at the origin" — that was the wrong diagnosis. An
+      // InstancedMesh does get bounds over all its instances, but only once
+      // something computes them, and only for the matrices written by that
+      // point; computed too early it really does cover nothing, which is
+      // what made forest tiles lose their trees in the first-person view.
+      // The effect above now recomputes them right after writing.
     />
   )
 }
 
-export function GroundVegetation({ tiles, lookup }: {
+export function GroundVegetation({ tiles, lookup, regionSpan }: {
   tiles: HexTileData[]
   lookup: Map<string, HexTileData>
+  /** Hexes across one cullable region, or null for one batch per species
+   * across the whole board. See VEGETATION_REGION_SPAN for the measured
+   * reason this is a per-view decision. */
+  regionSpan: number | null
 }) {
   /** Everything below is keyed on this rather than on `tiles` itself.
    *
@@ -1119,7 +1121,7 @@ export function GroundVegetation({ tiles, lookup }: {
         dummy.scale.setScalar(scale)
         dummy.updateMatrix()
         for (const variant of parts) {
-          const bucketKey = `${p.species}:${variant.index}`
+          const bucketKey = `${vegetationRegion(tile.q, tile.r, regionSpan)}:${p.species}:${variant.index}`
           let bucket = out.get(bucketKey)
           if (!bucket) { bucket = { variant, matrices: [] }; out.set(bucketKey, bucket) }
           bucket.matrices.push(dummy.matrix.clone())
@@ -1130,11 +1132,11 @@ export function GroundVegetation({ tiles, lookup }: {
     // Deliberately keyed on the tiles' CONTENT, not on the array holding
     // them — see `tilesKey` below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tilesKey, variants])
+  }, [tilesKey, variants, regionSpan])
 
   return (
     <>
-      <GrassCarpet tiles={tiles} tilesKey={tilesKey} lookup={lookup} />
+      <GrassCarpet tiles={tiles} tilesKey={tilesKey} lookup={lookup} regionSpan={regionSpan} />
       {buckets.map((b) => (
         <VegetationBatch key={b.key} variant={b.variant} matrices={b.matrices} />
       ))}
@@ -1160,18 +1162,22 @@ function VegetationBatch({ variant, matrices }: { variant: Variant; matrices: TH
     if (!mesh) return
     matrices.forEach((m, i) => mesh.setMatrixAt(i, m))
     mesh.instanceMatrix.needsUpdate = true
+    // An InstancedMesh's own bounding sphere spans its instances, not one
+    // instance at the origin — but only once something computes it, and
+    // only for the matrices written so far. This is what makes the
+    // frustum test below mean anything.
+    mesh.computeBoundingSphere()
   }, [matrices])
 
-  useFrame((state) => { uniforms.uTime.value = state.clock.elapsedTime })
+  useProfiledFrame('vegetación (viento)', (state) => { uniforms.uTime.value = state.clock.elapsedTime })
 
   if (matrices.length === 0) return null
   return (
     <instancedMesh
       ref={ref}
       args={[variant.geometry, material, matrices.length]}
+      userData={{ perfGroup: tier === 'tree' || tier === 'hero' ? 'árboles' : 'plantas' }}
       receiveShadow
-      // See GrassCarpetBatch: declarative on purpose, never in an effect.
-      frustumCulled={false}
       // No castShadow on purpose. A shadow map re-renders every caster from
       // the light's point of view, so switching it on here would double the
       // cost of the single heaviest thing on the board for shadows that, at

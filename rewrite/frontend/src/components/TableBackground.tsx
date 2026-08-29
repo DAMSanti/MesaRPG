@@ -56,7 +56,7 @@ export function TableBackground({ physics, hexScale }: { physics?: boolean; hexS
   // one giant smear under the (comparatively tiny) square board.
   const scale = hexScale ? HEX_SIZE : 1
   const plane = (
-    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, TABLE_Y, 0]} receiveShadow>
+    <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, TABLE_Y, 0]} receiveShadow userData={{ perfGroup: 'mesa' }}>
       <planeGeometry args={[200 * scale, 200 * scale]} />
       <meshStandardMaterial map={texture} />
     </mesh>

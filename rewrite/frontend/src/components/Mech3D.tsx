@@ -1,11 +1,12 @@
 import { Component, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { useAnimations, useGLTF, useTexture } from '@react-three/drei'
-import { useFrame, useThree } from '@react-three/fiber'
+import {useThree} from '@react-three/fiber'
 import * as THREE from 'three'
 import { SkeletonUtils } from 'three-stdlib'
 import { WALK_CYCLE_TIME_SCALE } from '../hexMath'
 import type { JumpPhase } from '../jumpFlight'
 import { resolveMechModelUrl } from '../mechAssets'
+import { useProfiledFrame } from './PerfProbe'
 
 // Real user request: "añade un PBR para el Jenner", then: "PBR van a
 // tener todos los mechs, así que esto tiene que ser genérico" — this
@@ -978,7 +979,7 @@ function Mech3DModel({
   // pose Caerse's own clampWhenFinished left it in once it ends ("se debe
   // quedar en el ultimo frame del caerse").
   const FALL_TILT_Z = Math.PI * 0.42
-  useFrame(() => {
+  useProfiledFrame('mechs', () => {
     const group = groupRef.current
     if (!group) return
     const state = fallStateRef.current
@@ -1028,7 +1029,7 @@ function Mech3DModel({
   }>({ left: { prevY: null, peakY: 0, armed: false }, right: { prevY: null, peakY: 0, armed: false } })
   const footWorldScratch = useRef(new THREE.Vector3()).current
   const footScaleScratch = useRef(new THREE.Vector3()).current
-  useFrame(() => {
+  useProfiledFrame('mechs', () => {
     if (!onFootstep || !inputsRef.current.isMoving) {
       footTrackRef.current.left.prevY = null
       footTrackRef.current.left.armed = false
@@ -1203,8 +1204,10 @@ class Mech3DBoundary extends Component<{ fallback: ReactNode; children: ReactNod
 
 export function Mech3D(props: Mech3DProps) {
   return (
-    <Mech3DBoundary fallback={<Mech3DFallback {...props} />}>
-      <Mech3DModel {...props} />
-    </Mech3DBoundary>
+    <group userData={{ perfGroup: 'mechs' }}>
+      <Mech3DBoundary fallback={<Mech3DFallback {...props} />}>
+        <Mech3DModel {...props} />
+      </Mech3DBoundary>
+    </group>
   )
 }

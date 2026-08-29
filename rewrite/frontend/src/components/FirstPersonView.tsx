@@ -1,5 +1,5 @@
 import { Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Canvas, useFrame } from '@react-three/fiber'
+import {Canvas} from '@react-three/fiber'
 import { useProgress } from '@react-three/drei'
 import { EffectComposer, Outline, Selection } from '@react-three/postprocessing'
 import { KernelSize } from 'postprocessing'
@@ -22,6 +22,10 @@ import { activeMoverPilotId, currentPhase, useDisplayedPhase, useHeldActiveMover
 import { HEX_SIZE, hexToWorld, mapCenter, WALK_SPEED } from '../hexMath'
 import type { FogWalkStep, MeleeResult, UnitWalked } from '../ws'
 import './FirstPersonView.css'
+import { useProfiledFrame } from './PerfProbe'
+import { PerfProbe } from './PerfProbe'
+import { PerfHud } from './PerfHud'
+import { FrameGate, useRenderPolicy } from './RenderPolicy'
 
 // Derived from Mech3D's own scale/proportions rather than a hardcoded
 // number, so bumping the model's size there doesn't quietly leave the
@@ -182,7 +186,7 @@ function WalkingFirstPersonCam({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, movementType, eyeYAt, centerX, centerZ])
 
-  useFrame((state, delta) => {
+  useProfiledFrame('cámara FPV', (state, delta) => {
     const jump = jumpFlightRef.current
     if (jump) {
       jump.elapsed += delta
@@ -322,7 +326,7 @@ function EnemyMarkersController({
   labelRefs: React.RefObject<Record<number, HTMLDivElement | null>>
   offscreenRefs: React.RefObject<Record<number, HTMLDivElement | null>>
 }) {
-  useFrame((state) => {
+  useProfiledFrame('marcadores FPV', (state) => {
     const { camera, size } = state
     const forward = camera.getWorldDirection(new THREE.Vector3())
     const rightAxis = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()))
@@ -895,6 +899,7 @@ export function FirstPersonView({
   // facing actually changes (the unit turned/moved) — an old look offset
   // relative to a new facing read as disorienting rather than useful.
   const [lookYawDeg, setLookYawDeg] = useState(0)
+  const renderPolicy = useRenderPolicy()
   useEffect(() => {
     setLookYawDeg(0)
   }, [unit.id, unit.q, unit.r, unit.facing_deg])
@@ -1560,6 +1565,9 @@ export function FirstPersonView({
             onContextMenu={(e) => e.preventDefault()}
           >
             <Canvas shadows camera={{ fov: CAMERA_FOV_DEG }}>
+              {/* First child on purpose — see TableView's own note. */}
+              <PerfProbe />
+              <FrameGate policy={renderPolicy} />
               {/* Selection + Outline (real user request, with a reference
                   image: "resalte el contorno del mech enemigo, del modelo
                   3D" — a real edge-detected silhouette outline around the
@@ -1653,6 +1661,13 @@ export function FirstPersonView({
               </Selection>
             </Canvas>
           </div>
+          {/* OUTSIDE .fp-canvas-wrap on purpose. That wrapper carries the
+              tilt-shift's own `filter: saturate() contrast()`, and a
+              filtered ancestor both tints everything inside it and becomes
+              the containing block for position:fixed — which trapped this
+              panel inside the canvas's z-index 0, underneath the whole
+              cockpit HUD. Out here it is unfiltered and on top. */}
+          <PerfHud />
           {enemies.map((enemy) => (
             <div
               key={enemy.unit_id}

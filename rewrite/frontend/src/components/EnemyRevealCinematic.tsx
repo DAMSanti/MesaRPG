@@ -1,7 +1,8 @@
 import { Suspense } from 'react'
-import { Canvas, useFrame, useThree } from '@react-three/fiber'
+import {Canvas, useThree} from '@react-three/fiber'
 import { Mech3D, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
 import './EnemyRevealCinematic.css'
+import { useProfiledFrame } from './PerfProbe'
 
 const ORBIT_DURATION_S = 6
 
@@ -18,7 +19,7 @@ const MECH_FACTOR = MODEL_SCALE / 1.65
 function OrbitingCamera() {
   const { camera } = useThree()
   const targetY = MODEL_SCALE * MODEL_CHEST_FRACTION
-  useFrame((state) => {
+  useProfiledFrame('cinemática', (state) => {
     const t = (state.clock.elapsedTime % ORBIT_DURATION_S) / ORBIT_DURATION_S
     const angle = t * Math.PI * 2
     const radius = 3 * MECH_FACTOR

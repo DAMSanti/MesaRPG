@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useFrame } from '@react-three/fiber'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
 import { HEX_SIZE } from '../hexMath'
 import { MODEL_SCALE } from './Mech3D'
-import { DynamicLight } from './DynamicLight'
+import { LIGHT_IMPACT, LIGHT_MUZZLE, LIGHT_TRAVEL, setPoolLight } from './LightPool'
+import { useProfiledFrame } from './PerfProbe'
 
 // Real user request: "cuando los mechs disparen un láser... producirán
 // un destello rojo que iluminará lo que tenga alrededor, sobretodo a
-// oscuras" — real point lights (DynamicLight.tsx), not just emissive
+// oscuras" — real point lights, not just emissive
 // sprites that only light themselves. Distance kept generous (a few hex
 // widths) so a flash in the dark actually reaches the mechs standing
 // around it, not just its own few-meter footprint. castShadow stays off
@@ -16,6 +16,12 @@ import { DynamicLight } from './DynamicLight'
 // order means at most one shot's VFX is ever live at a time, so cost
 // isn't the concern; a shadow-casting muzzle flash just didn't read as
 // better than a plain one for something this brief.
+//
+// The lights themselves come from LightPool.tsx's fixed pool rather
+// than being mounted per effect: mounting one changes the scene's light
+// COUNT, which recompiles every shader in the scene. See that file for
+// the measurements — it is the whole reason a missile volley used to
+// flatten the frame rate.
 const ATTACK_LIGHT_DISTANCE = HEX_SIZE * 4
 // Real user report (on Die.tsx's own glass-die light, same root cause
 // here): three.js's default lighting is physically-correct (candela
@@ -40,18 +46,33 @@ const MECH_FACTOR = MODEL_SCALE / 1.65
  * missile rack says "SRM"/"LRM"/"MRM"/"ATM"/"MML"/"Rocket Launcher",
  * every autocannon/Gauss variant reads fine as a fast ballistic tracer,
  * the safe default for anything this doesn't otherwise recognize). */
-export type AttackEffectCategory = 'beam' | 'ppc' | 'tracer' | 'missile' | 'mg' | 'flame'
+export type AttackEffectCategory =
+  | 'beam' | 'pulse' | 'ppc' | 'tracer'
+  | 'missileArc' | 'missileDirect' | 'rocket'
+  | 'mg' | 'flame'
 
 export function weaponEffectCategory(weaponName: string): AttackEffectCategory {
   const n = weaponName.toLowerCase()
   if (n.includes('flamer')) return 'flame'
   if (n.includes('machine gun')) return 'mg'
   if (n.includes('ppc')) return 'ppc'
+  // Pulse lasers before plain ones: every pulse weapon also says "laser",
+  // and the pulse IS the difference the name is pointing at -- a burst of
+  // short shots rather than one held beam.
+  if (n.includes('pulse') && n.includes('laser')) return 'pulse'
   if (n.includes('laser')) return 'beam'
+  // Three different missiles, because they are three different weapons
+  // once you watch them fly (real user spec, picking the models himself
+  // out of the pack):
+  //   LRM  — indirect fire. "Salva que sube y cae sobre el blanco, siempre
+  //          se ven volar un buen rato."
+  //   SRM/MRM/ATM/MML — "Trayectoria plana y rápida a corta distancia."
+  //   Rocket Launcher — an unguided one-shot swarm, wider and messier.
+  if (n.includes('rocket launcher')) return 'rocket'
+  if (n.includes('lrm')) return 'missileArc'
   if (
-    n.includes('srm') || n.includes('lrm') || n.includes('mrm') || n.includes('atm')
-    || n.includes('mml') || n.includes('rocket launcher')
-  ) return 'missile'
+    n.includes('srm') || n.includes('mrm') || n.includes('atm') || n.includes('mml')
+  ) return 'missileDirect'
   return 'tracer'
 }
 
@@ -60,29 +81,112 @@ export function weaponEffectCategory(weaponName: string): AttackEffectCategory {
 // the rest rather than trying to fake a literal tracer color.
 const CATEGORY_COLOR: Record<AttackEffectCategory, string> = {
   beam: '#ff3b3b',
+  pulse: '#ff3b3b',
   ppc: '#3bb2ff',
   tracer: '#ffb020',
-  missile: '#ff8a3b',
+  missileArc: '#ff8a3b',
+  missileDirect: '#ff8a3b',
+  rocket: '#ff7a2f',
   mg: '#ffd23b',
   flame: '#ff6a1f',
 }
 
+/** Laser timing, in milliseconds.
+ *
+ * Real user spec: "en el canon se generara una esfera de energia que cuando
+ * llegue a un tamano, disparara un laser, algo mas lento que ahora. En el
+ * caso de continuo, durara un segundo y poco el laser sobre el objetivo, en
+ * caso de laser de pulsos, hara 4 o 5 repeticiones de todo, esfera creciendo
+ * y pum! laser."
+ *
+ * So a laser is two phases, not one snap: a charge that visibly builds at the
+ * muzzle, then the beam. The pulse variant is the SAME two phases repeated,
+ * each one much shorter -- which is what a pulse laser physically is, and why
+ * it gets the same component with different numbers rather than an animation
+ * of its own. */
+const LASER_CHARGE_MS = 430
+const LASER_BEAM_MS = 1150
+const LASER_FADE_MS = 260
+const PULSE_COUNT = 5
+// A pulse cycle is short, but not as short as it physically "should" be:
+// at 200ms the five shots blurred into one flicker and the charge-and-fire
+// shape stopped being readable at all (real user report: "el pulse laser es
+// muy rapido"). At 320ms each pulse is legibly its own little swell and
+// release, which is the point of giving pulse lasers their own treatment.
+const PULSE_CHARGE_MS = 150
+const PULSE_BEAM_MS = 170
+
 // Total lifetime (travel + impact + fade) before AttackEffect unmounts
-// itself for a category with NO real travel distance (beam/ppc snap in
-// instantly regardless of range — that's how BT lore treats energy
-// weapons — flame is a short jet, not a projectile). tracer/missile/mg
+// itself for a category with NO real travel distance (beam/pulse snap
+// in instantly regardless of range — that's how BT lore treats a laser —
+// flame is a short jet, not a projectile). tracer/missile/mg/ppc
 // instead travel at a fixed real-world SPEED (see CATEGORY_SPEED below)
 // so a long shot visibly takes proportionally longer to cross the board
 // instead of covering the whole distance in the same fixed instant —
 // this table's entries for those three categories are unused fallbacks
 // only (kept in case a distance can't be computed).
 const CATEGORY_DURATION_MS: Record<AttackEffectCategory, number> = {
-  beam: 420,
+  beam: LASER_CHARGE_MS + LASER_BEAM_MS + LASER_FADE_MS,
+  pulse: PULSE_COUNT * (PULSE_CHARGE_MS + PULSE_BEAM_MS) + LASER_FADE_MS,
+  // Unused fallback now that the PPC bolt travels at a real speed (see
+  // CATEGORY_SPEED) — kept only for the case where a distance can't be
+  // computed, same as the tracer/missile/mg entries below.
   ppc: 480,
   tracer: 900,
-  missile: 1600,
+  missileArc: 1600,
+  missileDirect: 1600,
+  rocket: 1600,
   mg: 900,
   flame: 420,
+}
+
+interface MissileKind {
+  url: string
+  /** World units nose to tail. */
+  length: number
+  /** Peak lob height as a FRACTION OF THE SHOT'S OWN DISTANCE. Fixed world
+   * units were the old bug here: 0.5 units of arc on a board where a mech
+   * is ten units tall and a hex is thirty across is not an arc at all, so
+   * every missile flew flat no matter the weapon. */
+  arcFraction: number
+  /** World units per second. */
+  speed: number
+  /** How far across the salvo spreads, in world units. */
+  spread: number
+  /** Cap on how many bodies fly at once, however big the rack is. */
+  maxCount: number
+}
+
+const MISSILE_KINDS: Record<'arc' | 'direct' | 'rocket', MissileKind> = {
+  // LRM — Object_34, the AGM-114 Hellfire body. Slow and high: this is the
+  // one the user wants to see "volar un buen rato".
+  arc: {
+    url: '/models/missile-arc.glb',
+    length: 0.42 * MECH_FACTOR,
+    arcFraction: 0.26,
+    speed: 3.4 * HEX_SIZE,
+    spread: 1.1 * MECH_FACTOR,
+    maxCount: 8,
+  },
+  // SRM/MRM/ATM/MML — Object_26. Flat and fast, over before you track it.
+  direct: {
+    url: '/models/missile-direct.glb',
+    length: 0.5 * MECH_FACTOR,
+    arcFraction: 0.035,
+    speed: 9 * HEX_SIZE,
+    spread: 0.7 * MECH_FACTOR,
+    maxCount: 6,
+  },
+  // Rocket Launcher — Object_32. Unguided, so the widest spread of the
+  // three and the loosest formation.
+  rocket: {
+    url: '/models/missile-rocket.glb',
+    length: 0.38 * MECH_FACTOR,
+    arcFraction: 0.09,
+    speed: 7.5 * HEX_SIZE,
+    spread: 1.6 * MECH_FACTOR,
+    maxCount: 8,
+  },
 }
 
 // World units/second — hex center-to-center spacing is √3 * HEX_SIZE (see
@@ -96,7 +200,18 @@ const CATEGORY_DURATION_MS: Record<AttackEffectCategory, number> = {
 // now spans HEX_SIZE times more world units for the same real distance.
 const CATEGORY_SPEED: Partial<Record<AttackEffectCategory, number>> = {
   tracer: 11 * HEX_SIZE,
-  missile: 4.3 * HEX_SIZE,
+  // One speed per missile type, and they are deliberately far apart: an
+  // LRM salvo is meant to be watched arcing over, a short-range missile is
+  // meant to be there before you've followed it.
+  missileArc: MISSILE_KINDS.arc.speed,
+  missileDirect: MISSILE_KINDS.direct.speed,
+  rocket: MISSILE_KINDS.rocket.speed,
+  // The PPC is the one energy weapon here that actually TRAVELS: what it
+  // fires is a bolt of charged particles, so it has to be seen crossing
+  // the board or it is just a blue laser. Slower than a tracer (~0.25s
+  // per hex) precisely so the eye can follow the bolt and read the arc
+  // crackling around it.
+  ppc: 7 * HEX_SIZE,
   mg: 13 * HEX_SIZE,
 }
 const MIN_TRAVEL_MS = 350
@@ -142,7 +257,7 @@ function GlowSprite({
   meshRef, color, size,
 }: { meshRef: React.RefObject<THREE.Mesh | null>; color: string; size: number }) {
   const camRef = useRef<THREE.Mesh>(null)
-  useFrame((state) => {
+  useProfiledFrame('disparos', (state) => {
     if (meshRef.current) meshRef.current.quaternion.copy(state.camera.quaternion)
   })
   const texture = getGlowTexture()
@@ -155,6 +270,76 @@ function GlowSprite({
       />
     </mesh>
   )
+}
+
+// PPC — real user spec: "el PPC, que sera un bolo de particulas con arco
+// electrico". Cage strands are the filaments that leap ACROSS the bolt and
+// make it crackle; tail strands are the ionised channel it drags behind.
+const PPC_CAGE_STRANDS = 3
+const PPC_TAIL_STRANDS = 2
+const PPC_ARC_STRANDS = PPC_CAGE_STRANDS + PPC_TAIL_STRANDS
+const PPC_ARC_SEGMENTS = 9
+// How many times a second the arc's SHAPE is redrawn. Lightning reads as
+// a series of held snapshots, not a smooth wiggle, so this stays well
+// under the frame rate on purpose.
+const PPC_ARC_HZ = 22
+const PPC_PARTICLES = 56
+const PPC_HEAD = 0.42 * MECH_FACTOR
+const PPC_TAIL_LEN = 3.2 * MECH_FACTOR
+
+const UP_AXIS = new THREE.Vector3(0, 1, 0)
+const SIDE_AXIS = new THREE.Vector3(1, 0, 0)
+const arcDir = new THREE.Vector3()
+const arcU = new THREE.Vector3()
+const arcV = new THREE.Vector3()
+const flashWorld = new THREE.Vector3()
+const ppcBolt = new THREE.Vector3()
+const ppcA = new THREE.Vector3()
+const ppcB = new THREE.Vector3()
+
+/** Deterministic 0..1 from one number. The arc's jitter comes from this
+ * rather than Math.random() so a filament's shape can be pinned to a
+ * refresh index: regenerated every frame with real randomness it looks
+ * like TV static, but regenerated every frame from a seed that only
+ * changes PPC_ARC_HZ times a second it strobes like lightning while its
+ * endpoints still follow the moving bolt smoothly. */
+function hash01(n: number): number {
+  const s = Math.sin(n * 127.1) * 43758.5453
+  return s - Math.floor(s)
+}
+
+/** One jagged filament from `a` to `b`, written into a LineSegments
+ * position array as `segments` back-to-back pairs, returning the next
+ * write offset. The lateral wander is tapered by sin(pi*t) so the
+ * filament lands exactly on both endpoints — untapered, the arc visibly
+ * detaches from the very thing it is supposed to be arcing between. */
+function writeArc(
+  arr: Float32Array, offset: number,
+  a: THREE.Vector3, b: THREE.Vector3,
+  segments: number, amplitude: number, seed: number,
+): number {
+  arcDir.subVectors(b, a)
+  const len = arcDir.length()
+  if (len < 1e-4) return offset
+  arcDir.multiplyScalar(1 / len)
+  // Cross against whichever world axis is least parallel to the run, so
+  // a vertical filament doesn't degenerate into a zero-length cross.
+  arcU.crossVectors(arcDir, Math.abs(arcDir.y) < 0.9 ? UP_AXIS : SIDE_AXIS).normalize()
+  arcV.crossVectors(arcDir, arcU).normalize()
+  let px = a.x, py = a.y, pz = a.z
+  for (let i = 1; i <= segments; i++) {
+    const t = i / segments
+    const spread = Math.sin(Math.PI * t) * amplitude
+    const du = (hash01(seed + i * 13.7) - 0.5) * 2 * spread
+    const dv = (hash01(seed + i * 29.3 + 5.1) - 0.5) * 2 * spread
+    const qx = a.x + arcDir.x * len * t + arcU.x * du + arcV.x * dv
+    const qy = a.y + arcDir.y * len * t + arcU.y * du + arcV.y * dv
+    const qz = a.z + arcDir.z * len * t + arcU.z * du + arcV.z * dv
+    arr[offset++] = px; arr[offset++] = py; arr[offset++] = pz
+    arr[offset++] = qx; arr[offset++] = qy; arr[offset++] = qz
+    px = qx; py = qy; pz = qz
+  }
+  return offset
 }
 
 /** Position/orientation to stretch a unit-length-along-Y cylinder
@@ -226,13 +411,26 @@ function setGroupFade(group: THREE.Group | null, fade: number) {
 export function ImpactFlash({ position, color }: { position: THREE.Vector3; color: string }) {
   const ref = useRef<THREE.Group>(null)
   const start = useRef<number | null>(null)
-  useFrame((state) => {
+  const lightColor = useMemo(() => new THREE.Color(color), [color])
+  useProfiledFrame('disparos', (state) => {
     if (start.current === null) start.current = state.clock.elapsedTime
     const t = Math.min(1, (state.clock.elapsedTime - start.current) / 0.35)
     const scale = 0.3 + t * 1.4
     const fade = 1 - t
     ref.current?.scale.setScalar(scale)
     setGroupFade(ref.current, fade)
+    // Asked for the WORLD position rather than reusing the `position`
+    // prop: one caller (HexMap's own explosion) mounts this at the local
+    // origin inside a group that carries the real position, so the prop
+    // alone would light the middle of the board.
+    if (fade > 0 && ref.current) {
+      ref.current.getWorldPosition(flashWorld)
+      setPoolLight(
+        LIGHT_IMPACT,
+        flashWorld.x, flashWorld.y + MECH_FACTOR, flashWorld.z,
+        lightColor, 4 * ATTACK_LIGHT_INTENSITY_SCALE * fade, ATTACK_LIGHT_DISTANCE,
+      )
+    }
   })
   return (
     <group ref={ref} position={position}>
@@ -240,48 +438,344 @@ export function ImpactFlash({ position, color }: { position: THREE.Vector3; colo
         <ringGeometry args={[0.15 * MECH_FACTOR, 0.32 * MECH_FACTOR, 20]} />
         <meshBasicMaterial color={color} transparent opacity={0.9} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
       </mesh>
-      <DynamicLight position={[0, MECH_FACTOR, 0]} color={color} intensity={4 * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE} />
     </group>
   )
 }
 
-/** Laser/PPC — the beam snaps in at full brightness and holds briefly,
- * then fades; PPC is just wider/bluer/a touch slower so it reads as a
- * heavier weapon without a whole separate animation curve. */
-function BeamAttack({ from, to, color, duration, thick }: { from: THREE.Vector3; to: THREE.Vector3; color: string; duration: number; thick: boolean }) {
-  const groupRef = useRef<THREE.Group>(null)
-  const flashRef = useRef<THREE.Mesh>(null)
+/** Laser — charges, then fires.
+ *
+ * One cycle is an energy ball swelling at the muzzle and then, at full size,
+ * the beam. A continuous laser runs one long cycle; a pulse laser runs five
+ * short ones, which is the whole difference between them and the reason both
+ * come out of this one component.
+ *
+ * The charge is what carries the shot. A beam that simply appears reads as a
+ * red line drawn on the screen; a beam you saw coming reads as a weapon
+ * firing, and it also gives the light somewhere to build from, so the
+ * shooter's own mech is lit before anything crosses the board.
+ *
+ * Every phase drives the lights as well as the geometry: the muzzle light
+ * ramps up with the ball, spikes as it lets go, and the target end only
+ * lights while the beam is actually connected. */
+function LaserAttack({
+  from, to, color, pulses, chargeMs, beamMs, fadeMs,
+}: {
+  from: THREE.Vector3
+  to: THREE.Vector3
+  color: string
+  pulses: number
+  chargeMs: number
+  beamMs: number
+  fadeMs: number
+}) {
+  const chargeRef = useRef<THREE.Mesh>(null)
+  const beamGroupRef = useRef<THREE.Group>(null)
   const start = useRef<number | null>(null)
-  useFrame((state) => {
+  const lightColor = useMemo(() => new THREE.Color(color), [color])
+  const cycleMs = chargeMs + beamMs
+  const totalMs = cycleMs * pulses
+
+  useProfiledFrame('disparos', (state) => {
     if (start.current === null) start.current = state.clock.elapsedTime
     const elapsedMs = (state.clock.elapsedTime - start.current) * 1000
-    const holdUntil = duration * 0.35
-    const fade = elapsedMs <= holdUntil ? 1 : Math.max(0, 1 - (elapsedMs - holdUntil) / (duration - holdUntil))
-    setGroupFade(groupRef.current, fade)
-    if (flashRef.current) {
-      const mat = flashRef.current.material as THREE.MeshBasicMaterial
-      mat.opacity = fade
+    // One overall fade at the very end, so the last beam dies out instead of
+    // being cut off mid-shot.
+    const tail = elapsedMs <= totalMs
+      ? 1
+      : Math.max(0, 1 - (elapsedMs - totalMs) / fadeMs)
+    const live = elapsedMs < totalMs
+    const inCycle = elapsedMs % cycleMs
+    const charging = live && inCycle < chargeMs
+    const firing = live && !charging
+
+    // Squared, so the ball creeps at first and rushes at the end. A linear
+    // swell reads as an object being scaled; this reads as something
+    // building up to letting go.
+    const chargeT = charging ? inCycle / chargeMs : 0
+    const grow = chargeT * chargeT
+    if (chargeRef.current) {
+      chargeRef.current.visible = charging
+      chargeRef.current.scale.setScalar(0.2 + grow * 0.8)
+      const mat = chargeRef.current.material as THREE.MeshBasicMaterial
+      mat.opacity = (0.3 + grow * 0.7) * tail
+    }
+
+    if (beamGroupRef.current) beamGroupRef.current.visible = firing && tail > 0
+    setGroupFade(beamGroupRef.current, tail)
+
+    // Builds with the charge and spikes on release, rather than being on
+    // or off: this is the light the shooter's own mech is lit by.
+    const beamT = firing ? (inCycle - chargeMs) / beamMs : 0
+    const level = charging ? grow * 3.5 : (1 - beamT * 0.35) * 6
+    setPoolLight(
+      LIGHT_MUZZLE, from.x, from.y, from.z,
+      lightColor, level * ATTACK_LIGHT_INTENSITY_SCALE * tail, ATTACK_LIGHT_DISTANCE,
+    )
+    // The far end is lit only while the beam is actually connected -- a
+    // target lit during the charge would give the shot away before it left.
+    if (firing) {
+      setPoolLight(
+        LIGHT_IMPACT, to.x, to.y, to.z,
+        lightColor, 5 * ATTACK_LIGHT_INTENSITY_SCALE * tail, ATTACK_LIGHT_DISTANCE,
+      )
     }
   })
+
   return (
-    <group ref={groupRef}>
-      <StraightBeam
-        from={from} to={to} color={color}
-        coreRadius={(thick ? 0.045 : 0.03) * MECH_FACTOR} glowRadius={(thick ? 0.13 : 0.08) * MECH_FACTOR}
-      />
-      <GlowSprite meshRef={flashRef} color={color} size={(thick ? 0.9 : 0.6) * MECH_FACTOR} />
-      {/* Lights the shooter's own mech, not just the impact — a laser/PPC
-          has no separate travel phase to hang a light on (it snaps in
-          instantly), so one light at the muzzle for this beam's whole
-          brief life is the natural fit. */}
-      <DynamicLight
-        position={[from.x, from.y, from.z]} color={color}
-        intensity={(thick ? 6 : 4) * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE}
-      />
-      <DynamicLight
-        position={[to.x, to.y, to.z]} color={color}
-        intensity={(thick ? 6 : 4) * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE}
-      />
+    <group>
+      <group position={[from.x, from.y, from.z]}>
+        <GlowSprite meshRef={chargeRef} color={color} size={0.75 * MECH_FACTOR} />
+      </group>
+      <group ref={beamGroupRef}>
+        <StraightBeam
+          from={from} to={to} color={color}
+          coreRadius={0.03 * MECH_FACTOR} glowRadius={0.08 * MECH_FACTOR}
+        />
+      </group>
+    </group>
+  )
+}
+
+/** PPC — a bolt of charged particles with an electric arc.
+ *
+ * Real user spec: "el PPC, que sera un bolo de particulas con arco
+ * electrico". So this shot is a physical thing, not a beam: a churning
+ * ball of plasma that visibly crosses the board (it is the one energy
+ * weapon in this file with a real travel speed — see CATEGORY_SPEED),
+ * wrapped in lightning and dragging an ionised tail behind it. That is
+ * also what keeps it from just reading as a blue laser.
+ *
+ * Three primitives share one moving frame:
+ *  - the HEAD, a white-hot billboard core inside a wider coloured halo;
+ *  - the PARTICLES, a Points cloud spiralling around the flight axis and
+ *    streaming off the back, widening and dimming as it disperses;
+ *  - the ARC, jagged filaments that leap across the head and trail back
+ *    down the channel it just flew through.
+ *
+ * On arrival the same three flip into an impact burst rather than being
+ * swapped for different objects: the head expands and dies, the sparks
+ * spray outward and droop under their own weight, and the arcs fan out
+ * across the ground where the charge dumps.
+ *
+ * Three lights, because a bolt this bright that lit nothing would look
+ * painted on: one at the muzzle for the launch, one riding WITH the bolt
+ * so it sweeps the terrain it passes over, and one at the impact. */
+function PpcAttack({
+  from, to, color, travelMs, tailMs,
+}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; tailMs: number }) {
+  const headRef = useRef<THREE.Group>(null)
+  const coreRef = useRef<THREE.Mesh>(null)
+  const haloRef = useRef<THREE.Mesh>(null)
+  const pointsRef = useRef<THREE.Points>(null)
+  const arcsRef = useRef<THREE.LineSegments>(null)
+  const start = useRef<number | null>(null)
+
+  // The flight axis and a perpendicular basis on it, fixed for the whole
+  // shot: everything below (the swirl, the tail, the cage) is expressed
+  // in this frame rather than in world axes, so the effect looks the same
+  // whether the shot runs north-south or straight up a hill.
+  const path = useMemo(() => {
+    const dir = new THREE.Vector3().subVectors(to, from)
+    const dist = dir.length()
+    dir.multiplyScalar(dist > 1e-4 ? 1 / dist : 0)
+    const u = new THREE.Vector3().crossVectors(dir, Math.abs(dir.y) < 0.9 ? UP_AXIS : SIDE_AXIS).normalize()
+    const v = new THREE.Vector3().crossVectors(dir, u).normalize()
+    return { dir, dist, u, v }
+  }, [from, to])
+
+  // Each particle keeps its own place in the swirl: an angle around the
+  // flight axis, its own spin rate and direction, a radius, and a
+  // position in the shed cycle (`age`, running 0..1 and wrapping) so the
+  // cloud continuously streams off the back instead of being a rigid
+  // blob dragged along. `burst` is the direction it flies on impact.
+  const seeds = useMemo(() => Array.from({ length: PPC_PARTICLES }, () => {
+    const burst = new THREE.Vector3(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1)
+    if (burst.lengthSq() < 1e-4) burst.set(0, 1, 0)
+    burst.normalize()
+    return {
+      angle: Math.random() * Math.PI * 2,
+      spin: (Math.random() < 0.5 ? -1 : 1) * (3 + Math.random() * 5),
+      radius: (0.1 + Math.random() * 0.5) * MECH_FACTOR,
+      age: Math.random(),
+      rate: 1.5 + Math.random() * 2.5,
+      burst,
+    }
+  }), [])
+
+  // Seeded at the muzzle rather than at zero: an all-zeros buffer would
+  // put one frame of the cloud and the arcs at the world origin before
+  // the first useFrame ever runs.
+  const particlePos = useMemo(() => {
+    const arr = new Float32Array(PPC_PARTICLES * 3)
+    for (let i = 0; i < PPC_PARTICLES; i++) arr.set([from.x, from.y, from.z], i * 3)
+    return arr
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const particleCol = useMemo(() => new Float32Array(PPC_PARTICLES * 3), [])
+  const arcPos = useMemo(() => {
+    const arr = new Float32Array(PPC_ARC_STRANDS * PPC_ARC_SEGMENTS * 2 * 3)
+    for (let i = 0; i < arr.length; i += 3) arr.set([from.x, from.y, from.z], i)
+    return arr
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const baseColor = useMemo(() => new THREE.Color(color), [color])
+
+  useProfiledFrame('disparos', (state) => {
+    if (start.current === null) start.current = state.clock.elapsedTime
+    const t = state.clock.elapsedTime - start.current
+    const elapsedMs = t * 1000
+    const travelT = Math.min(1, elapsedMs / travelMs)
+    const flying = elapsedMs < travelMs
+    const impactT = flying ? 0 : Math.min(1, (elapsedMs - travelMs) / tailMs)
+    // Squared, so the burst dies fast at first and lingers faintly — a
+    // linear fade reads as a light being turned down by hand.
+    const die = (1 - impactT) * (1 - impactT)
+
+    ppcBolt.lerpVectors(from, to, travelT)
+    // The tail can only be as long as the bolt has actually flown, or at
+    // launch it would stick out through the back of the mech.
+    const tailLen = Math.min(PPC_TAIL_LEN, travelT * path.dist)
+
+    // ---- head
+    if (headRef.current) headRef.current.position.copy(flying ? ppcBolt : to)
+    if (haloRef.current) {
+      haloRef.current.scale.setScalar(flying ? 1 + Math.sin(t * 38) * 0.1 : 1 + impactT * 3)
+      ;(haloRef.current.material as THREE.MeshBasicMaterial).opacity = flying ? 0.85 : 0.85 * die
+    }
+    if (coreRef.current) {
+      coreRef.current.scale.setScalar(flying ? 1 : 1 + impactT * 1.8)
+      ;(coreRef.current.material as THREE.MeshBasicMaterial).opacity = flying ? 1 : die
+    }
+
+    // ---- particles
+    for (let i = 0; i < PPC_PARTICLES; i++) {
+      const seed = seeds[i]
+      let px: number, py: number, pz: number, bright: number, hot: number
+      if (flying) {
+        const age = (seed.age + t * seed.rate) % 1
+        const ang = seed.angle + t * seed.spin
+        // Widens as it goes back: this is plasma being shed, so it
+        // disperses behind the head instead of staying a tidy sleeve.
+        const r = seed.radius * (0.45 + age * 1.6)
+        const axial = -age * tailLen
+        const cos = Math.cos(ang) * r
+        const sin = Math.sin(ang) * r
+        px = ppcBolt.x + path.u.x * cos + path.v.x * sin + path.dir.x * axial
+        py = ppcBolt.y + path.u.y * cos + path.v.y * sin + path.dir.y * axial
+        pz = ppcBolt.z + path.u.z * cos + path.v.z * sin + path.dir.z * axial
+        bright = (1 - age) * (1 - age)
+        hot = Math.max(0, 1 - age * 2.5)
+      } else {
+        const reach = impactT * 2.6 * MECH_FACTOR
+        px = to.x + seed.burst.x * reach
+        // Sparks are thrown out and then fall — without the droop the
+        // burst reads as an expanding sphere, which is an explosion, not
+        // a shower of hot debris.
+        py = to.y + seed.burst.y * reach - impactT * impactT * 1.8 * MECH_FACTOR
+        pz = to.z + seed.burst.z * reach
+        bright = die
+        hot = Math.max(0, 1 - impactT * 2)
+      }
+      const j = i * 3
+      particlePos[j] = px
+      particlePos[j + 1] = py
+      particlePos[j + 2] = pz
+      // The freshest particles read white-hot and settle into the
+      // weapon's own blue as they age. With additive blending, scaling
+      // the vertex colour IS the fade — there is no per-point alpha.
+      particleCol[j] = (baseColor.r + (1 - baseColor.r) * hot) * bright
+      particleCol[j + 1] = (baseColor.g + (1 - baseColor.g) * hot) * bright
+      particleCol[j + 2] = (baseColor.b + (1 - baseColor.b) * hot) * bright
+    }
+    if (pointsRef.current) {
+      const geo = pointsRef.current.geometry
+      geo.attributes.position.needsUpdate = true
+      geo.attributes.color.needsUpdate = true
+    }
+
+    // ---- arc
+    const phase = Math.floor(t * PPC_ARC_HZ)
+    let off = 0
+    if (flying) {
+      for (let i = 0; i < PPC_CAGE_STRANDS; i++) {
+        // Leaps from just ahead of the head to just behind it: this is
+        // what makes the bolt crackle rather than merely glow.
+        ppcA.copy(ppcBolt).addScaledVector(path.dir, PPC_HEAD * 1.1)
+        ppcB.copy(ppcBolt).addScaledVector(path.dir, -PPC_HEAD * 1.7)
+        off = writeArc(arcPos, off, ppcA, ppcB, PPC_ARC_SEGMENTS, PPC_HEAD * 1.5, phase * 7.3 + i * 19.7)
+      }
+      for (let i = 0; i < PPC_TAIL_STRANDS; i++) {
+        ppcA.copy(ppcBolt)
+        ppcB.copy(ppcBolt).addScaledVector(path.dir, -tailLen)
+        off = writeArc(arcPos, off, ppcA, ppcB, PPC_ARC_SEGMENTS, PPC_HEAD * 1.2, phase * 11.9 + i * 31.1 + 100)
+      }
+    } else {
+      // The charge dumps where it lands and fans out along the ground,
+      // so the impact arcs spread in the horizontal plane rather than in
+      // the flight frame the travelling ones used.
+      const spread = (0.9 + impactT * 2.4) * MECH_FACTOR
+      for (let i = 0; i < PPC_ARC_STRANDS; i++) {
+        const ang = (i / PPC_ARC_STRANDS) * Math.PI * 2 + hash01(i * 3.1) * 0.9
+        ppcA.copy(to)
+        ppcB.set(to.x + Math.cos(ang) * spread, to.y + 0.3 * MECH_FACTOR, to.z + Math.sin(ang) * spread)
+        off = writeArc(arcPos, off, ppcA, ppcB, PPC_ARC_SEGMENTS, PPC_HEAD * 0.9, phase * 5.7 + i * 23.3)
+      }
+    }
+    if (arcsRef.current) {
+      arcsRef.current.geometry.attributes.position.needsUpdate = true
+      ;(arcsRef.current.material as THREE.LineBasicMaterial).opacity = flying ? 0.95 : 0.95 * die
+    }
+
+    // ---- lights
+    const launch = Math.max(0, 1 - elapsedMs / (travelMs * 0.35))
+    if (launch > 0) {
+      setPoolLight(
+        LIGHT_MUZZLE, from.x, from.y, from.z,
+        baseColor, 7 * ATTACK_LIGHT_INTENSITY_SCALE * launch, ATTACK_LIGHT_DISTANCE,
+      )
+    }
+    if (flying) {
+      // Rides along with the bolt, sweeping the terrain it passes over.
+      setPoolLight(
+        LIGHT_TRAVEL, ppcBolt.x, ppcBolt.y, ppcBolt.z,
+        baseColor, 6 * ATTACK_LIGHT_INTENSITY_SCALE, ATTACK_LIGHT_DISTANCE,
+      )
+    } else {
+      setPoolLight(
+        LIGHT_IMPACT, to.x, to.y, to.z,
+        baseColor, 9 * ATTACK_LIGHT_INTENSITY_SCALE * die, ATTACK_LIGHT_DISTANCE,
+      )
+    }
+  })
+
+  return (
+    <group>
+      <group ref={headRef} position={[from.x, from.y, from.z]}>
+        <GlowSprite meshRef={haloRef} color={color} size={PPC_HEAD * 3.4} />
+        <GlowSprite meshRef={coreRef} color="#ffffff" size={PPC_HEAD * 1.5} />
+      </group>
+      {/* Both of these are written in WORLD space every frame, so their
+          own bounding spheres are meaningless and the renderer would
+          happily cull them while they are still on screen. */}
+      <points ref={pointsRef} frustumCulled={false}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[particlePos, 3]} />
+          <bufferAttribute attach="attributes-color" args={[particleCol, 3]} />
+        </bufferGeometry>
+        <pointsMaterial
+          map={getGlowTexture()} size={0.17 * MECH_FACTOR} sizeAttenuation
+          vertexColors transparent depthWrite={false} blending={THREE.AdditiveBlending}
+        />
+      </points>
+      <lineSegments ref={arcsRef} frustumCulled={false}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[arcPos, 3]} />
+        </bufferGeometry>
+        <lineBasicMaterial
+          color={color} transparent opacity={0.95}
+          depthWrite={false} blending={THREE.AdditiveBlending}
+        />
+      </lineSegments>
     </group>
   )
 }
@@ -296,10 +790,10 @@ function TracerAttack({
 }: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; tailMs: number }) {
   const beamGroupRef = useRef<THREE.Group>(null)
   const muzzleRef = useRef<THREE.Mesh>(null)
-  const muzzleLightRef = useRef<THREE.PointLight>(null)
   const start = useRef<number | null>(null)
+  const lightColor = useMemo(() => new THREE.Color(color), [color])
   const lastSeg = useRef({ from, to })
-  useFrame((state) => {
+  useProfiledFrame('disparos', (state) => {
     if (start.current === null) start.current = state.clock.elapsedTime
     const elapsedMs = (state.clock.elapsedTime - start.current) * 1000
     const travelT = Math.min(1, elapsedMs / travelMs)
@@ -320,7 +814,12 @@ function TracerAttack({
     // Impact-end illumination is already covered by ImpactFlash's own
     // light (AttackEffect renders one alongside this on a real hit) —
     // this one only needs to cover the muzzle's own brief flash.
-    if (muzzleLightRef.current) muzzleLightRef.current.intensity = 3 * ATTACK_LIGHT_INTENSITY_SCALE * muzzleFade
+    if (muzzleFade > 0) {
+      setPoolLight(
+        LIGHT_MUZZLE, from.x, from.y, from.z,
+        lightColor, 3 * ATTACK_LIGHT_INTENSITY_SCALE * muzzleFade, ATTACK_LIGHT_DISTANCE,
+      )
+    }
     setGroupFade(beamGroupRef.current, postFade)
     lastSeg.current = { from: segFrom, to: segTo }
   })
@@ -333,81 +832,103 @@ function TracerAttack({
         />
       </group>
       <GlowSprite meshRef={muzzleRef} color={color} size={0.5 * MECH_FACTOR} />
-      <DynamicLight
-        lightRef={muzzleLightRef} position={[from.x, from.y, from.z]} color={color}
-        intensity={3 * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE}
-      />
     </group>
   )
 }
 
-/** SRM/LRM/etc — a small cluster of glowing projectiles launches from
- * the attacker and arcs to the target over the effect's full duration,
- * each with a short fading trail, converging into a cluster of impact
- * flashes on arrival — the "barrage" the user specifically asked for,
- * distinct from a single beam/tracer. */
+/** A missile salvo — several bodies launching from the attacker, flying
+ * their weapon's own profile, and converging into a cluster of impact
+ * flashes. Which profile (and which model) comes from `kind`: see
+ * MISSILE_KINDS, and weaponEffectCategory for how a weapon picks one. */
 function MissileAttack({
-  from, to, color, travelMs, count,
-}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; count: number }) {
+  from, to, color, travelMs, kind, count,
+}: {
+  from: THREE.Vector3
+  to: THREE.Vector3
+  color: string
+  travelMs: number
+  kind: MissileKind
+  count: number
+}) {
+  const distance = from.distanceTo(to)
   const seeds = useMemo(
     () => Array.from({ length: count }, (_, i) => ({
-      lateral: (i - (count - 1) / 2) * 0.12 + (Math.random() - 0.5) * 0.05,
-      arcHeight: 0.5 + Math.random() * 0.4,
-      // Staggered launch, as a fraction of the real travel time (in
-      // SECONDS — Missile's useFrame compares delay directly against
-      // clock.elapsedTime) rather than a fixed offset, so a long/slow
-      // flight and a short/fast one both stagger proportionally instead
-      // of a fast volley bunching into one simultaneous clump.
-      delay: (i / count) * (travelMs / 1000) * 0.2,
+      // Fanned across the salvo's own spread, so a rack of eight arrives
+      // as a formation rather than as one missile drawn eight times.
+      lateral: count > 1
+        ? ((i / (count - 1)) - 0.5) * kind.spread + (Math.random() - 0.5) * kind.spread * 0.25
+        : (Math.random() - 0.5) * kind.spread * 0.25,
+      // Proportional to the shot, so a long lob rises like a long lob and
+      // a point-blank one barely leaves the barrel.
+      arcHeight: distance * kind.arcFraction * (0.85 + Math.random() * 0.3),
+      // Staggered launch as a fraction of the real travel time (in
+      // SECONDS — Missile's useFrame compares this against
+      // clock.elapsedTime), so a long slow flight and a short fast one
+      // both stagger proportionally instead of bunching up.
+      delay: (i / count) * (travelMs / 1000) * 0.22,
     })),
-    [count, travelMs],
+    [count, travelMs, kind, distance],
   )
   return (
     <group>
       {seeds.map((s, i) => (
-        <Missile key={i} from={from} to={to} color={color} travelMs={travelMs} {...s} />
+        <Missile key={i} from={from} to={to} color={color} travelMs={travelMs} kind={kind} {...s} />
       ))}
     </group>
   )
 }
 
-// Real .glb missile model (public/models, CREDITS.md — Sketchfab "Missile
-// & Bomb Collection - Fighter Jets - Free" by bohmerang, CC-BY-NC-SA
-// 4.0, used as an explicit placeholder pending a commercial-friendly
-// replacement — see CREDITS.md) replacing the earlier flat glow-sprite
-// missile head, per explicit request for "modelos 3d de misiles
-// realistas" after the existing laser/missile effects read as "un poco
-// cutres". The AGM-114 Hellfire mesh specifically, extracted from a
-// 16-missile collection via a one-off gltf-transform script (kept
-// alongside the model's own CREDITS.md entry for provenance) — the
-// user's own pick as "el mejor candidato" after reviewing the set.
-const MISSILE_MODEL_URL = '/models/missile-hellfire.glb'
-// World units, nose to tail — small and fast-moving on screen, so this
-// only needs to read as "a real missile shape" at a glance, not survive
-// close scrutiny the way a stationary decoration would.
-const MISSILE_LENGTH = 0.4 * MECH_FACTOR
+/** How many bodies a rack actually puts in the air, read off the weapon's
+ * own name ("LRM 20", "SRM 6", "Rocket Launcher 10") and then capped: past
+ * a certain point more missiles stop reading as more missiles and just
+ * cost draw calls. */
+function missileCount(weaponName: string, kind: MissileKind): number {
+  const match = weaponName.match(/(\d+)\s*$/)
+  const racked = match ? parseInt(match[1], 10) : 5
+  return Math.max(2, Math.min(kind.maxCount, racked))
+}
 
-// Cached once from the shared source scene: the uniform scale factor
-// that maps the model's own longest raw dimension (its nose-to-tail
-// length — confirmed via bounding-box inspection to be its LOCAL +Z
-// axis, not +Y like this file's other primitives default to) to
-// MISSILE_LENGTH, plus the centering offset and which raw axis that was.
-// Same "compute once, apply per-instance scaled by each clone's own
-// final scale" split TerrainDecor.tsx's RealRock/RealBuilding use, for
-// the identical reason: baking a raw-unit offset into the shared scene
-// at module scale 1 only cancels out correctly when every instance
-// happens to share that same scale, which these don't in general even
-// though today only one MISSILE_LENGTH is ever used.
-let missileScale: number | null = null
-let missileOffset: THREE.Vector3 | null = null
-function normalizeMissileSceneOnce(scene: THREE.Group) {
-  if (missileScale !== null) return
+// Real .glb missile models (public/models, CREDITS.md — Sketchfab
+// "Missile & Bomb Collection - Fighter Jets - Free" by bohmerang,
+// CC-BY-NC-SA 4.0, an explicit placeholder pending a commercial-friendly
+// replacement), replacing the earlier flat glow-sprite missile head after
+// the user asked for "modelos 3d de misiles realistas".
+//
+// Three of the pack's sixteen models, each picked by the user for a
+// specific weapon after reviewing renders of the whole set. They are
+// extracted with their long axis on +Z and their origin at their own
+// centre, which is the shape Missile's own orientation code expects.
+// Cached per URL: the uniform scale that maps a model's own nose-to-tail
+// length (its local +Z, baked in at extraction) to the length this file
+// wants, plus the centring offset. Same "normalise once, apply per
+// instance" split TerrainDecor's RealRock/RealBuilding use.
+const missileNorm = new Map<string, { scale: number; offset: THREE.Vector3 }>()
+
+// Real user request: "los misiles pasando cerca de un mech, su propulsion
+// generará una luz que se reflejará en el mech". ONE light for the whole
+// salvo, not one per missile: they fly in a tight formation, so five lights
+// bought five times the shader-recompile cost (see LightPool.tsx) for a
+// glow the eye reads as a single moving source anyway. Every missile still
+// in the air writes the same slot each frame, so the light rides whichever
+// of them is last to land.
+const MISSILE_LIGHT_COLOR = new THREE.Color('#ff9a3b')
+// The models leave the extractor with their nose on +Z (see extract.html).
+const MISSILE_FORWARD = new THREE.Vector3(0, 0, 1)
+// Scratch vectors for the flight maths — a salvo recomputing its path three
+// times a frame allocated a Vector3 on every one of them.
+const missileP = new THREE.Vector3()
+const missileA = new THREE.Vector3()
+const missileB = new THREE.Vector3()
+const missileDir = new THREE.Vector3()
+
+function normalizeMissileSceneOnce(scene: THREE.Group, url: string, length: number) {
+  if (missileNorm.has(url)) return
   const box = new THREE.Box3().setFromObject(scene)
   const size = new THREE.Vector3()
   box.getSize(size)
-  missileScale = size.z > 0 ? MISSILE_LENGTH / size.z : 1
-  missileOffset = new THREE.Vector3()
-  box.getCenter(missileOffset)
+  const offset = new THREE.Vector3()
+  box.getCenter(offset)
+  missileNorm.set(url, { scale: size.z > 0 ? length / size.z : 1, offset })
   scene.traverse((obj) => {
     if (obj instanceof THREE.Mesh) {
       obj.castShadow = false
@@ -417,46 +938,43 @@ function normalizeMissileSceneOnce(scene: THREE.Group) {
 }
 
 /** The missile body itself — a `<group>` whose own rotation callers set
- * every frame to point its LOCAL +Z (the model's real nose-to-tail
- * axis, confirmed by inspecting its bounding box) at the current travel
- * direction, the same way StraightBeam points a cylinder's local +Y at
- * its own direction via alignedTransform above. Position is likewise
- * fully caller-driven (Missile's own useFrame), not managed here. */
-function RealMissile() {
-  const { scene } = useGLTF(MISSILE_MODEL_URL)
-  normalizeMissileSceneOnce(scene)
+ * every frame to point its LOCAL +Z (the model's real nose-to-tail axis)
+ * at the current travel direction, the same way StraightBeam points a
+ * cylinder's local +Y at its own direction via alignedTransform above.
+ * Position is likewise fully caller-driven (Missile's own useFrame). */
+function RealMissile({ kind }: { kind: MissileKind }) {
+  const { scene } = useGLTF(kind.url)
+  normalizeMissileSceneOnce(scene, kind.url, kind.length)
   const instance = useMemo(() => {
     const clone = scene.clone(true)
-    const s = missileScale ?? 1
+    const norm = missileNorm.get(kind.url)
+    const s = norm?.scale ?? 1
     clone.scale.setScalar(s)
-    if (missileOffset) {
-      clone.position.set(-missileOffset.x * s, -missileOffset.y * s, -missileOffset.z * s)
+    if (norm) {
+      clone.position.set(-norm.offset.x * s, -norm.offset.y * s, -norm.offset.z * s)
     }
-    // The model's raw local geometry sits far from its own node origin
-    // (a leftover offset from the multi-missile collection it was
-    // extracted from — see CREDITS.md), which we cancel out above via
-    // position/scale on this wrapper. But three.js computes frustum-
-    // culling bounding spheres from the MESH's raw local geometry before
-    // that cancellation is conceptually "applied" from its perspective,
-    // and a fast-moving small object like this can end up wrongly culled
-    // as it crosses the camera frustum boundary. Not worth chasing
-    // further for an object this small/cheap — just skip culling.
+    // three.js computes a frustum-culling bounding sphere from the MESH's
+    // raw local geometry, before the centring above is conceptually
+    // applied from its point of view, so a small fast object like this can
+    // be wrongly culled as it crosses the frustum edge. Not worth chasing
+    // for something this cheap — just skip culling.
     clone.traverse((obj) => {
       if (obj instanceof THREE.Mesh) obj.frustumCulled = false
     })
     return clone
-  }, [scene])
+  }, [scene, kind])
   return <primitive object={instance} />
 }
-useGLTF.preload(MISSILE_MODEL_URL)
+Object.values(MISSILE_KINDS).forEach((k) => useGLTF.preload(k.url))
 
 function Missile({
-  from, to, color, travelMs, lateral, arcHeight, delay,
+  from, to, color, travelMs, kind, lateral, arcHeight, delay,
 }: {
   from: THREE.Vector3
   to: THREE.Vector3
   color: string
   travelMs: number
+  kind: MissileKind
   lateral: number
   arcHeight: number
   delay: number
@@ -477,13 +995,13 @@ function Missile({
     return perp.multiplyScalar(lateral)
   }, [from, to, lateral])
 
-  const posAt = (t: number) => {
-    const base = new THREE.Vector3().lerpVectors(from, to, t).add(lateralOffset.clone().multiplyScalar(1 - t * 0.6))
-    base.y += Math.sin(Math.PI * t) * arcHeight
-    return base
+  const posAt = (t: number, out: THREE.Vector3) => {
+    out.lerpVectors(from, to, t).addScaledVector(lateralOffset, 1 - t * 0.6)
+    out.y += Math.sin(Math.PI * t) * arcHeight
+    return out
   }
 
-  useFrame((state) => {
+  useProfiledFrame('disparos', (state) => {
     if (start.current === null) start.current = state.clock.elapsedTime
     const elapsed = state.clock.elapsedTime - start.current - delay
     if (elapsed < 0) {
@@ -492,7 +1010,13 @@ function Missile({
     }
     const travelDuration = travelMs / 1000
     const t = Math.min(1, elapsed / travelDuration)
-    const pos = posAt(t)
+    const pos = posAt(t, missileP)
+    if (t < 1) {
+      setPoolLight(
+        LIGHT_TRAVEL, pos.x, pos.y, pos.z,
+        MISSILE_LIGHT_COLOR, 2.5 * ATTACK_LIGHT_INTENSITY_SCALE, ATTACK_LIGHT_DISTANCE * 0.6,
+      )
+    }
     if (headRef.current) {
       headRef.current.visible = t < 1
       headRef.current.position.copy(pos)
@@ -503,14 +1027,14 @@ function Missile({
       // t=0 since t-ε would go negative there.
       const tangentT0 = Math.max(0, t - 0.01)
       const tangentT1 = Math.min(1, t + 0.01)
-      const dir = new THREE.Vector3().subVectors(posAt(tangentT1), posAt(tangentT0))
-      if (dir.lengthSq() > 1e-8) {
-        headRef.current.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir.normalize())
+      missileDir.subVectors(posAt(tangentT1, missileA), posAt(tangentT0, missileB))
+      if (missileDir.lengthSq() > 1e-8) {
+        headRef.current.quaternion.setFromUnitVectors(MISSILE_FORWARD, missileDir.normalize())
       }
     }
     if (trailGroupRef.current) {
       const trailT = Math.max(0, t - 0.08)
-      const trailPos = posAt(trailT)
+      const trailPos = posAt(trailT, missileA)
       trailGroupRef.current.visible = t < 1 && t > 0.02
       const { mid, length, quat } = alignedTransform(trailPos, pos)
       trailGroupRef.current.position.copy(mid)
@@ -526,16 +1050,7 @@ function Missile({
   return (
     <>
       <group ref={headRef}>
-        <RealMissile />
-        {/* Real user request: "los misiles pasando cerca de un mech, su
-            propulsion generará una luz que se reflejará en el mech" — a
-            steady glow riding the missile's own head group, so it
-            tracks the flight path for free instead of re-deriving its
-            position each frame. */}
-        <DynamicLight
-          position={[0, 0, 0]} color="#ff9a3b"
-          intensity={2.5 * ATTACK_LIGHT_INTENSITY_SCALE} distance={ATTACK_LIGHT_DISTANCE * 0.6}
-        />
+        <RealMissile kind={kind} />
       </group>
       <group ref={trailGroupRef}>
         <mesh frustumCulled={false}>
@@ -596,7 +1111,7 @@ function TracerRound({
   const [impact, setImpact] = useState<THREE.Vector3 | null>(null)
   const target = useMemo(() => to.clone().add(spread), [to, spread])
 
-  useFrame((state) => {
+  useProfiledFrame('disparos', (state) => {
     if (start.current === null) start.current = state.clock.elapsedTime
     const elapsed = state.clock.elapsedTime - start.current - delay
     if (elapsed < 0) {
@@ -660,7 +1175,7 @@ function FlameParticle({
 }: { from: THREE.Vector3; to: THREE.Vector3; color: string; duration: number; delay: number; jitter: THREE.Vector3; size: number }) {
   const ref = useRef<THREE.Mesh>(null)
   const start = useRef<number | null>(null)
-  useFrame((state) => {
+  useProfiledFrame('disparos', (state) => {
     if (start.current === null) start.current = state.clock.elapsedTime
     const elapsed = state.clock.elapsedTime - start.current - delay
     if (elapsed < 0) {
@@ -759,8 +1274,9 @@ export function AttackEffect({
   // CATEGORY_SPEED) so a long shot visibly takes proportionally longer
   // instead of covering the whole board in the same fixed instant a shot
   // has to cross a bunch of tiles feel like it vanished after only a few
-  // of them. beam/ppc/flame have no real travel phase (energy weapons
-  // snap in instantly), so they keep a fixed lifetime regardless of range.
+  // of them. The PPC travels too — it fires a particle bolt, not a beam.
+  // beam/pulse/flame have no real travel phase (a laser snaps in
+  // instantly), so they keep a fixed lifetime regardless of range.
   const speed = CATEGORY_SPEED[category]
   const travelMs = speed != null
     ? Math.min(MAX_TRAVEL_MS, Math.max(MIN_TRAVEL_MS, (from.distanceTo(to) / speed) * 1000))
@@ -773,9 +1289,34 @@ export function AttackEffect({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [duration])
 
-  if (category === 'beam') return <BeamAttack from={from} to={to} color={color} duration={duration} thick={false} />
-  if (category === 'ppc') return <BeamAttack from={from} to={to} color={color} duration={duration} thick />
-  if (category === 'missile') return <MissileAttack from={from} to={to} color={color} travelMs={travelMs} count={5} />
+  if (category === 'beam') {
+    return (
+      <LaserAttack
+        from={from} to={to} color={color} pulses={1}
+        chargeMs={LASER_CHARGE_MS} beamMs={LASER_BEAM_MS} fadeMs={LASER_FADE_MS}
+      />
+    )
+  }
+  if (category === 'pulse') {
+    return (
+      <LaserAttack
+        from={from} to={to} color={color} pulses={PULSE_COUNT}
+        chargeMs={PULSE_CHARGE_MS} beamMs={PULSE_BEAM_MS} fadeMs={LASER_FADE_MS}
+      />
+    )
+  }
+  if (category === 'ppc') return <PpcAttack from={from} to={to} color={color} travelMs={travelMs} tailMs={IMPACT_TAIL_MS} />
+  if (category === 'missileArc' || category === 'missileDirect' || category === 'rocket') {
+    const kind = category === 'rocket'
+      ? MISSILE_KINDS.rocket
+      : (category === 'missileArc' ? MISSILE_KINDS.arc : MISSILE_KINDS.direct)
+    return (
+      <MissileAttack
+        from={from} to={to} color={color} travelMs={travelMs}
+        kind={kind} count={missileCount(data.weaponName, kind)}
+      />
+    )
+  }
   if (category === 'mg') return <MachineGunAttack from={from} to={to} color={color} travelMs={travelMs} />
   if (category === 'flame') return <FlameAttack from={from} to={to} color={color} duration={duration} />
   return (

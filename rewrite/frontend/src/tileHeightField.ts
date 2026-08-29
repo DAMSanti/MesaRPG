@@ -101,3 +101,42 @@ export function tileSurfaceAt(tile: HexTileData, lookup: Map<string, HexTileData
     TILE_CAP_RADIUS, meshOwnHeight, neighborHeights, neighborBands, TILE_RAMP_FRACTION, wx, wz, bandLow, bandHigh,
   ).heightAt
 }
+
+const HEIGHT_GRID = 12
+
+/** The tile's real ground height, sampled from a small precomputed grid
+ * instead of evaluated directly.
+ *
+ * `tileSurfaceAt` is not cheap — six edge ramps, three octaves of noise and a
+ * stamp lookup per call — and the carpet asks for hundreds of thousands of
+ * heights. Done directly that is tens of millions of trigonometric calls and
+ * several seconds of frozen page on load. A 13x13 grid per tile costs 169
+ * evaluations and answers every one of them by interpolation, and the error
+ * is centimetres on a surface whose own features are metres wide: invisible
+ * under a plant, and the exact same surface the tile's mesh draws at the
+ * points that matter. */
+export function makeTileHeightSampler(tile: HexTileData, lookup: Map<string, HexTileData>) {
+  const heightAt = tileSurfaceAt(tile, lookup)
+  const span = HEX_SIZE * 2
+  const step = span / HEIGHT_GRID
+  const grid = new Float32Array((HEIGHT_GRID + 1) * (HEIGHT_GRID + 1))
+  for (let j = 0; j <= HEIGHT_GRID; j++) {
+    for (let i = 0; i <= HEIGHT_GRID; i++) {
+      grid[j * (HEIGHT_GRID + 1) + i] = heightAt(-HEX_SIZE + i * step, -HEX_SIZE + j * step)
+    }
+  }
+  return (x: number, z: number): number => {
+    const fx = Math.min(HEIGHT_GRID - 0.0001, Math.max(0, (x + HEX_SIZE) / step))
+    const fz = Math.min(HEIGHT_GRID - 0.0001, Math.max(0, (z + HEX_SIZE) / step))
+    const i = fx | 0
+    const j = fz | 0
+    const tx = fx - i
+    const tz = fz - j
+    const row = j * (HEIGHT_GRID + 1) + i
+    const a = grid[row]
+    const b = grid[row + 1]
+    const c = grid[row + HEIGHT_GRID + 1]
+    const d = grid[row + HEIGHT_GRID + 2]
+    return (a + (b - a) * tx) * (1 - tz) + (c + (d - c) * tx) * tz
+  }
+}
