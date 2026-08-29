@@ -241,6 +241,25 @@ function GMViewBattletech() {
       .map((u) => [u.id, mechs.find((m) => m.id === u.mech_id)?.destroyed_reason ?? null] as const)
       .filter((entry): entry is [number, 'structural' | 'pilot_killed'] => entry[1] != null),
   )
+  // Real user request: a mech should lose the limb when its structure hits
+  // zero, "para todos los mechs que tengan las extremidades configuradas".
+  // Whether a model can show it is the model's business — Mech3D matches
+  // mesh names and does nothing for the single-mesh chassis — so this just
+  // reports the fact and lets the model answer for itself.
+  const severedLocationsByUnitId = new Map(
+    units.map((u) => {
+      const mech = mechs.find((m) => m.id === u.mech_id)
+      const severed = new Set(
+        (mech?.locations ?? [])
+          // structure_max 0 means the location does not exist on this
+          // chassis at all, which is not the same as having been blown off.
+          .filter((l) => l.structure_max > 0 && l.structure_current <= 0)
+          .map((l) => l.location),
+      )
+      return [u.id, severed] as const
+    }),
+  )
+
   // Fase D real user request: "los muertos no deberían tirar iniciativas"
   // — a pilot whose mech is already destroyed has nothing left to roll
   // for, same reasoning turns.py's own movement_order/target-list
@@ -1321,6 +1340,7 @@ function GMViewBattletech() {
                   proneUnitIds={proneUnitIds}
                   shutdownUnitIds={shutdownUnitIds}
                   destroyedReasonByUnitId={destroyedReasonByUnitId}
+                  severedLocationsByUnitId={severedLocationsByUnitId}
                   activeAttack={activeAttackVfx}
                   onAttackEffectDone={onAttackEffectDone}
                   onUnitWalkDone={heldMover.onUnitWalkDone}

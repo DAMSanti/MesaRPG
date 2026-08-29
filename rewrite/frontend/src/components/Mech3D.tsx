@@ -80,6 +80,10 @@ const MECH_COLOR_BOOST = 1.7
  */
 interface Mech3DProps {
   color: string
+  /** Location codes whose structure has reached 0. Any mesh named for one
+   * of them (see LIMB_MESH_NAMES) stops being drawn. Models that do not
+   * carry separate limb meshes ignore this entirely. */
+  severedLocations?: ReadonlySet<string>
   emissive?: string
   emissiveIntensity?: number
   chassis?: string | null
@@ -230,6 +234,45 @@ export const MODEL_CHEST_FRACTION = 0.6
 // paint job and 0 would show no tint at all. Kept low so it reads as a
 // faint wash rather than recoloring the mech outright.
 const FACTION_TINT_STRENGTH = 0.22
+
+/** Which mesh in a model is which BattleTech location.
+ *
+ * Real user request: "el modelo Jenner tiene las diferentes mallas para
+ * ruptura de extremidades, en el mechlab funciona bien, pero en el juego no
+ * pierde las extremidades cuando su estructura llega a 0" — and, on the
+ * scope: "tiene que funcionar para todos los mechs que tengan las
+ * extremidades configuradas, no solo para el Jenner, lo que pasa es que el
+ * Jenner es el unico que lo tiene ahora".
+ *
+ * So this is a CONVENTION, not a special case. A model whose meshes are
+ * split and named this way loses those limbs; a model that arrives as one
+ * mesh — which today is every chassis but the Jenner — simply has nothing
+ * matching and keeps its shape. Nothing needs a per-chassis table, and a
+ * newly split model works the day it lands.
+ *
+ * D/I are derecha/izquierda, the naming the Jenner already uses. The
+ * English spellings ride along so a model exported from an English rig
+ * works too, since the alternative is silently doing nothing.
+ *
+ * Matched lowercase and by whole name, never by substring: "BrazoI" must
+ * not match a mesh called "BrazoIzquierdoDetalle" by accident, and a torso
+ * must never be hideable — a mech with no torso is not a wreck, it is a
+ * hole. */
+const LIMB_MESH_NAMES: Record<string, readonly string[]> = {
+  LA: ['brazoi', 'leftarm', 'arm_l', 'armleft'],
+  RA: ['brazod', 'rightarm', 'arm_r', 'armright'],
+  LL: ['piernai', 'leftleg', 'leg_l', 'legleft'],
+  RL: ['piernad', 'rightleg', 'leg_r', 'legright'],
+}
+
+/** The location a mesh stands for, or null if it is not a severable limb. */
+function limbLocationOfMesh(name: string): string | null {
+  const key = name.trim().toLowerCase()
+  for (const [location, names] of Object.entries(LIMB_MESH_NAMES)) {
+    if (names.includes(key)) return location
+  }
+  return null
+}
 
 // A destroyed mech's own charred-wreck color (HexMap's own DEAD_CHAR_COLOR
 // — kept here, exported, as the one shared source both it and MechLabView's
@@ -631,7 +674,7 @@ export function useMechPbr(
 
 function Mech3DModel({
   color, emissive, emissiveIntensity, chassis, model, isMoving, movementType, jumpPhase, fallen, dead,
-  tintStrength, onLoaded, onSurfaceClick, playAnimation, onFootstep,
+  tintStrength, onLoaded, onSurfaceClick, playAnimation, onFootstep, severedLocations,
 }: Mech3DProps) {
   const url = resolveMechModelUrl(chassis, model)
   const { scene, animations } = useGLTF(url)
@@ -669,6 +712,27 @@ function Mech3DModel({
   // already reactive to those changes. See useMechPbr's own doc comment
   // on the option.
   useMechPbr(instance, { applyColorBoost: false })
+
+  // Blown-off limbs. Visibility rather than removal, because a location can
+  // come back: the map editor and an undone action both restore structure,
+  // and a mesh detached from the scene would need re-attaching in the right
+  // place in the hierarchy. Re-evaluated from scratch every time rather
+  // than toggled, so a mech that gets an arm back gets it back.
+  //
+  // Keyed on the set's CONTENTS, not the set itself — the views rebuild
+  // these maps on every poll, and depending on identity would walk the
+  // whole model several times a second for nothing.
+  const severedKey = severedLocations ? [...severedLocations].sort().join(',') : ''
+  useEffect(() => {
+    const severed = new Set(severedKey ? severedKey.split(',') : [])
+    instance.traverse((object) => {
+      const mesh = object as THREE.Mesh
+      if (!mesh.isMesh) return
+      const location = limbLocationOfMesh(mesh.name)
+      if (!location) return
+      mesh.visible = !severed.has(location)
+    })
+  }, [instance, severedKey])
 
   // Rigged curated assets (see the Blender envelope-weighting pipeline
   // documented in mechAssets.ts) ship "Idle" and "Walk" clips; HexMap's

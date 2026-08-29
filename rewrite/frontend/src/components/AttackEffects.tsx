@@ -164,7 +164,7 @@ const MISSILE_KINDS: Record<'arc' | 'direct' | 'rocket', MissileKind> = {
     url: '/models/missile-arc.glb',
     length: 0.42 * MECH_FACTOR,
     arcFraction: 0.26,
-    speed: 3.4 * HEX_SIZE,
+    speed: 2.5 * HEX_SIZE,
     spread: 1.1 * MECH_FACTOR,
     maxCount: 8,
   },
@@ -173,7 +173,7 @@ const MISSILE_KINDS: Record<'arc' | 'direct' | 'rocket', MissileKind> = {
     url: '/models/missile-direct.glb',
     length: 0.5 * MECH_FACTOR,
     arcFraction: 0.035,
-    speed: 9 * HEX_SIZE,
+    speed: 6 * HEX_SIZE,
     spread: 0.7 * MECH_FACTOR,
     maxCount: 6,
   },
@@ -183,7 +183,7 @@ const MISSILE_KINDS: Record<'arc' | 'direct' | 'rocket', MissileKind> = {
     url: '/models/missile-rocket.glb',
     length: 0.38 * MECH_FACTOR,
     arcFraction: 0.09,
-    speed: 7.5 * HEX_SIZE,
+    speed: 5 * HEX_SIZE,
     spread: 1.6 * MECH_FACTOR,
     maxCount: 8,
   },
@@ -208,14 +208,18 @@ const CATEGORY_SPEED: Partial<Record<AttackEffectCategory, number>> = {
   rocket: MISSILE_KINDS.rocket.speed,
   // The PPC is the one energy weapon here that actually TRAVELS: what it
   // fires is a bolt of charged particles, so it has to be seen crossing
-  // the board or it is just a blue laser. Slower than a tracer (~0.25s
-  // per hex) precisely so the eye can follow the bolt and read the arc
-  // crackling around it.
-  ppc: 7 * HEX_SIZE,
+  // the board or it is just a blue laser. Slowed further on watching it
+  // ("tienen que ser algo mas lentos en el travel time, sobretodo el
+  // PPC") — 0,43s per hex now, slow enough to follow the bolt and read
+  // the arc crackling around it rather than catch a streak.
+  ppc: 4 * HEX_SIZE,
   mg: 13 * HEX_SIZE,
 }
 const MIN_TRAVEL_MS = 350
-const MAX_TRAVEL_MS = 3000
+// Raised alongside the slower speeds above: at 2,5 hex/s a long LRM lob
+// wants more than three seconds, and clamping it there put the salvo back
+// at the pace it was just slowed down from.
+const MAX_TRAVEL_MS = 4500
 // How long the impact flash/fade lingers after a traveling projectile
 // actually reaches its (real-hit or miss-offset) endpoint.
 const IMPACT_TAIL_MS = 300
@@ -1229,7 +1233,7 @@ const MIN_MISS_LATERAL = 0.8 * HEX_SIZE
  * duration has played out. Mounted fresh (a new `key`) per attack_result
  * by whichever caller renders it — see HexMap's own activeAttack prop. */
 export function AttackEffect({
-  data, onDone, onMissGround,
+  data, onDone, onMissGround, onImpact,
 }: {
   data: AttackEffectData
   onDone: () => void
@@ -1240,6 +1244,20 @@ export function AttackEffect({
    * mark there. Never fires on a hit (nothing to mark — the target
    * itself sold the impact). */
   onMissGround?: (pos: [number, number, number]) => void
+  /** Fires once, when the shot actually ARRIVES — not when it was
+   * launched and not when the whole effect finishes.
+   *
+   * Real user request: "el flash rojo que se muestra el FPV cuando recibe
+   * un hit, no debe salir cuando se resuelve si no cuando la animacion del
+   * ataque llega al objetivo". The server resolves an attack the moment it
+   * is declared, so anything driven off that fires while the missile is
+   * still in the air, and the cockpit shook before it was hit.
+   *
+   * What "arrives" means depends on the weapon, which is why this lives
+   * here rather than being a timer the caller guesses at: a missile
+   * arrives after its real travel time, a laser the moment the beam
+   * connects (after its charge), a flamer partway through its jet. */
+  onImpact?: () => void
 }) {
   const category = weaponEffectCategory(data.weaponName)
   const color = CATEGORY_COLOR[category]
@@ -1288,6 +1306,22 @@ export function AttackEffect({
     return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [duration])
+
+  // When this shot lands, per category. Beams and pulses connect the
+  // instant their charge finishes; a flame jet reads as arriving about
+  // halfway along; everything else travels, and travelMs already is the
+  // time it takes.
+  const impactAt = speed != null
+    ? travelMs
+    : (category === 'beam' || category === 'pulse'
+      ? LASER_CHARGE_MS
+      : duration * 0.5)
+  useEffect(() => {
+    if (!onImpact) return
+    const t = setTimeout(onImpact, impactAt)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [impactAt])
 
   if (category === 'beam') {
     return (

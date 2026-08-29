@@ -848,6 +848,7 @@ export function PlayerView() {
           lastAttack={lastAttack}
           lastMelee={lastMelee}
           unitWalked={unitWalked}
+          pilotHits={pilot?.hits}
           onClose={() => setShowFirstPerson(false)}
         />
       )}

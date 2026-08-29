@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { Suspense, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {Canvas} from '@react-three/fiber'
 import { useProgress } from '@react-three/drei'
 import { EffectComposer, Outline, Selection } from '@react-three/postprocessing'
@@ -26,6 +26,7 @@ import { useProfiledFrame } from './PerfProbe'
 import { PerfProbe } from './PerfProbe'
 import { PerfHud } from './PerfHud'
 import { FrameGate, useRenderPolicy } from './RenderPolicy'
+import { CockpitBlood } from './CockpitBlood'
 
 // Derived from Mech3D's own scale/proportions rather than a hardcoded
 // number, so bumping the model's size there doesn't quietly leave the
@@ -824,10 +825,13 @@ const PHASES: { key: Phase; label: string }[] = [
 ]
 
 export function FirstPersonView({
-  unit, mech, units, mechs, roundState, visibility, lastAttack, lastMelee, unitWalked, onClose,
+  unit, mech, units, mechs, roundState, visibility, lastAttack, lastMelee, unitWalked, pilotHits, onClose,
 }: {
   unit: Unit
   mech: Mech | null
+  /** This pilot's own wound track. Every increase paints another splatter
+   * on the cockpit glass — see CockpitBlood. */
+  pilotHits?: number
   units: Unit[]
   /** Every mech in the campaign, same list GMView/TableView/PlayerView
    * already fetch for their own sheets — only consulted here for
@@ -971,15 +975,35 @@ export function FirstPersonView({
   // seenAttackRef pins down whatever lastAttack already was the moment
   // THIS mount happened, so that first run is "already known," not new —
   // same fix as useAttackVfxQueue's own seenRef.
+  //
+  // The flash itself is NOT fired from here any more. Real user request:
+  // "el flash rojo que se muestra el FPV cuando recibe un hit, no debe
+  // salir cuando se resuelve si no cuando la animacion del ataque llega al
+  // objetivo." The server resolves a shot the instant it is declared, so
+  // this effect fired while the missile was still crossing the board and
+  // the cockpit shook before anything hit it. What fires it now is the
+  // board's own onAttackImpact, below.
+  //
+  // The seen-ref still matters for the same real user report it was added
+  // for — reopening the cockpit replayed the last hit — because the ref is
+  // what pins whatever lastAttack already was at mount.
   const seenAttackRef = useRef(lastAttack)
   useEffect(() => {
     if (lastAttack === seenAttackRef.current) return
     seenAttackRef.current = lastAttack
-    if (lastAttack?.hit && lastAttack.target_unit_id === unit.id) {
-      setHitFlashId((n) => n + 1)
-    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastAttack])
+
+  /** The board calls this when a shot's animation actually arrives.
+   *
+   * Matched on the target HEX rather than on a unit id, because that is
+   * what the board's own attack record carries — and a unit being hit is
+   * standing on its hex by definition. */
+  const onAttackImpact = useCallback((attack: { hit: boolean; targetQ: number; targetR: number }) => {
+    if (attack.hit && attack.targetQ === unit.q && attack.targetR === unit.r) {
+      setHitFlashId((n) => n + 1)
+    }
+  }, [unit.q, unit.r])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1480,6 +1504,25 @@ export function FirstPersonView({
       .map((u) => [u.id, mechs?.find((m) => m.id === u.mech_id)?.destroyed_reason ?? null] as const)
       .filter((entry): entry is [number, 'structural' | 'pilot_killed'] => entry[1] != null),
   )
+  // Real user request: a mech should lose the limb when its structure hits
+  // zero, "para todos los mechs que tengan las extremidades configuradas".
+  // Whether a model can show it is the model's business — Mech3D matches
+  // mesh names and does nothing for the single-mesh chassis — so this just
+  // reports the fact and lets the model answer for itself.
+  const severedLocationsByUnitId = new Map(
+    sceneUnits.map((u) => {
+      const mech = (mechs ?? []).find((m) => m.id === u.mech_id)
+      const severed = new Set(
+        (mech?.locations ?? [])
+          // structure_max 0 means the location does not exist on this
+          // chassis at all, which is not the same as having been blown off.
+          .filter((l) => l.structure_max > 0 && l.structure_current <= 0)
+          .map((l) => l.location),
+      )
+      return [u.id, severed] as const
+    }),
+  )
+
   // This cockpit's own fog of war (real user request: "esa niebla en el
   // FPV pero ahí solo mostrará lo que ve el personaje") — deliberately
   // NOT the team-wide union TableView uses, just this one unit's own
@@ -1666,6 +1709,8 @@ export function FirstPersonView({
                     proneUnitIds={proneUnitIds}
                     shutdownUnitIds={shutdownUnitIds}
                     destroyedReasonByUnitId={destroyedReasonByUnitId}
+                    onAttackImpact={onAttackImpact}
+                    severedLocationsByUnitId={severedLocationsByUnitId}
                     teamVisibleHexes={cockpitVisibleHexes}
                     fogSubtle
                   />
@@ -1699,6 +1744,11 @@ export function FirstPersonView({
               panel inside the canvas's z-index 0, underneath the whole
               cockpit HUD. Out here it is unfiltered and on top. */}
           <PerfHud />
+          {/* Outside .fp-canvas-wrap, for the same reason the profiler is:
+              that wrapper carries the tilt-shift's own filter, and blood
+              painted inside it would be colour-graded along with the world
+              instead of sitting on the glass in front of it. */}
+          <CockpitBlood hits={pilotHits ?? 0} />
           {enemies.map((enemy) => (
             <div
               key={enemy.unit_id}

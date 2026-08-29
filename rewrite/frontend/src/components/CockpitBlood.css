@@ -1,0 +1,50 @@
+/* Blood on the inside of the cockpit glass. Real user request: "cuando un
+   piloto de mech reciba daño, quiero que en FPV se genere un splatter de
+   sangre en el HUD, como si hubiese sangrado sobre el cristal." */
+
+.fp-blood {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  /* Above the cockpit HUD, because the blood is on the glass and the HUD is
+     behind it — the whole point of the ask. Under the CRT overlay (z 20)
+     so the scanlines still pass over it. */
+  z-index: 18;
+  /* Slightly multiplied into what is behind rather than laid flatly on top:
+     glass with blood on it darkens what you see through it. */
+  mix-blend-mode: multiply;
+  opacity: 0.92;
+}
+
+/* The moment of being hit: a red pulse from the edges. The splatter itself
+   lands away from the centre so it never blocks the sight line, which also
+   makes it easy to miss — this is what makes a wound register. */
+.fp-blood-flash {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 19;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse at center,
+    rgba(120, 0, 0, 0) 38%,
+    rgba(120, 0, 0, 0.5) 78%,
+    rgba(90, 0, 0, 0.8) 100%
+  );
+}
+
+.fp-blood-flash.hit {
+  animation: fp-blood-hit 0.85s ease-out;
+}
+
+@keyframes fp-blood-hit {
+  0% { opacity: 0; }
+  8% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fp-blood-flash.hit { animation: fp-blood-hit 0.85s steps(2, end); }
+}

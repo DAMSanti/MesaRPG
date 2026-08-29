@@ -919,6 +919,8 @@ type UnitMarkerProps = {
    * no explosion — see this component's own render body for exactly how
    * each looks. null/undefined = still standing. */
   destroyedReason?: 'structural' | 'pilot_killed' | null
+  /** Location codes whose structure has reached 0 — see Mech3D's own prop. */
+  severedLocations?: Set<string>
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void
   onPointerUp?: (e: ThreeEvent<PointerEvent>) => void
   /** Fires once this unit finishes walking a real leg of movement (the
@@ -956,7 +958,7 @@ type UnitMarkerProps = {
 
 const UnitMarker = memo(function UnitMarker({
   unit, elevation, terrain, terrainAt, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
-  prone, shutdown, destroyedReason, boardgameScale,
+  prone, shutdown, destroyedReason, severedLocations, boardgameScale,
   onPointerDown, onPointerUp, onWalkDone, onWalkStep, onFootstep,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
@@ -1359,6 +1361,7 @@ const UnitMarker = memo(function UnitMarker({
               color={color} chassis={unit.mech_chassis} model={unit.mech_model}
               isMoving={isMoving} movementType={movementType === 'run' ? 'run' : 'walk'}
               jumpPhase={jumpPhase} fallen={tiltProne} dead={destroyedReason != null}
+              severedLocations={severedLocations}
               emissive={glowEmissive} emissiveIntensity={glowEmissiveIntensity}
               tintStrength={tintStrength}
               onLoaded={() => forceMeshRegistered((n) => n + 1)}
@@ -2507,7 +2510,8 @@ export function HexMap({
   moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, walkMovementTypes, outlineUnitIds, heatByUnitId,
   proneUnitIds, shutdownUnitIds,
   destroyedReasonByUnitId,
-  teamVisibleHexes, fogSubtle, physics, cullRegions, activeAttack, onAttackEffectDone, onUnitWalkDone, onUnitWalkStep,
+  severedLocationsByUnitId,
+  teamVisibleHexes, fogSubtle, physics, cullRegions, activeAttack, onAttackEffectDone, onAttackImpact, onUnitWalkDone, onUnitWalkStep,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange, boardgameScale,
 }: {
   map: MapData
@@ -2608,6 +2612,10 @@ export function HexMap({
    * pattern as heatByUnitId/proneUnitIds above. See UnitMarker's own
    * destroyedReason doc comment for what each value renders as. */
   destroyedReasonByUnitId?: Map<number, 'structural' | 'pilot_killed'>
+  /** Per unit, the location codes whose structure has reached 0. Models
+   * built with separate limb meshes stop drawing those; the rest ignore it.
+   * Built by the view, same shape as every other per-unit map here. */
+  severedLocationsByUnitId?: Map<number, Set<string>>
   /** Real fog of war — "q,r" keys of every hex the CALLER considers
    * currently known (TableView: the whole player team's union, via
    * app/units.py's _team_visible_hexes; FirstPersonView: just this one
@@ -2642,6 +2650,9 @@ export function HexMap({
    * the same shot's VFX just sits there finished, or never resets in
    * time for the next one to mount cleanly). */
   onAttackEffectDone?: () => void
+  /** Fires when a shot's animation actually REACHES its target, which is
+   * not when the server resolved it — see AttackEffect's own onImpact. */
+  onAttackImpact?: (attack: ActiveAttackVfx) => void
   /** Fires once a unit's walk animation genuinely finishes (UnitMarker's
    * own onWalkDone, per the doc comment there) — real user request: the
    * movement phase's turn should hold on the mover until their mech
@@ -3040,6 +3051,7 @@ export function HexMap({
           prone={proneUnitIds?.has(unit.id) ?? false}
           shutdown={shutdownUnitIds?.has(unit.id) ?? false}
           destroyedReason={destroyedReasonByUnitId?.get(unit.id) ?? null}
+          severedLocations={severedLocationsByUnitId?.get(unit.id)}
           boardgameScale={boardgameScale}
           onWalkDone={() => onUnitWalkDone?.(unit.id)}
           onWalkStep={(index) => onUnitWalkStep?.(unit.id, index)}
@@ -3086,6 +3098,7 @@ export function HexMap({
             hit: activeAttack.hit,
           }}
           onDone={() => onAttackEffectDone?.()}
+          onImpact={() => onAttackImpact?.(activeAttack)}
           onMissGround={addImpactMark}
         />
         )
