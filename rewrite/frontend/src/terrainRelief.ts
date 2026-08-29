@@ -23,9 +23,42 @@ import { ELEVATION_STEP, HEX_SIZE, hexToWorld, worldToHex } from './hexMath'
  * lets the visual mesh, a mech's own feet, and a die's physics collider
  * all agree on the exact same ground height at any given point. */
 
+/** Direct-mapped cache for the lattice hash below.
+ *
+ * A CPU profile of a cockpit load put `hash2` at 11,7 seconds — 22% of the
+ * entire load, the single biggest thing in it. The cause is not the maths
+ * but the volume: building the tiles, the blend strips, the groove rings
+ * and every plant's ground height samples this noise millions of times.
+ *
+ * The hash CANNOT change. This file's own contract is that the JS and the
+ * generated GLSL stay numerically identical, because the visual mesh, a
+ * mech's feet and a die's collider all have to agree on the ground's height
+ * at a point; a faster integer hash would move every hill on the board.
+ * Caching keeps the numbers bit-for-bit while paying for them once.
+ *
+ * It works because `valueNoise2` — the only caller — always asks for the
+ * four INTEGER corners of a lattice cell, and neighbouring samples share
+ * those corners. Over a board the whole lattice is only a few thousand
+ * points across all octaves, so nearly every lookup is a hit.
+ *
+ * Direct-mapped with a stored key rather than a Map: a Map.get on a number
+ * key costs about as much as the Math.sin it would be replacing, which
+ * would have made the whole exercise pointless. */
+const HASH_CACHE_BITS = 16
+const HASH_CACHE_MASK = (1 << HASH_CACHE_BITS) - 1
+const hashCacheKey = new Float64Array(HASH_CACHE_MASK + 1).fill(NaN)
+const hashCacheValue = new Float64Array(HASH_CACHE_MASK + 1)
+
 function hash2(x: number, y: number): number {
+  // Exact for |x|, |y| < 2^21, which the lattice never approaches.
+  const key = x * 4194304 + y
+  const slot = (Math.imul(x, 73856093) ^ Math.imul(y, 19349663)) & HASH_CACHE_MASK
+  if (hashCacheKey[slot] === key) return hashCacheValue[slot]
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123
-  return s - Math.floor(s)
+  const value = s - Math.floor(s)
+  hashCacheKey[slot] = key
+  hashCacheValue[slot] = value
+  return value
 }
 
 function valueNoise2(x: number, y: number): number {

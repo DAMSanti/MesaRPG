@@ -1806,6 +1806,10 @@ function buildSkinBatches(
 const TerrainSkinRegion = memo(function TerrainSkinRegion({
   tiles, lookup, regionKey,
 }: { tiles: HexTileData[]; lookup: Map<string, HexTileData>; regionKey: string }) {
+  const regionSignature = useMemo(
+    () => tiles.map((t) => `${t.q},${t.r},${t.terrain},${t.elevation}`).join('|'),
+    [tiles],
+  )
   const [stamps, setStamps] = useState('')
   const stampsRef = useRef('')
   useProfiledFrame('terreno', () => {
@@ -1819,8 +1823,11 @@ const TerrainSkinRegion = memo(function TerrainSkinRegion({
 
   const batches = useMemo(
     () => buildSkinBatches(tiles, lookup, regionKey),
+    // Content, not identity — see HexMap's own tilesSignature. Rebuilding a
+    // region's merged grooves and blend strips is expensive enough that
+    // doing it on every poll was most of the cockpit's load time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tiles, lookup, regionKey, stamps],
+    [regionSignature, regionKey, stamps],
   )
 
   useEffect(() => () => {
@@ -2295,20 +2302,40 @@ function buildFogEdgeMap(shape: THREE.Shape, fade: number): {
   const cols = Math.max(8, Math.min(160, Math.ceil(width / target)))
   const rows = Math.max(8, Math.min(160, Math.ceil(height / target)))
 
+  // Flattened, with each segment's own bounding box alongside it. A CPU
+  // profile of a cockpit load put distanceToSegment at 1,4 seconds: this
+  // is texels x segments, and a merged fog region has hundreds of segments.
+  // The box lets a texel skip any segment that cannot possibly beat the
+  // best distance it has already found, which is nearly all of them.
+  const segments: number[] = []
+  for (const points of contours) {
+    for (let k = 0; k < points.length; k++) {
+      const a = points[k]
+      const b = points[(k + 1) % points.length]
+      segments.push(
+        a.x, a.y, b.x, b.y,
+        Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y),
+      )
+    }
+  }
+
   const data = new Uint8Array(cols * rows * 4)
   for (let j = 0; j < rows; j++) {
     // Texel CENTRES, so a sampled value stands for the position it is at.
     const y = minY + ((j + 0.5) / rows) * height
     for (let i = 0; i < cols; i++) {
       const x = minX + ((i + 0.5) / cols) * width
-      let best = Infinity
-      for (const points of contours) {
-        for (let k = 0; k < points.length; k++) {
-          const a = points[k]
-          const b = points[(k + 1) % points.length]
-          const d = distanceToSegment(x, y, a.x, a.y, b.x, b.y)
-          if (d < best) best = d
-        }
+      // Anything past the fade band reads as "fully inside" regardless, so
+      // the search can stop caring beyond it.
+      let best = fade
+      for (let o = 0; o < segments.length; o += 8) {
+        // Distance to the segment's own box is a lower bound on the
+        // distance to the segment.
+        const dx = x < segments[o + 4] ? segments[o + 4] - x : (x > segments[o + 6] ? x - segments[o + 6] : 0)
+        const dy = y < segments[o + 5] ? segments[o + 5] - y : (y > segments[o + 7] ? y - segments[o + 7] : 0)
+        if (dx * dx + dy * dy >= best * best) continue
+        const d = distanceToSegment(x, y, segments[o], segments[o + 1], segments[o + 2], segments[o + 3])
+        if (d < best) best = d
       }
       const o = (j * cols + i) * 4
       data[o] = Math.round(Math.min(1, best / fade) * 255)
@@ -2659,7 +2686,23 @@ export function HexMap({
   // maps, not just a style nit.
   const elevationAt = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.elevation])), [map.tiles])
   const terrainAt = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t.terrain])), [map.tiles])
-  const lookup = useMemo(() => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t])), [map.tiles])
+  // Keyed on the tiles' CONTENT, not on the array holding them. Every
+  // session poll hands this component a brand new array describing the very
+  // same board, and a lookup rebuilt from that is a new Map — which then
+  // invalidated every memo downstream that depends on it. Measured in the
+  // cockpit: a 420ms rebuild of the merged terrain repeating every two or
+  // three seconds for the whole load, 33s of blocked main thread against GM
+  // view's 7,6s. Same trick, and same reason, as GroundVegetation's own
+  // tilesKey.
+  const tilesSignature = useMemo(
+    () => map.tiles.map((t) => `${t.q},${t.r},${t.terrain},${t.elevation}`).join('|'),
+    [map.tiles],
+  )
+  const lookup = useMemo(
+    () => new Map(map.tiles.map((t) => [`${t.q},${t.r}`, t])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tilesSignature],
+  )
   // Which way the water runs, worked out from the shape of the whole board
   // at once — a tile cannot tell on its own whether it is a river or a pond.
   // See riverFlow.ts.

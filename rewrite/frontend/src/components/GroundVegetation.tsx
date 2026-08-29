@@ -1285,8 +1285,7 @@ export function GroundVegetation({ tiles, lookup, regionSpan, lodDistance }: {
     () => tiles.map((t) => `${t.q},${t.r},${t.terrain},${t.elevation}`).join('|'),
     [tiles],
   )
-  const urls = useMemo(() => [...new Set(Object.values(SPECIES).map((s) => s.url))], [])
-  const gltfs = useGLTF(urls) as unknown as { scene: THREE.Group }[]
+  const gltfs = useGLTF(SPECIES_URLS) as unknown as { scene: THREE.Group }[]
 
   // Keyed on the loaded scenes' own identities, NOT on the array `useGLTF`
   // returns. That array is rebuilt on every render even though the scenes
@@ -1300,7 +1299,7 @@ export function GroundVegetation({ tiles, lookup, regionSpan, lodDistance }: {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const variants = useMemo(() => {
     const byUrl = new Map<string, { scene: THREE.Group }>()
-    urls.forEach((u, i) => byUrl.set(u, gltfs[i]))
+    SPECIES_URLS.forEach((u, i) => byUrl.set(u, gltfs[i]))
     const map = new Map<SpeciesKey, Variant[]>()
     for (const key of Object.keys(SPECIES) as SpeciesKey[]) {
       const gltf = byUrl.get(SPECIES[key].url)
@@ -1582,4 +1581,14 @@ function VegetationBatch({ variant, matrices }: { variant: Variant; matrices: TH
 // Same preload convention the other .glb decor in this project uses — starts
 // the fetch as soon as the module is imported rather than when the first
 // tile that needs it renders.
-Object.values(SPECIES).forEach((s) => useGLTF.preload(s.url))
+/** The exact array the hook below asks for, hoisted so the preload and the
+ * hook are the SAME call.
+ *
+ * They were not, and it cost a second download of every model. drei caches
+ * a load under the argument it was given, so preloading each url as a
+ * string filled cache entries that a later `useGLTF(array)` never looked
+ * at: measured on a cold load, eu43-3.glb (17,8 MB) and eu43-5.glb (11 MB)
+ * were each fetched twice, 29 MB of pure waste out of 98 MB. */
+const SPECIES_URLS = [...new Set(Object.values(SPECIES).map((s) => s.url))]
+
+useGLTF.preload(SPECIES_URLS)
