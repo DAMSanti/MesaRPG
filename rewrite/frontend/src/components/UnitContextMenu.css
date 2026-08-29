@@ -23,6 +23,45 @@
    rather than as another entry: these are not game actions, and the rule
    above them is what keeps a stray click from landing on one while
    aiming for the last real button. */
+/* The limb picker (real user request: "un desplegable a la derecha").
+   Opens sideways rather than pushing the menu taller, so the entries the
+   GM uses every turn never move under the cursor when it is open. */
+.unit-menu-flyout-host {
+  position: relative;
+  display: flex;
+}
+
+.unit-menu-flyout-trigger {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.unit-menu-flyout {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  margin-left: 6px;
+  z-index: 1;
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 150px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.unit-menu-flyout button {
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+}
+
 .unit-menu-section {
   font-size: 10px;
   letter-spacing: 0.08em;

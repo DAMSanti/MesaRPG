@@ -8,7 +8,7 @@ import * as THREE from 'three'
 import type {
   AttackResult, HexTileData, MapData, Mech, MechAnnotation, Unit,
 } from '../api'
-import { addBoardMark, listBoardMarks } from '../api'
+import { addBoardMark, deleteBoardMark, listBoardMarks } from '../api'
 import { useMechAnnotationsCache } from '../mechAnnotations'
 import { Mech3D } from './Mech3D'
 import { TerrainDecor, terrainSinkY } from './TerrainDecor'
@@ -36,7 +36,9 @@ import {
 import { getStampVersion, RELIEF_SKIP_TERRAINS, stampDeformation } from '../terrainRelief'
 import { TILE_RAMP_FRACTION, tileHeightInputs } from '../tileHeightField'
 import { useProfiledFrame } from './PerfProbe'
-import { adoptSavedLimb, clearDroppedLimbs, dropLimb, droppedLimbList, droppedLimbVersion } from '../droppedLimbs'
+import {
+  adoptSavedLimb, clearDroppedLimbs, dropLimb, droppedLimbList, droppedLimbVersion, undropLimb,
+} from '../droppedLimbs'
 import { FallenLimb } from './FallenLimb'
 
 // useMechAnnotationsCache moved to ../mechAnnotations — Mech3D needs it
@@ -2965,6 +2967,7 @@ export function HexMap({
             facing: data.facing ?? 0,
             modelUrl: data.modelUrl,
             location: data.location,
+            markId: mark.id,
           })
         }
         setLimbVersion(droppedLimbVersion())
@@ -2974,6 +2977,45 @@ export function HexMap({
       .catch(() => {})
     return () => { cancelled = true }
   }, [map.id])
+
+  // Which server-side mark each dropped limb is stored as. A ref rather
+  // than state: nothing renders from it, it only exists so a limb that is
+  // put back can be deleted from the board for good. Filled in when the
+  // POST returns (see recordDroppedLimb) and when saved wreckage is
+  // adopted on load.
+  const markIdsRef = useRef<Map<string, number>>(new Map())
+
+  // A limb that comes BACK — the GM restoring structure, an undone action,
+  // the debug menu — has to stop being wreckage.
+  //
+  // Real user report: "le he restaurado los miembros, y si le doy a perder
+  // miembros, simplemente desaparecen del modelo, no se despegan, no
+  // caen." dropLimb ignores a key it already holds (which is what stops a
+  // render-driven effect from raining copies of one arm), so the stale
+  // record made the SECOND amputation look like a duplicate: nothing new
+  // fell, and the piece from the first one just sat where it already was.
+  //
+  // Driven off severedLocationsByUnitId rather than off an event, because
+  // "this limb is attached again" is a state, and the views recompute that
+  // state anyway — there is no restore event to listen for.
+  useEffect(() => {
+    if (!severedLocationsByUnitId) return
+    for (const limb of droppedLimbList()) {
+      const [unitIdText, location] = limb.key.split(':')
+      const unitId = Number(unitIdText)
+      // Only ever prunes a limb belonging to a unit this view actually
+      // knows about: a unit that has simply left the board keeps its
+      // wreckage, which is the whole point of the board owning it.
+      const severed = severedLocationsByUnitId.get(unitId)
+      if (!severed || severed.has(location)) continue
+      undropLimb(limb.key)
+      const markId = limb.markId ?? markIdsRef.current.get(limb.key)
+      markIdsRef.current.delete(limb.key)
+      if (markId != null && map.id != null) deleteBoardMark(map.id, markId).catch(() => {})
+    }
+    setLimbVersion(droppedLimbVersion())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [severedLocationsByUnitId, map.id])
 
   // A limb that has just come off, on its way to the ground. The board
   // owns this rather than the unit does, because wreckage belongs to the
@@ -3008,7 +3050,11 @@ export function HexMap({
         dropY: info.worldY,
         facing: info.facing,
         modelUrl: info.modelUrl,
-      }).catch(() => {})
+      })
+        // Recorded on the way back so this piece can be taken off the board
+        // again if its mech ever gets the limb back — see undropLimb.
+        .then((mark) => { markIdsRef.current.set(`${unitId}:${info.location}`, mark.id) })
+        .catch(() => {})
     }
     // The store is module-level, so it cannot re-render anything by
     // itself; mirroring its version into state is what puts the new limb

@@ -1,0 +1,119 @@
+/* Night-vision goggles over the GM's map — see NightVision.tsx. */
+
+/* The green cast is applied to the WebGL canvas itself rather than to a
+   layer on top of it, because that is the only way to actually strip the
+   colour out of the image: an overlay can tint what is behind it, but it
+   cannot desaturate it, and a night-vision image that still shows the red
+   of a faction marker or the orange of an explosion reads as a green
+   filter rather than as an intensified image.
+
+   The chain is: throw away colour, lift the exposure the way an
+   intensifier does (crushing detail in the highlights on purpose), then
+   push everything to phosphor green. Only the canvas — the perf HUD sits
+   in the same container and has to stay readable, same reasoning as its
+   exemption from FirstPersonView's own blur. */
+.map-embed.night-vision canvas {
+  filter:
+    grayscale(1)
+    brightness(1.35)
+    contrast(1.15)
+    sepia(1)
+    hue-rotate(62deg)
+    saturate(4.2);
+}
+
+.night-vision-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Above the canvas, below the perf HUD. */
+  z-index: 2;
+}
+
+/* What the goggles can see: a bright centre falling off to nothing well
+   before the corners, with the tube's own edge glow just inside it. */
+.night-vision-field {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 62% 78% at 50% 50%,
+      rgba(0, 0, 0, 0) 55%,
+      rgba(0, 20, 8, 0.55) 78%,
+      rgba(0, 8, 4, 0.94) 100%
+    ),
+    radial-gradient(
+      ellipse 63% 79% at 50% 50%,
+      rgba(120, 255, 170, 0) 68%,
+      rgba(120, 255, 170, 0.10) 73%,
+      rgba(120, 255, 170, 0) 79%
+    );
+}
+
+/* Sensor noise, as a repeating SVG turbulence tile — no image file and no
+   per-frame JS, which matters on a view already fighting for frame time. */
+.night-vision-grain {
+  position: absolute;
+  inset: -50%;
+  opacity: 0.16;
+  mix-blend-mode: screen;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/></filter><rect width='140' height='140' filter='url(%23n)' opacity='0.7'/></svg>");
+  animation: night-vision-drift 0.9s steps(3, end) infinite;
+}
+
+/* Big, slow steps rather than a smooth pan: intensifier noise flickers, it
+   does not slide. */
+@keyframes night-vision-drift {
+  0% { transform: translate(0, 0); }
+  33% { transform: translate(-3%, 2%); }
+  66% { transform: translate(2%, -3%); }
+  100% { transform: translate(0, 0); }
+}
+
+.night-vision-scanlines {
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0) 0,
+    rgba(0, 0, 0, 0) 2px,
+    rgba(0, 30, 12, 0.5) 3px
+  );
+}
+
+.night-vision-readout {
+  position: absolute;
+  top: 10px;
+  left: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: rgba(150, 255, 190, 0.85);
+  text-shadow: 0 0 6px rgba(80, 255, 150, 0.6);
+}
+
+.night-vision-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(150, 255, 190, 0.9);
+  box-shadow: 0 0 8px rgba(80, 255, 150, 0.9);
+  animation: night-vision-blink 2.4s ease-in-out infinite;
+}
+
+@keyframes night-vision-blink {
+  0%, 45% { opacity: 1; }
+  55%, 100% { opacity: 0.25; }
+}
+
+/* The grain and the blinking dot are decoration; the green image and the
+   goggle field are the information. Only the motion goes. */
+@media (prefers-reduced-motion: reduce) {
+  .night-vision-grain,
+  .night-vision-dot {
+    animation: none;
+  }
+}

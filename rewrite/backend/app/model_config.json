@@ -1,0 +1,190 @@
+{
+  "annotations": {
+    "/models/mechs/jenner-jr7-f.glb": [
+      {
+        "kind": "cockpit",
+        "location": null,
+        "x": 0.009246117015324733,
+        "y": 0.5584935200253871,
+        "z": 0.3299858693851882
+      },
+      {
+        "kind": "hit",
+        "location": "CT",
+        "x": 0.005259299112329945,
+        "y": 0.7040069991657915,
+        "z": 0.012921334683003318
+      },
+      {
+        "kind": "hit",
+        "location": "HD",
+        "x": 0.006793200132078638,
+        "y": 0.5611384528035399,
+        "z": 0.3276023414114364
+      },
+      {
+        "kind": "hit",
+        "location": "LA",
+        "x": 0.26161025989427406,
+        "y": 0.7253039500696157,
+        "z": 0.019345800669893214
+      },
+      {
+        "kind": "hit",
+        "location": "LL",
+        "x": 0.17126489927874894,
+        "y": 0.2849597305196116,
+        "z": 0.021291453046216602
+      },
+      {
+        "kind": "hit",
+        "location": "LT",
+        "x": 0.18504298020117843,
+        "y": 0.6417872982701809,
+        "z": 0.022408904929940902
+      },
+      {
+        "kind": "hit",
+        "location": "RA",
+        "x": -0.28362937526110504,
+        "y": 0.7173138404387963,
+        "z": 0.01634782331951528
+      },
+      {
+        "kind": "hit",
+        "location": "RL",
+        "x": -0.15379522750907806,
+        "y": 0.3544669284680348,
+        "z": 0.15655012743862715
+      },
+      {
+        "kind": "hit",
+        "location": "RT",
+        "x": -0.18071254085254948,
+        "y": 0.7426319496710623,
+        "z": -0.008118470448598722
+      },
+      {
+        "kind": "limb",
+        "location": "LA",
+        "mesh_names": [
+          "BrazoI"
+        ],
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      {
+        "kind": "limb",
+        "location": "LL",
+        "mesh_names": [
+          "PiernaI_1"
+        ],
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      {
+        "kind": "limb",
+        "location": "RA",
+        "mesh_names": [
+          "BrazoD"
+        ],
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      {
+        "kind": "limb",
+        "location": "RL",
+        "mesh_names": [
+          "PiernaD_1"
+        ],
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      },
+      {
+        "kind": "weapon",
+        "location": "LA",
+        "x": 0.2654642276604051,
+        "y": 0.6538748611655896,
+        "z": 0.010304397407361263
+      },
+      {
+        "kind": "weapon",
+        "location": "LA",
+        "x": 0.26787388114262956,
+        "y": 0.611700971160979,
+        "z": 0.0019020103131966773
+      },
+      {
+        "kind": "weapon",
+        "location": "RA",
+        "x": -0.25917995738220884,
+        "y": 0.660405055296201,
+        "z": 0.018429722631837422
+      },
+      {
+        "kind": "weapon",
+        "location": "RA",
+        "x": -0.26236039394088967,
+        "y": 0.6158577659345763,
+        "z": 0.008288016947076055
+      }
+    ]
+  },
+  "pbr": [
+    {
+      "ao_intensity": 0.64,
+      "color_boost": 3.0,
+      "metalness": 0.78,
+      "model_url": "/models/mechs/jenner-jr7-f.glb",
+      "normal_scale": 1.5,
+      "repeat": 10.0,
+      "roughness": 1.0
+    }
+  ],
+  "review": [
+    {
+      "model_url": "/models/mechs/centurion-cn9-a.glb",
+      "status": "done",
+      "track": "rig"
+    },
+    {
+      "model_url": "/models/mechs/crockett-crk-5003-0.glb",
+      "status": "done",
+      "track": "rig"
+    },
+    {
+      "model_url": "/models/mechs/jenner-jr7-f.glb",
+      "status": "done",
+      "track": "limbs"
+    },
+    {
+      "model_url": "/models/mechs/jenner-jr7-f.glb",
+      "status": "done",
+      "track": "rig"
+    },
+    {
+      "model_url": "/models/mechs/jenner-jr7-f.glb",
+      "status": "done",
+      "track": "texture"
+    },
+    {
+      "model_url": "/models/mechs/jenner-jr7-f.glb",
+      "status": "accepted",
+      "track": "weapons"
+    },
+    {
+      "model_url": "/models/mechs/locust-lct-1v.glb",
+      "status": "done",
+      "track": "rig"
+    },
+    {
+      "model_url": "/models/mechs/mongrel-prime.glb",
+      "status": "done",
+      "track": "rig"
+    }
+  ]
+}

@@ -70,7 +70,7 @@ function usePilotId() {
 export function PlayerView() {
   const campaignId = useCampaignId({ allowPicker: false })
   const { pilotId, choose } = usePilotId()
-  const { lastAttack, lastMelee, activeMapId, roundState, visibility, rosterVersion, unitWalked, heatPhaseResult } = useTableSocket(campaignId)
+  const { lastAttack, lastMelee, activeMapId, roundState, visibility, rosterVersion, unitWalked, heatPhaseResult, mapTime } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
 
   const [campaign, setCampaign] = useState<Campaign | null>(null)
@@ -849,6 +849,7 @@ export function PlayerView() {
           lastMelee={lastMelee}
           unitWalked={unitWalked}
           pilotHits={pilot?.hits}
+          timeOfDay={mapTime && mapTime.mapId === mapId ? mapTime.hour : undefined}
           onClose={() => setShowFirstPerson(false)}
         />
       )}

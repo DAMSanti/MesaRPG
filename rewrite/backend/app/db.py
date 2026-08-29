@@ -432,6 +432,12 @@ def init_db() -> None:
         # writes a harmless derived value into it for old-DB compatibility.
         _ensure_column(conn, "maps", "width", "INTEGER NOT NULL DEFAULT 8")
         _ensure_column(conn, "maps", "height", "INTEGER NOT NULL DEFAULT 8")
+        # The board's own clock, 0-24 (real user request: "slider en GM
+        # para cambiar la hora del dia/noche"). A property of the map and
+        # not of a viewer, so the GM's sunset is also the sunset a player
+        # sees from inside their cockpit. Defaults to midday, which is what
+        # every existing board was implicitly lit at.
+        _ensure_column(conn, "maps", "time_of_day", "REAL NOT NULL DEFAULT 13.0")
         # Factions — player / enemy / non-aggressive NPC. Requested after S2
         # (round/initiative) surfaced that nothing in the data model tracked
         # sides at all; this is the foundation, not a redo of initiative —

@@ -102,6 +102,9 @@ export interface MapData {
   width: number
   height: number
   grid_type: 'hex' | 'square'
+  /** The board's own clock, 0–24 — see dayNight.ts. Optional so a response
+   * from a server that predates the column still parses. */
+  time_of_day?: number
   tiles: HexTileData[]
 }
 
@@ -177,9 +180,22 @@ export const addBoardMark = (
     body: JSON.stringify({ kind, x, z, data }),
   })
 
+/** Takes one mark off the board — a limb that has been reattached. See
+ * board_marks.remove_mark for why an append-only table needs this. */
+export const deleteBoardMark = (mapId: number, markId: number) =>
+  request<{ removed: boolean }>(`/api/maps/${mapId}/marks/${markId}`, { method: 'DELETE' })
+
 export const clearBoardMarks = (mapId: number, kind?: BoardMark['kind']) =>
   request<{ removed: number }>(`/api/maps/${mapId}/marks${kind ? `?kind=${kind}` : ''}`, {
     method: 'DELETE',
+  })
+
+/** Moves the board's own clock (0–24). Broadcast to every view — see
+ * dayNight.ts for what an hour actually looks like. */
+export const setMapTimeOfDay = (mapId: number, hour: number) =>
+  request<MapData>(`/api/maps/${mapId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ time_of_day: hour }),
   })
 
 export const createMap = (campaignId: number, name: string, width: number, height: number) =>

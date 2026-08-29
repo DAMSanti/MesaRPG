@@ -19,9 +19,11 @@ import {
   type RoundState, type Unit, type VisibleEnemy, type VisibleHex, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase, useDisplayedPhase, useHeldActiveMover } from '../rounds'
-import { HEX_SIZE, hexToWorld, mapCenter, WALK_SPEED } from '../hexMath'
+import { hexToWorld, mapCenter, WALK_SPEED } from '../hexMath'
 import type { FogWalkStep, MeleeResult, UnitWalked } from '../ws'
 import './FirstPersonView.css'
+import { SceneLighting } from './SceneLighting'
+import { DEFAULT_TIME_OF_DAY } from '../dayNight'
 import { useProfiledFrame } from './PerfProbe'
 import { PerfProbe } from './PerfProbe'
 import { PerfHud } from './PerfHud'
@@ -825,10 +827,17 @@ const PHASES: { key: Phase; label: string }[] = [
 ]
 
 export function FirstPersonView({
-  unit, mech, units, mechs, roundState, visibility, lastAttack, lastMelee, unitWalked, pilotHits, onClose,
+  unit, mech, units, mechs, roundState, visibility, lastAttack, lastMelee, unitWalked, pilotHits,
+  timeOfDay: timeOfDayLive, onClose,
 }: {
   unit: Unit
   mech: Mech | null
+  /** The board's clock as last broadcast (real user request: a GM slider
+   * for the time of day). The GM's sunset has to be the pilot's sunset
+   * too, so this comes down live rather than being read once off the map
+   * this view fetched when it opened. Undefined falls back to that map's
+   * own stored hour. */
+  timeOfDay?: number
   /** This pilot's own wound track. Every increase paints another splatter
    * on the cockpit glass — see CockpitBlood. */
   pilotHits?: number
@@ -1325,6 +1334,9 @@ export function FirstPersonView({
   // each waypoint's own eye height while walking a real (possibly multi-
   // elevation) path.
   const [centerX, centerZ] = useMemo(() => (map ? mapCenter(map.tiles) : [0, 0]), [map])
+  // Live value first, then whatever this map was carrying when the cockpit
+  // opened — see the prop's own doc comment.
+  const timeOfDay = timeOfDayLive ?? map?.time_of_day ?? DEFAULT_TIME_OF_DAY
   // Real user request: "la posicion que selecciono de 'cabina' es donde
   // tiene que estar la camara en FPV" — MechLab's own saved cockpit point
   // for this unit's exact model, or null for a mech nobody's annotated
@@ -1651,20 +1663,13 @@ export function FirstPersonView({
                   -> <Select enabled>. */}
               <Selection>
                 <SkyBackground />
-                <ambientLight intensity={1.2} />
-                <directionalLight
-                  position={[4, 8, 3]} intensity={1.8} castShadow
-                  shadow-mapSize={[2048, 2048]}
-                  shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
-                  shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
-                  shadow-camera-far={60 * HEX_SIZE}
-                  // Real user report: dark speckled blotches across tile
-                  // faces, worse zoomed out — shadow-map self-shadowing
-                  // acne on this terrain mesh's own bumpy per-vertex noise
-                  // (see GMView.tsx's own identical fix for the full
-                  // reasoning).
-                  shadow-normalBias={HEX_SIZE * 0.02}
-                />
+                {/* Lit harder than the tabletop views on purpose — a
+                    pilot sits inside the mech, not above the board. Those
+                    are this view's own midday scales; the shape of the day
+                    is shared with everyone else. background=false: the
+                    cockpit has a real sky above (SkyBackground), and a flat
+                    colour would paint straight over it. */}
+                <SceneLighting hour={timeOfDay} sunScale={1.8} ambientScale={1.2} background={false} />
                 <WalkingFirstPersonCam
                   q={unit.q} r={unit.r} facingDeg={unit.facing_deg}
                   path={walkPaths.get(unit.id)} movementType={walkMovementTypes.get(unit.id)}

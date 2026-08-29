@@ -75,6 +75,23 @@ def marks_for_map(map_id: int, kind: str | None = None) -> list[dict]:
         return [_row_to_mark(row) for row in rows]
 
 
+def remove_mark(mark_id: int) -> bool:
+    """Takes ONE mark off the board. Returns whether it was there.
+
+    Append-only is the rule for things that happened, and a limb on the
+    ground is one of those -- but a limb can also be put back. Real user
+    report: "le he restaurado los miembros, y si le doy a perder miembros,
+    simplemente desaparecen del modelo, no se despegan, no caen." An arm
+    that is attached again is not wreckage any more, and leaving its mark
+    behind is what stopped the next amputation from dropping anything: the
+    client keys wreckage by unit and location, so the stale record made the
+    new one look like a duplicate.
+    """
+    with db.connect() as conn:
+        cur = conn.execute("DELETE FROM board_marks WHERE id = ?", (mark_id,))
+        return cur.rowcount > 0
+
+
 def clear_marks(map_id: int, kind: str | None = None) -> int:
     """Wipes a map clean — for starting a fresh battle on the same terrain.
     Returns how many were removed."""

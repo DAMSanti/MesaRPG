@@ -9,23 +9,40 @@ a forced common interface — see rewrite/README.md for exactly what's in
 and out of scope for each.
 """
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import board_marks, campaigns, db, dice_resolution, dice_styles, equipment, events, mapgen, maps, mech_annotations, mech_templates, rolls, systems, table_session, units
+from . import board_marks, campaigns, db, dice_resolution, dice_styles, equipment, events, mapgen, maps, mech_annotations, mech_templates, model_config, rolls, systems, table_session, units
 from .systems.battletech import combat, mechs, melee, movement, pilots, psr, turns, weapons
 from .systems.dnd5e import characters as dnd_characters
 from .systems.dnd5e import combat as dnd_combat
 from .systems.dnd5e import turns as dnd_turns
 from .ws import hub_manager, manager
 
+# uvicorn's own logger, not this module's: uvicorn configures its handlers
+# and leaves the root logger alone, so anything logged through
+# getLogger(__name__) propagates to a root with no handler and is dropped at
+# INFO. A startup message nobody can see is not a startup message.
+logger = logging.getLogger("uvicorn.error")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db.init_db()
+    # MechLab's authored model config ships with the code, not in the
+    # database -- see model_config for why, and for what "per model" means
+    # here. Logged rather than silent: a database that rewrites part of
+    # itself on boot should say so.
+    seeded = model_config.seed_from_file()
+    if any(seeded.values()):
+        logger.info(
+            "Configuracion de modelos sembrada desde %s: %s",
+            model_config.SEED_PATH.name, seeded,
+        )
     yield
 
 
@@ -914,6 +931,23 @@ async def add_board_mark(map_id: int, body: BoardMarkIn) -> dict:
     return mark
 
 
+@app.delete("/api/maps/{map_id}/marks/{mark_id}")
+async def remove_board_mark(map_id: int, mark_id: int) -> dict:
+    """Removes one mark -- a limb that has been put back on its mech.
+
+    Broadcast like the POST is, so a board someone else is watching loses
+    the piece at the same time this one does."""
+    m = maps.get_map(map_id)
+    if not m:
+        raise HTTPException(404, f"Map {map_id} not found")
+    removed = board_marks.remove_mark(mark_id)
+    if removed:
+        await manager.broadcast(
+            m["campaign_id"], {"type": "board_mark_removed", "mark_id": mark_id},
+        )
+    return {"removed": removed}
+
+
 @app.delete("/api/maps/{map_id}/marks")
 def clear_board_marks(map_id: int, kind: str | None = None) -> dict:
     """Wipes the scenery — for a fresh battle on the same terrain."""
@@ -988,6 +1022,29 @@ class TilePatchIn(BaseModel):
     blocks_los: bool | None = None
     terrain: str | None = None
     los_points: int | None = None
+
+
+class MapPatchIn(BaseModel):
+    """The board's own clock, 0-24. See maps.set_time_of_day."""
+    time_of_day: float
+
+
+@app.patch("/api/maps/{map_id}")
+async def patch_map(map_id: int, body: MapPatchIn) -> dict:
+    m = _require_map(map_id)
+    updated = maps.set_time_of_day(map_id, body.time_of_day)
+    if not updated:
+        raise HTTPException(404, f"Map {map_id} not found")
+    # Sent as its own message rather than folded into a generic map refresh:
+    # useMapState deliberately fetches a map ONCE per id (refetching it
+    # recreates every tile and visibly flickers the whole board), so the
+    # views need the new hour on its own, without the map around it.
+    await manager.broadcast(m["campaign_id"], {
+        "type": "map_time_changed",
+        "map_id": map_id,
+        "time_of_day": updated["time_of_day"],
+    })
+    return updated
 
 
 @app.patch("/api/maps/{map_id}/tiles/{q}/{r}")

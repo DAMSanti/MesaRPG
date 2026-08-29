@@ -43,6 +43,10 @@ export interface DroppedLimb {
   /** performance.now() when it was severed, so the fall plays once and
    * every later render finds it already at rest. */
   droppedAt: number
+  /** The server-side board_mark this limb is stored as, when it has one.
+   * Kept so a limb that gets put back on its mech can be removed from the
+   * board for good rather than only from this session's store. */
+  markId?: number
   /** Stable per limb: which way it tumbles and how it ends up lying. Kept
    * here rather than rolled at render time so a remount does not reshuffle
    * wreckage that is supposed to be lying still. */
@@ -110,6 +114,31 @@ export function adoptSavedLimb(limb: LimbInput): boolean {
   })
   version++
   return true
+}
+
+/** Puts a limb back on its mech, and reports the record that was holding
+ * its place (so the caller can delete the server-side mark too).
+ *
+ * Real user report: "le he restaurado los miembros, y si le doy a perder
+ * miembros, simplemente desaparecen del modelo, no se despegan, no caen...
+ * solo hacen puf y desaparecen."
+ *
+ * dropLimb refuses a key it already has, which is what keeps a
+ * render-driven effect from raining copies of the same arm. The cost is
+ * that a limb which comes BACK — the GM restoring structure, an undone
+ * action, the debug menu — left its old record in place, so the next
+ * amputation looked like a duplicate and dropped nothing, while the piece
+ * already lying on the ground stayed exactly where it was. From the
+ * outside that is a limb vanishing into thin air.
+ *
+ * So a limb is either attached or on the ground, never both, and this is
+ * the half that was missing. */
+export function undropLimb(key: string): DroppedLimb | undefined {
+  const limb = limbs.get(key)
+  if (!limb) return undefined
+  limbs.delete(key)
+  version++
+  return limb
 }
 
 /** Clears everything — on switching to a different board, where another

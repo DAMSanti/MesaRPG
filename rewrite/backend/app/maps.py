@@ -65,6 +65,17 @@ def get_map(map_id: int) -> dict | None:
         return _get(conn, map_id)
 
 
+def set_time_of_day(map_id: int, hour: float) -> dict | None:
+    """Moves the board's own clock. Wrapped into 0-24 rather than
+    rejected: a slider that can be dragged past midnight should roll over,
+    and 25:00 is a perfectly good way to say 01:00."""
+    with db.connect() as conn:
+        conn.execute(
+            "UPDATE maps SET time_of_day = ? WHERE id = ?", (hour % 24.0, map_id)
+        )
+        return _get(conn, map_id)
+
+
 def delete_map(map_id: int, _log: bool = True) -> bool:
     """hex_tiles/units both cascade on map_id (db.py's own FK
     declarations), so this alone cleans up everything on the map itself.
@@ -152,7 +163,8 @@ def tiles_lookup(map_id: int) -> dict[tuple[int, int], dict]:
 
 def _get(conn, map_id: int) -> dict | None:
     map_row = conn.execute(
-        "SELECT id, campaign_id, name, width, height, grid_type, created_at FROM maps WHERE id = ?",
+        "SELECT id, campaign_id, name, width, height, grid_type, time_of_day, created_at "
+        "FROM maps WHERE id = ?",
         (map_id,),
     ).fetchone()
     if not map_row:

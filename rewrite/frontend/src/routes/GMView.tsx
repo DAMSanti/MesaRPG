@@ -75,6 +75,7 @@ import {
   startRound,
   submitMeleeAttack,
   undoLastAction,
+  setMapTimeOfDay,
   updateMech,
   updateMechLocation,
   updatePilot,
@@ -95,6 +96,9 @@ import {
   type WeaponStats,
 } from '../api'
 import './GMView.css'
+import { SceneLighting } from '../components/SceneLighting'
+import { NightVision } from '../components/NightVision'
+import { dayNightRig, DEFAULT_TIME_OF_DAY, formatTimeOfDay } from '../dayNight'
 import { PerfProbe } from '../components/PerfProbe'
 import { PerfHud } from '../components/PerfHud'
 import { FrameGate, useRenderPolicy } from '../components/RenderPolicy'
@@ -105,7 +109,7 @@ import { FrameGate, useRenderPolicy } from '../components/RenderPolicy'
  * whether to mount this or GMViewDnd based on the campaign's system. */
 function GMViewBattletech() {
   const campaignId = useCampaignId()
-  const { activeMapId, roundState, visibility, lastAttack, lastMelee, rosterVersion, unitWalked, heatPhaseResult } = useTableSocket(campaignId)
+  const { activeMapId, roundState, visibility, lastAttack, lastMelee, rosterVersion, unitWalked, heatPhaseResult, mapTime } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   const { map, units, setUnits } = useMapState(mapId, visibility ?? lastAttack)
   const [pilots, setPilots] = useState<Pilot[]>([])
@@ -699,6 +703,25 @@ function GMViewBattletech() {
   // Purely client-side, per-unit, never sent to the backend.
   const [forceJumpUnitIds, setForceJumpUnitIds] = useState<Set<number>>(new Set())
 
+  // The board's own clock (real user request: "slider en GM para cambiar
+  // la hora del dia/noche"). Held locally so dragging the slider relights
+  // the scene at once instead of waiting on a round trip; the server is
+  // told as it moves, and every other view hears about it over the socket.
+  const [timeOfDayDraft, setTimeOfDayDraft] = useState<number | null>(null)
+  const timeOfDay = timeOfDayDraft
+    ?? (mapTime && mapTime.mapId === mapId ? mapTime.hour : undefined)
+    ?? map?.time_of_day
+    ?? DEFAULT_TIME_OF_DAY
+  const changeTimeOfDay = (hour: number) => {
+    setTimeOfDayDraft(hour)
+    if (mapId != null) setMapTimeOfDay(mapId, hour).catch(() => {})
+  }
+  // Goggles on the moment the sun is under the horizon (darkness 1) — real
+  // user request. Automatic and not a toggle: the GM has to be able to run
+  // a night battle, and remembering to switch a view mode on is not part
+  // of running one.
+  const nightVision = dayNightRig(timeOfDay).darkness >= 1
+
   // Debug tooling for two effects that are otherwise only reachable by
   // playing until the dice happen to produce them (real user request:
   // "quiero una forma de debuggear la pérdida de extremidades y el
@@ -726,27 +749,24 @@ function GMViewBattletech() {
     }
   }
 
-  const debugSeverLimbs = async (unit: Unit) => {
+  // One limb at a time, picked from the menu's own flyout (real user
+  // request: "en lugar de perderlas todas debe abrir un desplegable... y se
+  // puedan seleccionar individualmente").
+  const debugSeverLimb = async (unit: Unit, location: string) => {
     const mech = mechForUnit(unit)
     if (!mech) return
-    // All four at once, per the request ("las perderá todas"). A location
-    // with structure_max 0 does not exist on this chassis at all, which is
-    // not the same as one that has been blown off — zeroing it would tell
-    // the model to drop a limb the mech never had.
-    const limbs = (mech.locations ?? []).filter(
-      (l) => SEVERABLE_LOCATIONS.includes(l.location) && l.structure_max > 0 && l.structure_current > 0,
-    )
-    if (limbs.length === 0) return
+    if (!SEVERABLE_LOCATIONS.includes(location)) return
+    // A location with structure_max 0 does not exist on this chassis at
+    // all, which is not the same as one that has been blown off — zeroing
+    // it would tell the model to drop a limb the mech never had. The menu
+    // greys these out too; this is the check that actually holds.
+    const side = (mech.locations ?? []).find((l) => l.location === location)
+    if (!side || side.structure_max <= 0 || side.structure_current <= 0) return
     try {
-      // Sequential rather than Promise.all: each PATCH returns the whole
-      // mech and broadcasts, and firing four concurrent writes at the same
-      // row is how you get one of them silently reverted.
-      for (const limb of limbs) {
-        await updateMechLocation(mech.id, limb.location, { structure_current: 0 })
-      }
+      await updateMechLocation(mech.id, location, { structure_current: 0 })
       await refetch()
     } catch {
-      setError('No se pudieron arrancar las extremidades (debug).')
+      setError('No se pudo arrancar la extremidad (debug).')
     }
   }
   // unit_walked (real user report) covers every move this screen didn't
@@ -1300,12 +1320,26 @@ function GMViewBattletech() {
           </div>
         )}
 
+        {mapId != null && (
+          <label className="row gm-daynight">
+            <span className="round-info">Hora</span>
+            <input
+              type="range" min={0} max={24} step={0.25}
+              value={timeOfDay}
+              onChange={(e) => changeTimeOfDay(Number(e.target.value))}
+            />
+            {/* Tabular figures so the board does not twitch sideways as
+                the digits change while dragging. */}
+            <span className="gm-daynight-readout">{formatTimeOfDay(timeOfDay)}</span>
+          </label>
+        )}
+
         {mapId == null ? (
           <p className="round-info">Sin mapa activo — actívalo desde "Mapas".</p>
         ) : !map ? (
           <p className="round-info">Cargando mapa…</p>
         ) : (
-          <div className="map-embed" ref={mapContainerRef}>
+          <div className={`map-embed${nightVision ? ' night-vision' : ''}`} ref={mapContainerRef}>
             {/* near/far explicit and HEX_SIZE-scaled alongside position —
                 the perspective depth buffer's usable precision is relative
                 to how far the camera actually sits from what it's looking
@@ -1343,34 +1377,7 @@ function GMViewBattletech() {
               {/* First child on purpose — see TableView's own note. */}
               <PerfProbe />
               <FrameGate policy={renderPolicy} />
-              <color attach="background" args={['#0f1a18']} />
-              <ambientLight intensity={0.6} />
-              <directionalLight
-                position={[4, 8, 3]} intensity={1.4} castShadow
-                shadow-mapSize={[2048, 2048]}
-                shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
-                shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
-                shadow-camera-far={60 * HEX_SIZE}
-                // Real user report: dark speckled blotches across whole
-                // tile faces, worse when zoomed out — classic shadow-map
-                // self-shadowing acne (three.js's own shadow.bias/
-                // normalBias both default to 0), and this terrain mesh's
-                // own per-vertex noise/ramp displacement (terrainReliefAt,
-                // added earlier this session) gives it exactly the kind of
-                // constantly-varying normal that triggers it — a flat
-                // plane rarely shows this at all. Worse at a distance
-                // because more of the shadow map's fixed 2048² resolution
-                // covers the visible area at once, making its own
-                // discretization error more visible per screen pixel.
-                // normalBias (offsets the shadow-map LOOKUP along the
-                // surface normal, not the light direction) is the
-                // standard fix for acne specifically on non-flat
-                // receivers, scaled to this scene's real HEX_SIZE=30m
-                // units the same way every other small-offset constant
-                // this session already is (see e.g. hexTileGeometry.ts's
-                // own TEXTURE_BLEND_LIFT).
-                shadow-normalBias={HEX_SIZE * 0.02}
-              />
+              <SceneLighting hour={timeOfDay} nightVision={nightVision} />
               <TableBackground hexScale />
               <CameraBridge onReady={(fn) => { raycastToGroundRef.current = fn }} />
               <Suspense fallback={null}>
@@ -1409,6 +1416,7 @@ function GMViewBattletech() {
                   drag/rotate release, real user report). */}
               <OrbitControls enablePan enableRotate={!isDraggingUnit} minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
             </Canvas>
+            <NightVision active={nightVision} />
             <PerfHud />
           </div>
         )}
@@ -1743,7 +1751,9 @@ function GMViewBattletech() {
             onStandUp={() => { standUp(menu.unit.id).then(refetch).catch(() => {}); setMenu(null) }}
             onFallOver={() => { fallOver(menu.unit.id).then(refetch).catch(() => {}); setMenu(null) }}
             onDebugPilotHit={menuUnitPilot ? () => { debugPilotHit(menu.unit); setMenu(null) } : undefined}
-            onDebugSeverLimbs={mechForUnit(menu.unit) ? () => { debugSeverLimbs(menu.unit); setMenu(null) } : undefined}
+            onDebugSeverLimb={mechForUnit(menu.unit)
+              ? (location) => { debugSeverLimb(menu.unit, location); setMenu(null) }
+              : undefined}
             forceJump={forceJumpUnitIds.has(menu.unit.id)}
             onForceJumpChange={(value) => {
               setForceJumpUnitIds((prev) => {

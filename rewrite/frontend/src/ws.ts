@@ -213,6 +213,11 @@ export function useTableSocket(campaignId: number | null) {
   // own pilots/mechs list instead of requiring a manual reload (real
   // user report: "no se actualiza en tiempo real").
   const [rosterVersion, setRosterVersion] = useState(0)
+  // The board's clock, as last broadcast (real user request: a GM slider
+  // for the time of day). Its own message rather than a map refresh:
+  // useMapState fetches a map ONCE per id on purpose, because refetching
+  // it recreates every tile and visibly flickers the whole board.
+  const [mapTime, setMapTime] = useState<{ mapId: number; hour: number } | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
@@ -266,6 +271,8 @@ export function useTableSocket(campaignId: number | null) {
         setHeatPhaseResult(message as HeatPhaseResolved)
       } else if (message.type === 'roster_updated') {
         setRosterVersion((v) => v + 1)
+      } else if (message.type === 'map_time_changed') {
+        setMapTime({ mapId: message.map_id, hour: message.time_of_day })
       }
     }
 
@@ -291,6 +298,6 @@ export function useTableSocket(campaignId: number | null) {
 
   return {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, activeMapId, roundState,
-    initiativeRollRequest, physicalRollRequest, movementStarted, unitWalked, lastMelee, heatPhaseResult, rosterVersion, roll,
+    initiativeRollRequest, physicalRollRequest, movementStarted, unitWalked, lastMelee, heatPhaseResult, rosterVersion, mapTime, roll,
   }
 }

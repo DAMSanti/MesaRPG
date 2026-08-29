@@ -1,6 +1,18 @@
+import { useState } from 'react'
 import type { Mech, MovementType, Unit } from '../api'
 import { DropdownMenu } from './DropdownMenu'
 import './UnitContextMenu.css'
+
+/** The four limbs a mech can lose, in the order they read on a record
+ * sheet. Labels rather than codes because this is a menu a person reads —
+ * real user request: "un desplegable a la derecha que ponga brazo derecho
+ * brazo izquierdo pierna derecha pierna izquierda." */
+const DEBUG_LIMBS = [
+  { location: 'RA', label: 'Brazo derecho' },
+  { location: 'LA', label: 'Brazo izquierdo' },
+  { location: 'RL', label: 'Pierna derecha' },
+  { location: 'LL', label: 'Pierna izquierda' },
+] as const
 
 /** Opens at the mouse position when a unit is clicked on the GM's map.
  * Atacar is gated by `canAct` — see rounds.ts's activeAttackPilotIds for
@@ -25,7 +37,7 @@ export function UnitContextMenu({
   showRollInitiative, canRollInitiative, onRollInitiative,
   showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement, onStandUp,
   onFallOver, forceJump, onForceJumpChange,
-  onDebugPilotHit, onDebugSeverLimbs,
+  onDebugPilotHit, onDebugSeverLimb,
 }: {
   unit: Unit
   mech: Mech | null
@@ -111,9 +123,12 @@ export function UnitContextMenu({
    * a move or an attack and has no turn to wait for. Undefined hides the
    * whole section, so callers with no debug tooling never show it. */
   onDebugPilotHit?: () => void
-  onDebugSeverLimbs?: () => void
+  /** Takes ONE limb off, by location. Real user request: individually
+   * selectable rather than all four at once. */
+  onDebugSeverLimb?: (location: string) => void
 }) {
   const label = mech ? `${mech.chassis} ${mech.model ?? ''}`.trim() : `unidad #${unit.id}`
+  const [limbsOpen, setLimbsOpen] = useState(false)
 
   return (
     <DropdownMenu x={x} y={y} title={label} onClose={onClose}>
@@ -155,14 +170,47 @@ export function UnitContextMenu({
           )}
         </>
       )}
-      {(onDebugPilotHit || onDebugSeverLimbs) && (
+      {(onDebugPilotHit || onDebugSeverLimb) && (
         <>
           <div className="unit-menu-section">debug</div>
           {onDebugPilotHit && (
             <button onClick={onDebugPilotHit}>Daño piloto</button>
           )}
-          {onDebugSeverLimbs && (
-            <button onClick={onDebugSeverLimbs}>Perder extremidades</button>
+          {onDebugSeverLimb && (
+            <div className="unit-menu-flyout-host">
+              <button
+                className="unit-menu-flyout-trigger"
+                aria-expanded={limbsOpen}
+                onClick={() => setLimbsOpen((open) => !open)}
+              >
+                Perder extremidad
+                <span aria-hidden>›</span>
+              </button>
+              {limbsOpen && (
+                <div className="unit-menu-flyout">
+                  {DEBUG_LIMBS.map(({ location, label: limbLabel }) => {
+                    // What the chassis actually has, and what it has left.
+                    // structure_max 0 means the location does not exist on
+                    // this mech at all, which is not the same as having
+                    // already been blown off — neither is something you can
+                    // take off again.
+                    const side = mech?.locations?.find((l) => l.location === location)
+                    const missing = side == null
+                      || side.structure_max <= 0
+                      || side.structure_current <= 0
+                    return (
+                      <button
+                        key={location}
+                        disabled={missing}
+                        onClick={() => onDebugSeverLimb(location)}
+                      >
+                        {limbLabel}
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           )}
         </>
       )}

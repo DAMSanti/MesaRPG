@@ -22,6 +22,8 @@ import {
 import { FACTION_COLORS } from '../factions'
 import { SquareMap } from '../components/SquareMap'
 import './TableView.css'
+import { SceneLighting } from '../components/SceneLighting'
+import { DEFAULT_TIME_OF_DAY } from '../dayNight'
 import { PerfProbe, PerfPhysicsProbe } from '../components/PerfProbe'
 import { PerfHud } from '../components/PerfHud'
 import { FrameGate, useRenderPolicy } from '../components/RenderPolicy'
@@ -77,7 +79,7 @@ function TableViewBattletech() {
   const renderPolicy = useRenderPolicy()
   const {
     connected, lastRoll, visibility, lastRevealedUnitId, lastAttack, lastMelee, activeMapId, roundState, initiativeRollRequest,
-    physicalRollRequest, movementStarted, heatPhaseResult, rosterVersion, unitWalked,
+    physicalRollRequest, movementStarted, heatPhaseResult, rosterVersion, unitWalked, mapTime,
   } = useTableSocket(campaignId)
   const mapId = useMapId(campaignId, activeMapId)
   // NOT lastRevealedUnitId ?? visibility — a `??` chain here would make
@@ -89,6 +91,12 @@ function TableViewBattletech() {
   // (every unit_revealed is preceded by a visibility_update in the same
   // broadcast), same as GMView's own useMapState call.
   const { map, units } = useMapState(mapId, visibility ?? lastAttack)
+  // The GM's clock, live — see dayNight.ts. Falls back to whatever this
+  // map was stored with, so a table opened before anyone touched the
+  // slider is still lit correctly.
+  const timeOfDay = (mapTime && mapTime.mapId === mapId ? mapTime.hour : undefined)
+    ?? map?.time_of_day
+    ?? DEFAULT_TIME_OF_DAY
 
   // Real user request: "cuando un enemigo entra en el LoS del equipo,
   // en el tableview se abre un modal... a modo de cinemática de
@@ -569,31 +577,19 @@ function TableViewBattletech() {
             and R3F runs same-priority frame callbacks in mount order. */}
         <PerfProbe />
         <FrameGate policy={renderPolicy} />
-        <color attach="background" args={['#0f1a18']} />
         {/* Real user report: "los dados de jade se ven muy oscuros,
             quiza la escena tenga poca luz" — bumped alongside the
             per-material envMapIntensity values in dieStyles.ts; this
             benefits every mech/unit rendered in the same scene too,
             not just dice. */}
-        {/* Matched to GMView's own 0.6 / 1.4. These were raised to 0.85 /
-            1.8 for one reason — "los dados de jade se ven muy oscuros" —
-            and lighting the whole board to fix the dice washed the board
-            out, which is what the <Environment> below is actually for.
-            Real user report: "en algun momento subimos el brillo o la
-            iluminacion de TableView y se quedo asi, igualalo a GMView". */}
-        <ambientLight intensity={0.6} />
-        <directionalLight
-          position={[4, 8, 3]} intensity={1.4} castShadow
-          shadow-mapSize={[2048, 2048]}
-          shadow-camera-left={-30 * HEX_SIZE} shadow-camera-right={30 * HEX_SIZE}
-          shadow-camera-top={30 * HEX_SIZE} shadow-camera-bottom={-30 * HEX_SIZE}
-          shadow-camera-far={60 * HEX_SIZE}
-          // Real user report: dark speckled blotches across tile faces,
-          // worse zoomed out — shadow-map self-shadowing acne on this
-          // terrain mesh's own bumpy per-vertex noise (see GMView.tsx's
-          // own identical fix for the full reasoning).
-          shadow-normalBias={HEX_SIZE * 0.02}
-        />
+        {/* Matched to GMView's own 0.6 / 1.4, now as SceneLighting's own
+            midday scales. These were raised to 0.85 / 1.8 for one reason —
+            "los dados de jade se ven muy oscuros" — and lighting the whole
+            board to fix the dice washed the board out, which is what the
+            <Environment> below is actually for. Real user report: "en algun
+            momento subimos el brillo o la iluminacion de TableView y se
+            quedo asi, igualalo a GMView". */}
+        <SceneLighting hour={timeOfDay} />
         {/* Real user request: metallic/glass dice need real reflections
             to read as true chrome/glass rather than a flat tinted
             material (see dieStyles.ts's own doc comment) — lighting/
