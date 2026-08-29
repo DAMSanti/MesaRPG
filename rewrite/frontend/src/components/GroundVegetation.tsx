@@ -232,33 +232,43 @@ function extractVariants(scene: THREE.Object3D, species: SpeciesKey, whole: bool
  * thousand plants sharing one material still each move on their own beat;
  * without it the entire field would sway as one rigid sheet. Two different
  * frequencies on x and z keep it from reading as a flat back-and-forth. */
-function makeWindMaterial(source: THREE.Material, height: number, sway: number, tintSpread = 0) {
+/** The wind, as a patch on whatever material a scanned plant arrived with.
+ *
+ * A plant's height, its sway and its tone spread used to be uniforms, which
+ * meant one material per variant and therefore one draw call per variant —
+ * 128 of them for 4.933 instances across just 25 textures. They are vertex
+ * ATTRIBUTES now, constant across a geometry but carried in the mesh, so
+ * every variant that shares a texture can share one material and ride in a
+ * single BatchedMesh. Nothing about the motion changed; only where the
+ * three numbers live. */
+function makeWindMaterial(source: THREE.Material) {
   const material = (source as THREE.MeshStandardMaterial).clone()
   const uniforms = {
     uTime: { value: 0 },
-    uPlantHeight: { value: height },
-    uSway: { value: sway },
-    uTint: { value: tintSpread },
   }
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uTime = uniforms.uTime
-    shader.uniforms.uPlantHeight = uniforms.uPlantHeight
-    shader.uniforms.uSway = uniforms.uSway
-    shader.uniforms.uTint = uniforms.uTint
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
         uniform float uTime;
-        uniform float uPlantHeight;
-        uniform float uSway;
-        uniform float uTint;
+        attribute float aPlantHeight;
+        attribute float aSway;
+        attribute float aTint;
         varying float vTreeTint;`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
-        #ifdef USE_INSTANCING
+        // Where this copy of the plant stands. BatchedMesh keeps its
+        // per-instance transform in batchingMatrix (declared by the
+        // batching_vertex chunk, which three includes ahead of this one);
+        // InstancedMesh keeps it in instanceMatrix. Both spellings stay
+        // because the grass carpet still instances.
+        #ifdef USE_BATCHING
+          vec3 instOrigin = batchingMatrix[3].xyz;
+        #elif defined(USE_INSTANCING)
           vec3 instOrigin = instanceMatrix[3].xyz;
         #else
           vec3 instOrigin = vec3(0.0);
         #endif
-        float lean = pow(clamp(transformed.y / uPlantHeight, 0.0, 1.0), 1.6);
+        float lean = pow(clamp(transformed.y / aPlantHeight, 0.0, 1.0), 1.6);
         // Hashed per instance, not a linear ramp — see the carpet material
         // for why a linear phase is a plane wave and shows up as scrolling
         // stripes rather than as decorrelated plants.
@@ -269,8 +279,8 @@ function makeWindMaterial(source: THREE.Material, height: number, sway: number, 
         float g1 = sin(uTime * 0.37 + instOrigin.x * 0.0027 + instOrigin.z * 0.0019);
         float g2 = sin(uTime * 0.24 - instOrigin.x * 0.0016 + instOrigin.z * 0.0034);
         float gust = 0.68 + 0.28 * (g1 * 0.6 + g2 * 0.4);
-        transformed.x += sin(uTime * 1.7 + phase) * lean * uSway * gust;
-        transformed.z += cos(uTime * 1.3 + phase * 0.7) * lean * uSway * gust * 0.6;
+        transformed.x += sin(uTime * 1.7 + phase) * lean * aSway * gust;
+        transformed.z += cos(uTime * 1.3 + phase * 0.7) * lean * aSway * gust * 0.6;
         // Per-instance tone. Real user report: a stand of the same model
         // reads as one colour stamped over and over, however the geometry is
         // varied. Hashing a shade out of the instance's own position costs
@@ -278,7 +288,7 @@ function makeWindMaterial(source: THREE.Material, height: number, sway: number, 
         // what turns a repeated model into a mixed wood. The three channels
         // are shifted by different amounts so it varies in hue as well as in
         // brightness, which is how real foliage differs tree to tree.
-        vTreeTint = 1.0 + (fract(sin(dot(instOrigin.xz, vec2(41.13, 289.7))) * 24634.63) - 0.5) * uTint;`)
+        vTreeTint = 1.0 + (fract(sin(dot(instOrigin.xz, vec2(41.13, 289.7))) * 24634.63) - 0.5) * aTint;`)
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
         varying float vTreeTint;`)
@@ -880,22 +890,32 @@ export const LOD_DISTANCE = 6 * Math.sqrt(3) * HEX_SIZE
 
 /** Smallest board on which the level of detail is worth switching on.
  *
- * Regions are not free: this board holds ~4.300 plant instances spread over
- * ~96 species-variants, about 45 to a batch, so cutting it into regions
- * takes plants from 96 draw calls to 521 — a 5,4x multiplier. LOD wins back
- * only the regions it can hide. Measured in the cockpit on the 120-tile
- * board, three of five regions went to billboards, so:
+ * Measured in the cockpit, on a quiet machine, six samples each:
  *
- *   split      x5,4 draws
- *   hidden     60% of regions
- *   net        x2,2 draws  -> a loss, 60 fps down to 48
+ *   sin LOD   9,26 ms   (9,24-9,30)
+ *   con LOD   9,26 ms   (8,93-9,34)
  *
- * Break-even needs more than 1 - 1/5,4 = 82% of regions hidden, and with
- * 6-hex regions and a 6-hex LOD radius that means a board of roughly 650
- * tiles — about 33x20 hexes, five times this one. Below that the honest
- * thing is to leave every species as one batch, which is why this is a
- * board-size test and not a preference. */
-export const LOD_MIN_TILES = 650
+ * An exact wash on this 120-tile board, and that is the interesting result
+ * rather than a disappointing one. Regions cost draw calls — a species that
+ * spanned the board in one batch becomes one batch per region — and the LOD
+ * wins them back by skipping everything beyond six hexes. Here the two
+ * cancel to within the noise.
+ *
+ * They stop cancelling as the board grows, and only one way. The COST is
+ * bounded by the LOD radius: however big the map, only the regions within
+ * six hexes draw their real plants, so the near-side bill is the same on a
+ * huge board as on this one. The SAVING is everything beyond that radius,
+ * which is what grows. Without the LOD the whole board is drawn whatever
+ * its size.
+ *
+ * So the threshold sits just above the size that measured as a wash. Below
+ * it there is nothing to gain and no reason to carry the extra machinery;
+ * above it the gap opens in the LOD's favour and keeps opening.
+ *
+ * (An earlier version of this comment put the break-even at ~650 tiles,
+ * derived from timings taken while four of the app's own views were open
+ * in another browser. Those numbers were noise.) */
+export const LOD_MIN_TILES = 200
 /** Regions swap back to full detail a little nearer than they swapped out
  * of it. Without the gap a region sitting exactly on the line flickers
  * between a forest and a billboard as the camera breathes. */
@@ -1325,7 +1345,7 @@ export function GroundVegetation({ tiles, lookup, regionSpan, lodDistance }: {
         dummy.scale.setScalar(scale)
         dummy.updateMatrix()
         for (const variant of parts) {
-          const bucketKey = `${vegetationRegion(tile.q, tile.r, regionSpan)}:${p.species}:${variant.index}`
+          const bucketKey = `${vegetationRegion(tile.q, tile.r, regionSpan)}::${p.species}:${variant.index}`
           let bucket = out.get(bucketKey)
           if (!bucket) { bucket = { variant, matrices: [] }; out.set(bucketKey, bucket) }
           bucket.matrices.push(dummy.matrix.clone())
@@ -1343,7 +1363,7 @@ export function GroundVegetation({ tiles, lookup, regionSpan, lodDistance }: {
       impostorTiles: number[]
     }>()
     for (const [key, bucket] of out) {
-      const regionKey = key.slice(0, key.indexOf(':'))
+      const regionKey = key.slice(0, key.indexOf('::'))
       let region = regions.get(regionKey)
       if (!region) {
         region = {
@@ -1435,28 +1455,109 @@ export function GroundVegetation({ tiles, lookup, regionSpan, lodDistance }: {
   )
 }
 
+/** Which variants can share one material.
+ *
+ * Everything the renderer has to bind: the maps, and the few material
+ * settings that change the shader rather than a uniform. */
+function materialKey(material: THREE.Material): string {
+  const m = material as THREE.MeshStandardMaterial
+  const id = (t: THREE.Texture | null | undefined) => t?.uuid ?? '-'
+  return [
+    m.type,
+    id(m.map), id(m.normalMap), id(m.roughnessMap), id(m.metalnessMap),
+    id(m.alphaMap), id(m.aoMap), id(m.emissiveMap),
+    m.alphaTest, m.transparent, m.side, m.vertexColors,
+  ].join('|')
+}
+
+/** The wind's three per-plant numbers, written into the geometry itself.
+ *
+ * They used to be uniforms, which forced one material per variant. As
+ * attributes they are constant across a geometry and so redundant per
+ * vertex, but they let every variant sharing a texture share ONE material —
+ * fewer programs to bind, and the same wind. */
+function bakeWindAttributes(geometry: THREE.BufferGeometry, height: number, sway: number, tint: number) {
+  if (geometry.getAttribute('aPlantHeight')) return
+  const count = geometry.getAttribute('position').count
+  const fill = (value: number) => {
+    const array = new Float32Array(count)
+    array.fill(value)
+    return new THREE.BufferAttribute(array, 1)
+  }
+  geometry.setAttribute('aPlantHeight', fill(height))
+  geometry.setAttribute('aSway', fill(sway))
+  geometry.setAttribute('aTint', fill(tint))
+}
+
+/** One wind material per distinct source material, shared board-wide.
+ *
+ * WHY THIS IS NOT A BatchedMesh, which was built, measured and removed.
+ *
+ * BatchedMesh draws many DIFFERENT geometries with one material in a single
+ * call, and it did exactly what it promised: the board went from 664 draw
+ * calls to 482, vegetation from 128 to 37. It was still slower, and not
+ * marginally. Measured on a quiet machine, six samples each, ranges that do
+ * not overlap:
+ *
+ *   InstancedMesh   664 draws   10,49 ms   (10,10-10,56)
+ *   BatchedMesh     482 draws   14,43 ms   (14,02-14,72)
+ *
+ * Fewer draw calls, 27% more time. The reason is what this board's
+ * vegetation is: 4.933 copies of only 128 distinct geometries, about 38
+ * copies each. InstancedMesh draws those with ONE hardware-instanced call
+ * and the GPU replays the same small geometry out of cache. BatchedMesh
+ * turns every copy into its own sub-draw: fewer API calls, but it gives up
+ * hardware instancing, so the GPU does strictly more work per copy.
+ * BatchedMesh is for many DISTINCT geometries with FEW copies each, which
+ * is the opposite of a meadow. It would be the right tool for scattered
+ * one-off props; it is the wrong one here.
+ *
+ * (An earlier attempt at this comparison, run while four of the app's own
+ * views were open in another browser, had the same InstancedMesh build
+ * measuring 60, 51 and 44 fps. Nothing could be concluded from that, and
+ * for a while the wrong thing was.)
+ *
+ * What survived the experiment is this: the wind's parameters became vertex
+ * attributes, so variants that share a texture now share one material
+ * instead of cloning their own. It does not change the draw count — one
+ * geometry still needs one InstancedMesh — but it does cut the number of
+ * shader programs the renderer binds per frame. */
+const windMaterialCache = new Map<string, { material: THREE.Material; uniforms: { uTime: { value: number } } }>()
+
+function sharedWindMaterial(source: THREE.Material) {
+  const key = materialKey(source)
+  let entry = windMaterialCache.get(key)
+  if (!entry) {
+    entry = makeWindMaterial(source)
+    windMaterialCache.set(key, entry)
+  }
+  return entry
+}
+
 function VegetationBatch({ variant, matrices }: { variant: Variant; matrices: THREE.Matrix4[] }) {
   const ref = useRef<THREE.InstancedMesh>(null)
-  const sway = SPECIES[variant.species].sway
-  // Trees get a real per-instance tone spread; the small plants do not need
-  // one, being small and already varied across several species.
-  const tier = SPECIES[variant.species].tier
-  const tintSpread = tier === 'tree' || tier === 'hero' ? 0.34 : 0
-  const { material, uniforms } = useMemo(
-    () => makeWindMaterial(variant.material, variant.height, sway, tintSpread),
-    [variant, sway, tintSpread],
-  )
-  useEffect(() => () => material.dispose(), [material])
+  const species = SPECIES[variant.species]
+  const tier = species.tier
+  const { material, uniforms } = useMemo(() => sharedWindMaterial(variant.material), [variant.material])
+
+  const geometry = useMemo(() => {
+    // Trees get a real per-instance tone spread; the small plants do not
+    // need one, being small and already varied across several species.
+    bakeWindAttributes(
+      variant.geometry, variant.height, species.sway,
+      tier === 'tree' || tier === 'hero' ? 0.34 : 0,
+    )
+    return variant.geometry
+  }, [variant, species.sway, tier])
 
   useEffect(() => {
     const mesh = ref.current
     if (!mesh) return
     matrices.forEach((m, i) => mesh.setMatrixAt(i, m))
     mesh.instanceMatrix.needsUpdate = true
-    // An InstancedMesh's own bounding sphere spans its instances, not one
-    // instance at the origin — but only once something computes it, and
-    // only for the matrices written so far. This is what makes the
-    // frustum test below mean anything.
+    // An InstancedMesh's own bounding sphere spans its instances, but only
+    // once something computes it, and only for the matrices written so far.
+    // This is what makes the frustum test below mean anything.
     mesh.computeBoundingSphere()
   }, [matrices])
 
@@ -1466,13 +1567,13 @@ function VegetationBatch({ variant, matrices }: { variant: Variant; matrices: TH
   return (
     <instancedMesh
       ref={ref}
-      args={[variant.geometry, material, matrices.length]}
+      args={[geometry, material, matrices.length]}
       userData={{ perfGroup: tier === 'tree' || tier === 'hero' ? 'árboles' : 'plantas' }}
       receiveShadow
       // No castShadow on purpose. A shadow map re-renders every caster from
       // the light's point of view, so switching it on here would double the
-      // cost of the single heaviest thing on the board for shadows that, at
-      // grass scale, land almost entirely underneath the plant casting them.
+      // cost of the heaviest thing on the board for shadows that, at grass
+      // scale, land almost entirely underneath the plant casting them.
       castShadow={false}
     />
   )

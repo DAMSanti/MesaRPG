@@ -2667,7 +2667,13 @@ export function HexMap({
   // pay for it. Regions multiply draw calls and LOD wins them back only on
   // what it can hide, so below LOD_MIN_TILES the split costs more than the
   // hiding saves — measured, not assumed.
-  const lodWorthwhile = (cullRegions ?? false) && map.tiles.length >= LOD_MIN_TILES
+  // ?lod=1 forces it on regardless of board size, so the two can be
+  // compared on a board this one's size instead of only in theory.
+  const lodForced = useMemo(
+    () => new URLSearchParams(window.location.search).get('lod') === '1',
+    [],
+  )
+  const lodWorthwhile = (cullRegions ?? false) && (lodForced || map.tiles.length >= LOD_MIN_TILES)
   const vegetationRegionSpan = lodWorthwhile ? VEGETATION_REGION_SPAN : null
   const riverFlow = useMemo(() => computeRiverFlow(map.tiles).direction, [map.tiles])
   // Same resting-height formula UnitMarker computes for itself (restY),
