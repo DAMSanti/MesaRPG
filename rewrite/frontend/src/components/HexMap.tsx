@@ -40,6 +40,7 @@ import {
   adoptSavedLimb, clearDroppedLimbs, dropLimb, droppedLimbList, droppedLimbVersion, undropLimb,
 } from '../droppedLimbs'
 import { FallenLimb } from './FallenLimb'
+import { UnfilteredHighlights, type HighlightedHex } from './UnfilteredHighlights'
 
 // useMechAnnotationsCache moved to ../mechAnnotations — Mech3D needs it
 // too (to read a limb's real membership out of the same saved data), and
@@ -2539,7 +2540,7 @@ export function HexMap({
   destroyedReasonByUnitId,
   severedLocationsByUnitId,
   teamVisibleHexes, fogSubtle, physics, cullRegions, activeAttack, onAttackEffectDone, onAttackImpact, onUnitWalkDone, onUnitWalkStep,
-  onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange, boardgameScale,
+  onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange, boardgameScale, unfilteredOverlays,
 }: {
   map: MapData
   units: Unit[]
@@ -2577,6 +2578,17 @@ export function HexMap({
    * (rounds.ts's activeMoverPilotId) — their unit's tile gets the amber
    * wash. null/omitted highlights nothing. */
   activeMoverPilotId?: number | null
+  /** The GM's night vision is on, so the amber "es su turno" wash is about
+   * to come out green like everything else.
+   *
+   * Real user request: "SOLO quiero que se vea sin el brillo verde el
+   * overlay... el hex debajo del mech que le toca actuar." The green is a
+   * CSS filter over the canvas, and a filter treats the canvas as one
+   * image — it cannot tell the board from a marker drawn on it. So under
+   * night vision that one marker is ALSO drawn as a DOM element, which
+   * drei's <Html> portals next to the canvas rather than into it and which
+   * the filter therefore never touches. */
+  unfilteredOverlays?: boolean
   /** Pilot ids who may act right now during the ranged/melee phases
    * (rounds.ts's activeAttackPilotIds) — same amber wash as
    * activeMoverPilotId, just a set instead of a single id since more
@@ -3133,8 +3145,37 @@ export function HexMap({
     }
   }
 
+  // The same colours and opacities the 3D washes use, in the same stacking
+  // order — this is the same information, drawn twice for two different
+  // display paths, so it must not drift into a second palette.
+  const unfilteredHighlightHexes: HighlightedHex[] = []
+  if (unfilteredOverlays) {
+    const add = (keys: Iterable<string> | undefined, color: string, opacity: number) => {
+      if (!keys) return
+      for (const key of keys) {
+        const [q, r] = key.split(',').map(Number)
+        if (Number.isFinite(q) && Number.isFinite(r)) {
+          unfilteredHighlightHexes.push({ q, r, color, opacity })
+        }
+      }
+    }
+    add(needsInitiativeTiles, '#ff3b3b', 0.45)
+    add(activeMoverTiles, '#ffb020', 0.5)
+    add(moveHighlightHexes, '#4a9eff', 0.4)
+    add(pathPreviewHexes, '#ffffff', 0.55)
+    add(targetableHexes, '#e35d5d', 0.45)
+  }
+
   return (
     <group position={[-centerX, 0, -centerZ]}>
+      {/* Every highlight the GM relies on, redrawn as DOM so the night
+          vision filter cannot recolour it — see UnfilteredHighlights. */}
+      {unfilteredOverlays && (
+        <UnfilteredHighlights
+          hexes={unfilteredHighlightHexes}
+          centerX={centerX} centerZ={centerZ} groundYAt={groundYAt}
+        />
+      )}
       {map.tiles.map((tile) => (
         <Tile
           key={`${tile.q},${tile.r}`} tile={tile} lookup={lookup} riverFlow={riverFlow}

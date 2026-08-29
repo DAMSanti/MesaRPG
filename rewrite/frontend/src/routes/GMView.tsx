@@ -1410,6 +1410,7 @@ function GMViewBattletech() {
                   shutdownUnitIds={shutdownUnitIds}
                   destroyedReasonByUnitId={destroyedReasonByUnitId}
                   severedLocationsByUnitId={severedLocationsByUnitId}
+                  unfilteredOverlays={nightVision}
                   activeAttack={activeAttackVfx}
                   onAttackEffectDone={onAttackEffectDone}
                   onUnitWalkDone={heldMover.onUnitWalkDone}

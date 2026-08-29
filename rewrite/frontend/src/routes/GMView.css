@@ -465,3 +465,14 @@ button.undo {
   color: var(--text-secondary);
   min-width: 44px;
 }
+
+/* The GM's tile highlights, redrawn as DOM so the night-vision filter
+   (which applies to the canvas as a single image) cannot recolour them —
+   see UnfilteredHighlights. Only mounted while the goggles are on. */
+.unfiltered-highlights {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+}

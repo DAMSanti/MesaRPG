@@ -25,7 +25,7 @@ import './TableView.css'
 import { SceneLighting } from '../components/SceneLighting'
 import { GlDiagnostics } from '../components/GlDiagnostics'
 import { deviceProfile } from '../deviceProfile'
-import { DEFAULT_TIME_OF_DAY } from '../dayNight'
+import { dayNightRig, DEFAULT_TIME_OF_DAY } from '../dayNight'
 import { PerfProbe, PerfPhysicsProbe } from '../components/PerfProbe'
 import { PerfHud } from '../components/PerfHud'
 import { FrameGate, useRenderPolicy } from '../components/RenderPolicy'
@@ -613,7 +613,20 @@ function TableViewBattletech() {
             a reflection is not losing the board. */}
         {gpu.heavyEffects && (
           <Suspense fallback={null}>
-            <Environment files="/textures/dice-env.exr" background={false} />
+            {/* Real user report: "la iluminacion diurna/nocturna en table
+                view no tiene nada que ver con la de GMview." Both views run
+                the same SceneLighting on the same hour, but only this one
+                also carries an image-based light — and an HDRI shot at
+                midday lights the whole board at midday brightness no matter
+                where the slider is, which is exactly enough to drown the
+                day/night cycle out. Dimming it with the sun is what makes
+                the two agree; it still does its real job (real reflections
+                in the chrome and glass dice) whenever there is light to
+                reflect. */}
+            <Environment
+              files="/textures/dice-env.exr" background={false}
+              environmentIntensity={0.05 + (1 - dayNightRig(timeOfDay).darkness) * 0.95}
+            />
           </Suspense>
         )}
         {/* -9.81 was real Earth gravity for the dice, the only dynamic
