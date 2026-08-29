@@ -2,7 +2,7 @@
 
 Una mesa física — pantalla, cámara cenital, luces perimetrales — que convierte una partida de rol/wargame de mesa en una experiencia asistida por software, sin quitarle la parte física que la gente valora: miniaturas reales, dados que ruedan, gente alrededor de una mesa. El software se encarga de lo tedioso (cálculos de reglas, colocación de fichas, niebla de guerra, arbitraje) para que el grupo juegue más y arbitre menos.
 
-> 📋 **Estado del proyecto (2026-08-14)**: tras validar un prototipo funcional (visión por computadora, sincronización en tiempo real, fichas de personaje), se decidió una **reescritura completa** del sistema para llevarlo de "prototipo casero de Battletech" a producto vendible multi-sistema. Ver [`VISION.md`](VISION.md) para el producto/negocio objetivo y [`ROADMAP.md`](ROADMAP.md) para el plan de trabajo. Este README describe la visión; el prototipo anterior sigue documentado en [`SPECS.md`](SPECS.md) como referencia técnica de lo que ya se validó.
+> 📋 **Estado del proyecto (2026-08-29)**: tras validar un prototipo funcional (visión por computadora, sincronización en tiempo real, fichas de personaje), el proyecto pasó por una **reescritura completa** hacia un producto vendible multi-sistema. El código vive ahora íntegramente en [`rewrite/`](rewrite/); el prototipo anterior ya no forma parte del repositorio. Ver [`VISION.md`](VISION.md) para el producto/negocio objetivo y [`ROADMAP.md`](ROADMAP.md) para el plan de trabajo.
 
 ## ✨ Qué hace
 
@@ -36,26 +36,12 @@ Razonamiento completo de cada decisión en [`VISION.md` §3](VISION.md#3-arquite
 |---|---|
 | [`VISION.md`](VISION.md) | Visión de producto, modelo de negocio, arquitectura objetivo, catálogo completo de funcionalidades, estudio de hardware |
 | [`ROADMAP.md`](ROADMAP.md) | Plan de trabajo por fases (R0 en adelante); historial de las fases ya completadas sobre el prototipo anterior |
-| [`SPECS.md`](SPECS.md) | Cómo estaba construido el prototipo (referencia técnica, ya no es el destino) |
-| `docs/` | Guías puntuales heredadas del prototipo (cámara, hardware, marcadores, API, despliegue) — a revisar/actualizar según avance la reescritura |
+| [`rewrite/README.md`](rewrite/README.md) | Cómo levantar y desarrollar el backend/frontend actuales |
+| `docs/business/`, `docs/investors/`, `docs/product/` | Material de negocio y diseño de producto |
 
-## 🚀 Prototipo actual (heredado, sigue funcionando)
+## 🚀 Puesta en marcha
 
-El prototipo previo a la reescritura sigue siendo ejecutable y sirve de referencia de comportamiento mientras avanza la Fase R0. No es la base de código final.
-
-```bash
-cd MesaRPG
-python -m venv venv
-.\venv\Scripts\activate       # Windows
-pip install -r server/requirements.txt
-python server/main.py
-```
-
-- Pantalla de visualización: http://localhost:8000/display
-- App móvil (jugadores): http://localhost:8000/mobile
-- Panel de GM: http://localhost:8000/admin
-
-Ver [`docs/SETUP.md`](docs/SETUP.md) y [`docs/CAMERA.md`](docs/CAMERA.md) para el detalle de este prototipo.
+Todo el código vive en [`rewrite/`](rewrite/) (backend Python + frontend React/Three.js). Ver [`rewrite/README.md`](rewrite/README.md) para instrucciones de arranque.
 
 ## 📄 Licencia
 

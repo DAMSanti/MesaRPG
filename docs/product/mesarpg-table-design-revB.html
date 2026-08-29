@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ingeniería de la mesa MesaRPG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap">
+
+<style>
+:root{
+  --paper:#eef1ef; --paper-raised:#e4e9e6; --paper-sunk:#dae1dd;
+  --ink:#161f1d; --ink-soft:#4f5c58; --ink-faint:#82908b;
+  --line:#c3ccc6; --line-strong:#9aa6a0;
+  --blueprint:#0f5f5f; --blueprint-soft:#dcebe9;
+  --amber:#9a5a17; --amber-soft:#f4e5cf;
+  --brick:#8c3226; --brick-soft:#f5dfda;
+  --walnut:#7d5130; --glass:#5b8fa8;
+  --shadow:rgba(22,31,29,.09);
+  --grid:rgba(15,95,95,.10);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#101d1c; --paper-raised:#162624; --paper-sunk:#0b1615;
+    --ink:#e9f3f1; --ink-soft:#a6bdb8; --ink-faint:#6d827e;
+    --line:#284040; --line-strong:#3b5757;
+    --blueprint:#79d2c6; --blueprint-soft:#16332f;
+    --amber:#e0a463; --amber-soft:#372817;
+    --brick:#e08a76; --brick-soft:#3a1e18;
+    --walnut:#c69869; --glass:#8cc0d6;
+    --shadow:rgba(0,0,0,.4);
+    --grid:rgba(121,210,198,.10);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#101d1c; --paper-raised:#162624; --paper-sunk:#0b1615;
+  --ink:#e9f3f1; --ink-soft:#a6bdb8; --ink-faint:#6d827e;
+  --line:#284040; --line-strong:#3b5757;
+  --blueprint:#79d2c6; --blueprint-soft:#16332f;
+  --amber:#e0a463; --amber-soft:#372817;
+  --brick:#e08a76; --brick-soft:#3a1e18;
+  --walnut:#c69869; --glass:#8cc0d6;
+  --shadow:rgba(0,0,0,.4);
+  --grid:rgba(121,210,198,.10);
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+  font-size:16.5px; line-height:1.62; -webkit-font-smoothing:antialiased;
+}
+.sheet{max-width:1000px; margin:0 auto; padding:0 28px 120px;}
+h1,h2,h3,.kicker,.tb,.chip,th,.lbl{font-family:"Archivo","Segoe UI",system-ui,sans-serif;}
+.mono,td.n,.tb,.dim{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;}
+
+.tb{margin-top:36px; border:1.5px solid var(--line-strong); display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr));}
+.tb div{padding:9px 13px; border-right:1px solid var(--line); font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-faint);}
+.tb div:last-child{border-right:none;}
+.tb b{display:block; color:var(--ink); font-weight:600; letter-spacing:.02em; font-size:12.5px; margin-top:2px;}
+
+header.hero{padding:44px 0 6px;}
+.kicker{font-size:12px; text-transform:uppercase; letter-spacing:.16em; color:var(--blueprint); margin:0 0 12px; font-weight:600;}
+h1{font-size:clamp(2.15rem,1.5rem+2.4vw,3.35rem); line-height:1.02; letter-spacing:-.022em; font-weight:700; margin:0 0 18px; max-width:18ch; text-wrap:balance;}
+.lede{font-size:1.17rem; color:var(--ink-soft); max-width:64ch; margin:0;}
+
+section{padding:56px 0 4px; border-top:1px solid var(--line);}
+.shead{display:flex; align-items:baseline; gap:14px; margin-bottom:8px;}
+.snum{font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-faint); border:1px solid var(--line-strong); padding:2px 7px;}
+h2{font-size:1.42rem; letter-spacing:-.012em; font-weight:700; margin:0; text-wrap:balance;}
+h3{font-size:1.02rem; font-weight:600; margin:30px 0 8px; color:var(--ink);}
+p{color:var(--ink-soft); margin:0 0 15px; max-width:70ch;}
+strong{color:var(--ink); font-weight:600;}
+em{color:var(--ink); font-style:italic;}
+ul,ol{color:var(--ink-soft); max-width:70ch; padding-left:1.15em; margin:0 0 16px;}
+li{margin-bottom:7px;}
+.dek{font-size:1.03rem; color:var(--ink-soft); max-width:70ch; margin:0 0 22px;}
+a{color:var(--blueprint);} a:focus-visible{outline:2px solid var(--blueprint); outline-offset:2px;}
+
+.note{border-left:3px solid var(--blueprint); background:var(--blueprint-soft); padding:14px 18px; margin:22px 0; max-width:74ch;}
+.note.warn{border-left-color:var(--amber); background:var(--amber-soft);}
+.note.stop{border-left-color:var(--brick); background:var(--brick-soft);}
+.note p{margin:0; color:var(--ink); max-width:none;} .note p+p{margin-top:9px;}
+.note ul{margin:9px 0 0; color:var(--ink);}
+.lbl{display:block; font-size:10.5px; font-weight:600; letter-spacing:.13em; text-transform:uppercase; color:var(--blueprint); margin-bottom:6px;}
+.note.warn .lbl{color:var(--amber);} .note.stop .lbl{color:var(--brick);}
+
+.tw{overflow-x:auto; margin:22px 0; border:1px solid var(--line);}
+table{border-collapse:collapse; width:100%; font-size:14.5px; background:var(--paper-raised); min-width:540px;}
+th{text-align:left; font-size:10.5px; letter-spacing:.11em; text-transform:uppercase; color:var(--ink-faint); font-weight:600; padding:11px 13px; border-bottom:1.5px solid var(--line-strong); background:var(--paper-sunk); vertical-align:bottom;}
+td{padding:10px 13px; border-bottom:1px solid var(--line); color:var(--ink-soft); vertical-align:top;}
+tr:last-child td{border-bottom:none;}
+td.n,th.n{text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap;}
+td b{color:var(--ink);}
+tr.total td{background:var(--paper-sunk); color:var(--ink); font-weight:600; border-top:1.5px solid var(--line-strong);}
+tr.pick td{background:var(--blueprint-soft);}
+tr.pick td b{color:var(--ink);}
+
+.chip{display:inline-block; font-size:10px; font-weight:600; letter-spacing:.09em; text-transform:uppercase; padding:2.5px 7px; border:1px solid currentColor; white-space:nowrap;}
+.c-hi{color:var(--brick);} .c-md{color:var(--amber);} .c-lo{color:var(--blueprint);}
+
+figure{margin:26px 0 8px;}
+.frame{background:var(--paper-raised); border:1px solid var(--line); padding:20px 18px; overflow-x:auto;}
+figure svg{display:block; width:100%; height:auto; min-width:520px;}
+figcaption{font-size:13px; color:var(--ink-faint); margin-top:11px; max-width:72ch;}
+
+.metrics{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:2px; margin:24px 0;}
+.metric{background:var(--paper-raised); border:1px solid var(--line); padding:15px 16px;}
+.metric .k{font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--ink-faint); font-family:"Archivo",sans-serif; font-weight:600;}
+.metric .v{font-family:"IBM Plex Mono",monospace; font-size:1.45rem; font-weight:600; color:var(--ink); line-height:1.2; margin-top:6px; font-variant-numeric:tabular-nums;}
+.metric .s{font-size:12.5px; color:var(--ink-faint); margin-top:3px;}
+.metric.hot .v{color:var(--brick);} .metric.good .v{color:var(--blueprint);}
+
+footer{margin-top:60px; padding-top:22px; border-top:1.5px solid var(--line-strong); font-size:12.5px; color:var(--ink-faint);}
+footer p{color:var(--ink-faint); font-size:12.5px;}
+
+@media (max-width:640px){.sheet{padding:0 18px 80px;} body{font-size:16px;}}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important;}}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+<div class="tb">
+  <div>Documento<b>MRPG-TABLE-02</b></div>
+  <div>Revisión<b>B</b></div>
+  <div>Sustituye a<b>MRPG-TABLE-01 Rev. A</b></div>
+  <div>Fecha<b>23-08-2026</b></div>
+  <div>Escala<b>NTS · cotas en mm</b></div>
+</div>
+
+<header class="hero">
+  <p class="kicker">MesaRPG · Especificación de diseño industrial</p>
+  <h1>La mesa, con los números hechos</h1>
+  <p class="lede">Revisión de ingeniería del mueble: cotas corregidas, cálculos de cristal, térmica y geometría de cámara, lista de materiales con precios a una y a cien unidades, y el hallazgo que probablemente decide si el producto funciona — que no está en el mueble, sino en cómo se ilumina.</p>
+</header>
+
+<section>
+  <div class="shead"><span class="snum">01</span><h2>Qué cambia respecto a la Rev. A</h2></div>
+  <p class="dek">Cinco correcciones. Ninguna invalida el concepto; tres afectan al precio y al envío.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Concepto</th><th class="n">Rev. A</th><th class="n">Rev. B</th><th>Motivo</th></tr></thead>
+    <tbody>
+      <tr><td><b>Peso ensamblada</b></td><td class="n">~48 kg</td><td class="n"><b>~69 kg</b></td><td>Desglose por partida en §02. El bastidor, el cristal y el panel solos ya suman 44 kg</td></tr>
+      <tr><td><b>Dimensiones</b></td><td class="n">1400 × 900 × 720</td><td class="n"><b>1500 × 950 × 740</b></td><td>El rail perimetral de la Rev. A era de 87 mm: no cabe una mano con dados. 137 mm es lo mínimo utilizable</td></tr>
+      <tr><td><b>Altura del brazo de cámara</b></td><td class="n">~850 mm</td><td class="n"><b>570-800</b> según óptica</td><td>A 850 mm con una webcam corriente la cobertura se queda 10 mm corta. §04 da la tabla completa</td></tr>
+      <tr><td><b>Cristal</b></td><td class="n">4-6 mm</td><td class="n"><b>6 mm firme</b></td><td>A 4 mm la flecha con carga puntual es de 3,9 mm y toca el panel. Cálculo en §06</td></tr>
+      <tr><td><b>Bultos de envío</b></td><td class="n">2 cajas</td><td class="n"><b>4 bultos o 1 palet</b></td><td>La paquetería en la UE corta entre 20 y 31,5 kg por bulto. §11</td></tr>
+      <tr><td><b>Tira LED</b></td><td>WS2812B (5 V)</td><td><b>WS2815 (12 V)</b></td><td>Línea de datos redundante y sin caída de tensión en 4,1 m. §09</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="metrics">
+    <div class="metric hot"><div class="k">Peso real</div><div class="v">69 kg</div><div class="s">+44 % sobre Rev. A</div></div>
+    <div class="metric"><div class="k">Coste unitario (100 ud.)</div><div class="v">1.057 €</div><div class="s">materiales + montaje + merma</div></div>
+    <div class="metric"><div class="k">Coste unitario (1 ud.)</div><div class="v">1.564 €</div><div class="s">prototipo</div></div>
+    <div class="metric good"><div class="k">Consumo en uso</div><div class="v">~190 W</div><div class="s">pico 260 W</div></div>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">02</span><h2>Geometría, cotas y masa</h2></div>
+  <p class="dek">Todo lo demás se deriva del panel. El panel de clase 55″ tiene un área activa de 1209,6 × 680,4 mm; esa es la única cota que no se puede negociar.</p>
+
+  <figure>
+    <div class="frame">
+      <svg viewBox="0 0 880 500" role="img" aria-label="Vista en planta acotada de la mesa: bastidor de 1500 por 950 mm con superficie de juego de 1209,6 por 680,4 mm centrada">
+        <defs>
+          <pattern id="g2" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0H0v20" fill="none" stroke="var(--grid)" stroke-width="1"/></pattern>
+          <marker id="ar" markerWidth="8" markerHeight="8" refX="4" refY="4" orient="auto">
+            <path d="M0 4 L8 1.5 L8 6.5 Z" fill="var(--blueprint)"/>
+          </marker>
+        </defs>
+        <rect width="880" height="500" fill="url(#g2)"/>
+
+        <!-- outer frame 1500x950 -> scale 0.4 => 600x380, offset -->
+        <g transform="translate(130,58)">
+          <rect x="0" y="0" width="600" height="380" fill="var(--paper-sunk)" stroke="var(--ink-soft)" stroke-width="1.6"/>
+          <!-- LED channel -->
+          <rect x="14" y="14" width="572" height="352" fill="none" stroke="var(--amber)" stroke-width="1.4" stroke-dasharray="6 4"/>
+          <!-- play surface 1209.6x680.4 *0.4 = 483.8 x 272.2, centered -->
+          <rect x="58.1" y="53.9" width="483.8" height="272.2" fill="var(--blueprint-soft)" stroke="var(--blueprint)" stroke-width="1.6"/>
+          <text x="300" y="182" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" fill="var(--blueprint)">1209,6 × 680,4</text>
+          <text x="300" y="199" text-anchor="middle" font-family="Archivo, sans-serif" font-size="10.5" fill="var(--ink-faint)" letter-spacing="1">SUPERFICIE DE JUEGO · PANEL 55″</text>
+          <text x="300" y="216" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--ink-faint)">570 hex de 40 mm · 880 casillas de 30 mm</text>
+
+          <!-- camera arm anchor -->
+          <rect x="270" y="-8" width="60" height="16" fill="var(--paper-raised)" stroke="var(--ink-soft)" stroke-width="1.4"/>
+          <circle cx="300" cy="0" r="3.4" fill="var(--blueprint)"/>
+          <text x="340" y="4" font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--ink-faint)">anclaje del brazo de cámara</text>
+
+          <!-- rail labels -->
+          <text x="29" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--ink-faint)" transform="rotate(-90 29 196)">RAIL 137</text>
+          <text x="571" y="196" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--ink-faint)" transform="rotate(90 571 196)">RAIL 137</text>
+          <text x="300" y="34" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--ink-faint)">RAIL 125</text>
+          <text x="300" y="352" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--ink-faint)">RAIL 125</text>
+
+          <!-- seats -->
+          <g fill="none" stroke="var(--ink-faint)" stroke-width="1.2" stroke-dasharray="3 3">
+            <rect x="110" y="392" width="150" height="34" rx="4"/><rect x="340" y="392" width="150" height="34" rx="4"/>
+            <rect x="110" y="-46" width="150" height="34" rx="4"/><rect x="340" y="-46" width="150" height="34" rx="4"/>
+            <rect x="-46" y="140" width="34" height="100" rx="4"/><rect x="612" y="140" width="34" height="100" rx="4"/>
+          </g>
+          <text x="185" y="413" text-anchor="middle" font-family="Archivo, sans-serif" font-size="9" fill="var(--ink-faint)" letter-spacing="1">6 PLAZAS · 750 mm/jugador</text>
+        </g>
+
+        <!-- dimension lines -->
+        <g stroke="var(--blueprint)" stroke-width="1.1" font-family="IBM Plex Mono, monospace" font-size="11" fill="var(--blueprint)">
+          <path d="M130 466 H730" marker-start="url(#ar)" marker-end="url(#ar)"/>
+          <text x="430" y="484" text-anchor="middle">1500</text>
+          <path d="M96 58 V438" marker-start="url(#ar)" marker-end="url(#ar)"/>
+          <text x="80" y="252" text-anchor="middle" transform="rotate(-90 80 252)">950</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Planta a escala. El rectángulo interior es el área activa del panel; la línea ámbar discontinua es el canal de LED perimetral. El rail de 125-137 mm es la superficie útil donde los jugadores dejan dados, fichas y bebidas — la Rev. A lo dejaba en 87 mm, insuficiente.</figcaption>
+  </figure>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Cota</th><th class="n">Valor</th><th>Nota</th></tr></thead>
+    <tbody>
+      <tr><td>Ancho × fondo × alto</td><td class="n">1500 × 950 × 740</td><td>Altura compatible con silla de comedor estándar; pies regulables ±15 mm</td></tr>
+      <tr><td>Área activa del panel</td><td class="n">1209,6 × 680,4</td><td>Clase 55″ 16:9 (54,6″ reales de diagonal)</td></tr>
+      <tr><td>Contorno del panel <em>open frame</em></td><td class="n">~1225 × 700</td><td>Verificar con la referencia concreta; varía ±8 mm entre fabricantes</td></tr>
+      <tr><td>Cristal</td><td class="n">1240 × 712 × 6</td><td>Apoyado en rebaje perimetral de 12 mm sobre junta EPDM</td></tr>
+      <tr><td>Hueco de aire cristal-panel</td><td class="n">10</td><td>Mínimo 8 mm por térmica y flecha (§06, §07)</td></tr>
+      <tr><td>Rail perimetral útil</td><td class="n">137 / 125</td><td>Lados largos / lados cortos</td></tr>
+      <tr><td>Faldón</td><td class="n">150 de alto</td><td>Aloja canal LED, altavoces y mazo de cables</td></tr>
+      <tr><td>Densidad de píxel</td><td class="n">3,17 px/mm</td><td>80,6 ppp. Una casilla de 25,4 mm son 80 px</td></tr>
+      <tr><td>Despeje recomendado alrededor</td><td class="n">≥ 750</td><td>Por lado, para sillas</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Rejilla de juego</h3>
+  <div class="tw">
+  <table>
+    <thead><tr><th>Rejilla</th><th class="n">Paso</th><th class="n">Capacidad</th><th>Equivalencia</th></tr></thead>
+    <tbody>
+      <tr class="pick"><td><b>Hexágono (BattleTech)</b></td><td class="n">40 mm entre caras</td><td class="n">30 × 19 = <b>570</b></td><td>≈ 2,2 mapas estándar de 15 × 17</td></tr>
+      <tr><td>Hexágono, holgado</td><td class="n">50 mm</td><td class="n">24 × 15 = 360</td><td>≈ 1,4 mapas. Mejor para miniaturas grandes</td></tr>
+      <tr><td>Hexágono, denso</td><td class="n">35 mm</td><td class="n">34 × 22 = 748</td><td>≈ 2,9 mapas. Límite práctico con bases de 25 mm</td></tr>
+      <tr class="pick"><td><b>Cuadrícula (D&amp;D)</b></td><td class="n">30 mm</td><td class="n">40 × 22 = <b>880</b></td><td>Cómodo con bases de 25 mm</td></tr>
+      <tr><td>Cuadrícula, escala 1″</td><td class="n">25,4 mm</td><td class="n">47 × 26 = 1.222</td><td>Escala canónica, pero justa</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Desglose de masa</h3>
+  <div class="tw">
+  <table>
+    <thead><tr><th>Partida</th><th class="n">Masa</th><th>Especificación</th></tr></thead>
+    <tbody>
+      <tr><td>Bastidor de acero</td><td class="n">16,1 kg</td><td>Tubo cuadrado 25 × 25 × 1,5 S235JR, ~14,5 m, pintura en polvo</td></tr>
+      <tr><td>Panel 55″ <em>open frame</em></td><td class="n">15,0 kg</td><td>Sin carcasa; incluye chapa trasera y placa driver</td></tr>
+      <tr><td>Cristal templado 6 mm</td><td class="n">13,2 kg</td><td>Bajo hierro, antirreflejo, cantos pulidos</td></tr>
+      <tr><td>Faldón</td><td class="n">9,5 kg</td><td>DM de 18 mm, 4,9 m × 150 mm, chapado o lacado</td></tr>
+      <tr><td>Bandeja inferior</td><td class="n">6,7 kg</td><td>Contrachapado de 12 mm, cobertura parcial (60 %)</td></tr>
+      <tr><td>Electrónica, fuente, altavoces, cableado</td><td class="n">3,2 kg</td><td>Bloque precableado de fábrica</td></tr>
+      <tr><td>Brazo de cámara</td><td class="n">2,2 kg</td><td>Perfil de aluminio, plegable</td></tr>
+      <tr><td>Canal LED de aluminio + difusor</td><td class="n">1,4 kg</td><td>17 × 8 mm, 4,1 m</td></tr>
+      <tr><td>Tornillería, insertos, junta, pies</td><td class="n">1,6 kg</td><td>Insertos M8 preinstalados</td></tr>
+      <tr class="total"><td>Total ensamblada</td><td class="n">69,0 kg</td><td>Sin embalaje</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note warn">
+    <span class="lbl">Consecuencia de seguridad</span>
+    <p>Con 69 kg totales, el paso crítico del montaje es colocar el panel de 15 kg y el cristal de 13,2 kg sobre un bastidor a 740 mm de altura. <strong>Una persona sola no debería hacerlo</strong>, y la Rev. A prometía montaje «sin ayuda». Dos salidas: declarar el montaje como tarea de dos personas en la documentación, o —mejor— <strong>diseñar guías laterales que permitan deslizar el panel horizontalmente</strong> en lugar de levantarlo por encima del bastidor. La segunda opción también reduce el riesgo de arañar el panel.</p>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">03</span><h2>Pila de capas</h2></div>
+  <p class="dek">De abajo a arriba, en el orden real de montaje. La única capa que distingue el SKU Premium sigue siendo el marco táctil.</p>
+
+  <figure>
+    <div class="frame">
+      <svg viewBox="0 0 880 330" role="img" aria-label="Sección transversal de la mesa mostrando las capas apiladas y el recorrido del aire de refrigeración">
+        <rect width="880" height="330" fill="none"/>
+        <g font-family="IBM Plex Mono, monospace" font-size="11">
+          <!-- table body -->
+          <g stroke="var(--ink-soft)" stroke-width="1.5" fill="none">
+            <path d="M120 96 H700 V246 H120 Z"/>
+          </g>
+          <!-- glass -->
+          <rect x="120" y="82" width="580" height="9" fill="var(--blueprint-soft)" stroke="var(--glass)" stroke-width="1.6"/>
+          <text x="712" y="90" fill="var(--glass)">cristal templado 6 mm · AR</text>
+          <!-- air gap -->
+          <rect x="128" y="91" width="564" height="13" fill="none" stroke="var(--amber)" stroke-width="1" stroke-dasharray="4 3"/>
+          <text x="712" y="104" fill="var(--amber)">hueco de aire 10 mm</text>
+          <!-- IR touch frame -->
+          <rect x="124" y="104" width="12" height="10" fill="var(--paper-sunk)" stroke="var(--amber)" stroke-width="1.4"/>
+          <rect x="684" y="104" width="12" height="10" fill="var(--paper-sunk)" stroke="var(--amber)" stroke-width="1.4"/>
+          <text x="712" y="118" fill="var(--amber)">marco táctil IR — solo Premium</text>
+          <!-- panel -->
+          <rect x="130" y="114" width="560" height="22" fill="var(--paper-sunk)" stroke="var(--ink-soft)" stroke-width="1.5"/>
+          <text x="712" y="130" fill="var(--ink-soft)">panel 4K 55″ open frame</text>
+          <!-- chassis void -->
+          <rect x="130" y="140" width="560" height="66" fill="none" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="3 3"/>
+          <rect x="470" y="152" width="132" height="42" fill="var(--blueprint-soft)" stroke="var(--blueprint)" stroke-width="1.4"/>
+          <text x="536" y="170" text-anchor="middle" fill="var(--blueprint)" font-size="10">Pi 5 + AI HAT</text>
+          <text x="536" y="184" text-anchor="middle" fill="var(--blueprint)" font-size="10">ESP32 · fuente</text>
+          <text x="712" y="176" fill="var(--ink-faint)">chasis electrónico</text>
+          <!-- bottom tray -->
+          <rect x="130" y="206" width="560" height="10" fill="var(--paper-sunk)" stroke="var(--ink-soft)" stroke-width="1.4"/>
+          <text x="712" y="216" fill="var(--ink-faint)">bandeja inferior 12 mm</text>
+          <!-- skirt + LED -->
+          <rect x="120" y="216" width="14" height="30" fill="var(--paper-sunk)" stroke="var(--walnut)" stroke-width="1.4"/>
+          <rect x="686" y="216" width="14" height="30" fill="var(--paper-sunk)" stroke="var(--walnut)" stroke-width="1.4"/>
+          <circle cx="127" cy="99" r="3.6" fill="var(--amber)"/><circle cx="693" cy="99" r="3.6" fill="var(--amber)"/>
+          <text x="712" y="240" fill="var(--walnut)">faldón + canal LED perimetral</text>
+
+          <!-- airflow -->
+          <g stroke="var(--blueprint)" stroke-width="1.6" fill="none" stroke-linecap="round">
+            <path d="M104 200 h30 M134 200 l-7 -5 M134 200 l-7 5"/>
+            <path d="M150 196 C 220 196, 220 108, 300 108 C 420 108, 520 108, 620 108"/>
+            <path d="M620 108 C 660 108, 668 130, 668 150"/>
+            <path d="M668 150 v42 M668 192 l-5 -7 M668 192 l5 -7"/>
+            <path d="M700 200 h-24"/>
+          </g>
+          <text x="72" y="204" fill="var(--blueprint)" font-size="10">aire</text>
+          <text x="716" y="200" fill="var(--blueprint)" font-size="10">extracción</text>
+          <!-- legs -->
+          <g stroke="var(--ink-soft)" stroke-width="1.5">
+            <path d="M144 246 v66"/><path d="M164 246 v66"/><path d="M656 246 v66"/><path d="M676 246 v66"/>
+            <path d="M120 312 H700" stroke-width="1.2"/>
+          </g>
+          <text x="410" y="306" text-anchor="middle" fill="var(--ink-faint)" font-size="10">altura total 740 mm · pies regulables ±15</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Sección esquemática. El aire entra por la parte baja de un extremo, atraviesa el hueco entre panel y cristal y sale por el opuesto, arrastrando el calor del panel y del chasis. Este recorrido es la diferencia entre una mesa que aguanta cuatro horas de partida y una que se apaga sola.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">04</span><h2>Cámara: el problema no es el campo de visión, es el paralaje</h2></div>
+  <p class="dek">Este es el cálculo más importante del documento, y el que probablemente explique cualquier fallo de precisión que estés viendo en el prototipo.</p>
+
+  <h3>Altura necesaria según la óptica</h3>
+  <p>Para cubrir el área activa con margen (1333 × 750 mm), la restricción es el campo de visión <em>vertical</em>, no el horizontal. Altura sobre el cristal:</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Cámara</th><th class="n">FOV horiz.</th><th class="n">FOV vert.</th><th class="n">Altura</th><th class="n">Cobertura horiz.</th></tr></thead>
+    <tbody>
+      <tr class="pick"><td><b>Pi Camera Module 3 Wide</b></td><td class="n">102°</td><td class="n">67°</td><td class="n"><b>567 mm</b></td><td class="n">1399 mm</td></tr>
+      <tr><td>Webcam típica (90° diagonal)</td><td class="n">78°</td><td class="n">50°</td><td class="n">804 mm</td><td class="n">1302 mm</td></tr>
+      <tr><td>Pi Camera Module 3 estándar</td><td class="n">66°</td><td class="n">41°</td><td class="n">1003 mm</td><td class="n">1303 mm</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>La Rev. A situaba el brazo a ~850 mm. Con una webcam corriente de 78° eso da 1199 mm de cobertura: <strong>10 mm menos que el propio panel</strong>. Funciona en el centro y pierde los bordes, que es justo donde más se nota.</p>
+
+  <h3>Y ahora el problema de verdad</h3>
+  <p>Una cámara cenital sobre una mesa grande no ve las miniaturas desde arriba salvo en el centro exacto. En los bordes las ve <em>de lado</em>, y la miniatura se «tumba» en la imagen. Si tu modelo devuelve el centroide de la silueta en lugar del punto de apoyo, el desplazamiento aparente es:</p>
+  <p class="mono" style="color:var(--blueprint); font-size:15px;">error = altura_de_la_miniatura × distancia_al_centro ÷ altura_de_la_cámara</p>
+
+  <figure>
+    <div class="frame">
+      <svg viewBox="0 0 880 300" role="img" aria-label="Diagrama del error de paralaje: la miniatura del borde aparece desplazada respecto a su base real">
+        <g font-family="IBM Plex Mono, monospace" font-size="11">
+          <!-- surface -->
+          <line x1="60" y1="240" x2="820" y2="240" stroke="var(--ink-soft)" stroke-width="1.6"/>
+          <text x="60" y="262" fill="var(--ink-faint)" font-size="10">borde izquierdo</text>
+          <text x="820" y="262" text-anchor="end" fill="var(--ink-faint)" font-size="10">borde derecho</text>
+
+          <!-- camera -->
+          <g transform="translate(440,54)">
+            <rect x="-26" y="-14" width="52" height="28" fill="var(--paper-sunk)" stroke="var(--blueprint)" stroke-width="1.6"/>
+            <circle cx="0" cy="0" r="7" fill="none" stroke="var(--blueprint)" stroke-width="1.6"/>
+            <text x="0" y="-24" text-anchor="middle" fill="var(--blueprint)" font-size="10.5">cámara · h = 570 mm</text>
+          </g>
+          <line x1="440" y1="68" x2="440" y2="240" stroke="var(--line-strong)" stroke-width="1" stroke-dasharray="4 4"/>
+          <text x="448" y="160" fill="var(--ink-faint)" font-size="10">nadir</text>
+
+          <!-- centre mini -->
+          <g>
+            <rect x="432" y="216" width="16" height="24" fill="var(--paper-sunk)" stroke="var(--ink-soft)" stroke-width="1.4"/>
+            <text x="440" y="284" text-anchor="middle" fill="var(--blueprint)" font-size="10">error 0 mm</text>
+          </g>
+
+          <!-- edge mini -->
+          <g>
+            <rect x="132" y="216" width="16" height="24" fill="var(--paper-sunk)" stroke="var(--ink)" stroke-width="1.6"/>
+            <text x="140" y="208" text-anchor="middle" fill="var(--ink)" font-size="10">miniatura 60 mm</text>
+            <!-- sightline through the top -->
+            <line x1="440" y1="62" x2="76" y2="240" stroke="var(--brick)" stroke-width="1.5"/>
+            <!-- apparent position -->
+            <rect x="68" y="234" width="16" height="6" fill="var(--brick-soft)" stroke="var(--brick)" stroke-width="1.4"/>
+            <path d="M84 254 H132" stroke="var(--brick)" stroke-width="1.4"/>
+            <path d="M84 254 l7 -4 M84 254 l7 4 M132 254 l-7 -4 M132 254 l-7 4" stroke="var(--brick)" stroke-width="1.4" fill="none"/>
+            <text x="108" y="276" text-anchor="middle" fill="var(--brick)" font-size="10.5">64 mm</text>
+            <text x="108" y="292" text-anchor="middle" fill="var(--brick)" font-size="9.5">= 1,6 hexágonos</text>
+          </g>
+
+          <!-- annotation -->
+          <text x="470" y="106" fill="var(--ink-faint)" font-size="10.5">la línea de visión atraviesa la punta de la miniatura,</text>
+          <text x="470" y="121" fill="var(--ink-faint)" font-size="10.5">no su base — y el detector marca donde la ve, no donde está</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Con la cámara a 570 mm, una miniatura de 60 mm situada en el borde largo aparece desplazada 64 mm respecto a su base real. Una casilla hexagonal de 40 mm cabe entera dentro de ese error.</figcaption>
+  </figure>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th class="n">Altura cámara</th><th class="n">Mini 30 mm<br>(mech 1/285)</th><th class="n">Mini 60 mm<br>(héroe 28 mm)</th><th class="n">Mini 100 mm<br>(dragón)</th></tr></thead>
+    <tbody>
+      <tr><td class="n"><b>570 mm</b></td><td class="n">32 mm</td><td class="n">64 mm</td><td class="n">106 mm</td></tr>
+      <tr><td class="n"><b>700 mm</b></td><td class="n">26 mm</td><td class="n">52 mm</td><td class="n">86 mm</td></tr>
+      <tr><td class="n"><b>850 mm</b></td><td class="n">21 mm</td><td class="n">43 mm</td><td class="n">71 mm</td></tr>
+      <tr><td class="n"><b>1000 mm</b></td><td class="n">18 mm</td><td class="n">36 mm</td><td class="n">60 mm</td></tr>
+      <tr><td class="n"><b>1200 mm</b></td><td class="n">15 mm</td><td class="n">30 mm</td><td class="n">50 mm</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note stop">
+    <span class="lbl">Conclusión de diseño</span>
+    <p><strong>Este problema no se resuelve subiendo el brazo.</strong> Incluso a 1200 mm —un brazo absurdo para un mueble de salón— una miniatura de 60 mm en el borde sigue teniendo 30 mm de error, que es casi un hexágono. Hay que resolverlo en software, y tienes dos vías, ambas viables con lo que ya has entrenado:</p>
+    <p><strong>1. Detectar la base, no la silueta.</strong> Tu modelo <span class="mono">miniatures_pose.pt</span> ya está entrenado en estimación de pose: úsalo para localizar el punto de contacto con la mesa como <em>keypoint</em>, no el centro de la caja. Es la solución barata y es probablemente el mayor salto de precisión que puedes conseguir sin tocar el hardware.</p>
+    <p><strong>2. Dos cámaras en esquinas opuestas.</strong> Cuesta ~35 € más, la Pi 5 tiene dos conectores CSI de serie, y además resuelve el otro problema que la geometría no perdona: <strong>las manos</strong>. Con una sola cámara cenital, el brazo de un jugador tapa media mesa cada vez que mueve una figura.</p>
+  </div>
+
+  <p>Sobre resolución no hay problema: a 570 mm con 102° de campo y un flujo de 1920 px, cada píxel son 0,69 mm en la mesa. Incluso reduciendo a 640 px de entrada para inferencia quedan 2,1 mm/px. La precisión perdida es geométrica, no de sensor.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">05</span><h2>La hipótesis infrarroja</h2></div>
+  <p class="dek">Si en todo este documento hay una idea que merece probarse esta semana, es esta. Cuesta unos 25 € y ataca el riesgo R-01 del plan comercial: la fiabilidad de la detección.</p>
+
+  <p>El problema de fondo de la visión aquí no es el modelo: es <strong>la escena</strong>. Estás pidiéndole a un detector que encuentre miniaturas pintadas de cualquier color sobre un fondo que es una pantalla emitiendo luz que cambia cada fotograma, bajo una iluminación de salón que va desde la luz del mediodía hasta una lámpara amarilla, a través de un cristal que refleja la habitación entera.</p>
+
+  <p>Propuesta: <strong>quitar la escena de la ecuación.</strong></p>
+
+  <figure>
+    <div class="frame">
+      <svg viewBox="0 0 880 250" role="img" aria-label="Comparación entre lo que ve la cámara en luz visible y lo que ve con filtro infrarrojo">
+        <g font-family="Archivo, sans-serif">
+          <!-- visible -->
+          <g transform="translate(30,20)">
+            <text x="0" y="0" font-size="10.5" letter-spacing="1.2" fill="var(--ink-faint)">LUZ VISIBLE — LO QUE VE HOY</text>
+            <rect x="0" y="14" width="380" height="176" fill="var(--paper-sunk)" stroke="var(--line-strong)" stroke-width="1.4"/>
+            <!-- busy map bg -->
+            <g opacity="0.85">
+              <rect x="10" y="24" width="360" height="156" fill="var(--blueprint-soft)"/>
+              <g stroke="var(--blueprint)" stroke-width="0.8" opacity="0.5" fill="none">
+                <path d="M40 24 v156 M100 24 v156 M160 24 v156 M220 24 v156 M280 24 v156 M340 24 v156"/>
+                <path d="M10 60 h360 M10 100 h360 M10 140 h360"/>
+              </g>
+              <ellipse cx="120" cy="80" rx="52" ry="30" fill="var(--amber-soft)" opacity="0.8"/>
+              <ellipse cx="270" cy="140" rx="60" ry="26" fill="var(--brick-soft)" opacity="0.7"/>
+              <!-- reflections -->
+              <path d="M30 30 L120 30 L90 178 L10 178 Z" fill="var(--paper)" opacity="0.28"/>
+            </g>
+            <!-- minis -->
+            <g stroke="var(--ink)" stroke-width="1.5" fill="var(--paper-sunk)" opacity="0.95">
+              <rect x="150" y="70" width="18" height="26"/><rect x="240" y="120" width="18" height="26"/><rect x="70" y="130" width="18" height="26"/>
+            </g>
+            <text x="0" y="208" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">fondo cambiante · reflejos · luz de sala variable</text>
+          </g>
+          <!-- IR -->
+          <g transform="translate(470,20)">
+            <text x="0" y="0" font-size="10.5" letter-spacing="1.2" fill="var(--blueprint)">FILTRO 850 nm — LO QUE PODRÍA VER</text>
+            <rect x="0" y="14" width="380" height="176" fill="#0a0f0f" stroke="var(--blueprint)" stroke-width="1.6"/>
+            <g fill="#f2f7f5">
+              <rect x="150" y="70" width="18" height="26"/><rect x="240" y="120" width="18" height="26"/><rect x="70" y="130" width="18" height="26"/>
+            </g>
+            <g stroke="var(--blueprint)" stroke-width="1.2" fill="none" opacity="0.9">
+              <rect x="145" y="65" width="28" height="36"/><rect x="235" y="115" width="28" height="36"/><rect x="65" y="125" width="28" height="36"/>
+            </g>
+            <text x="0" y="208" font-size="10.5" fill="var(--blueprint)" font-family="IBM Plex Mono, monospace">la pantalla desaparece · siluetas limpias · luz constante</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Un panel LCD emite muy poca energía en el infrarrojo cercano. Con iluminación IR de 850 nm en el perímetro y un filtro paso banda en la cámara, el mapa proyectado se vuelve invisible y las miniaturas quedan como siluetas claras sobre fondo negro, con una iluminación que tú controlas y que no cambia nunca.</figcaption>
+  </figure>
+
+  <h3>Cómo montarlo y qué esperar</h3>
+  <ul>
+    <li><strong>Iluminación:</strong> tira de LED IR de 850 nm en un segundo canal del perímetro, apuntando hacia dentro con ángulo rasante. ~10 €.</li>
+    <li><strong>Cámara:</strong> <span class="mono">Raspberry Pi Camera Module 3 NoIR</span> (sin filtro de corte IR, ~35 €) más un filtro paso banda de 850 nm (~15 €).</li>
+    <li><strong>Arquitectura de dos flujos:</strong> el canal IR da <em>posición y orientación</em> con una fiabilidad muy superior; una cámara RGB convencional da <em>identidad</em> (qué modelo es cada miniatura), donde el color importa. Con dos cámaras (§04) tienes ambas cosas sin conflicto.</li>
+  </ul>
+
+  <div class="note warn">
+    <span class="lbl">Lo que hay que verificar antes de creérselo</span>
+    <ul>
+      <li>La retroiluminación del panel concreto puede filtrar algo de IR cercano — medirlo, no suponerlo.</li>
+      <li>Algunas capas antirreflejo atenúan a 850 nm. Pedir la curva de transmisión al fabricante del cristal.</li>
+      <li>La mayoría de las pinturas de miniatura reflejan bien el infrarrojo cercano, lo cual es excelente para la silueta y <em>malo</em> para distinguir modelos por color — de ahí el flujo doble.</li>
+      <li>El filtro IR degrada la calidad si algún día quieres leer dados físicos por sus pips. Ese caso de uso necesita el flujo RGB.</li>
+    </ul>
+  </div>
+
+  <p><strong>Coste total del experimento: ~60 € y un fin de semana.</strong> Ninguna otra inversión del proyecto tiene esta relación entre coste e información obtenida.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">06</span><h2>Cristal: por qué 6 mm y por qué no plástico</h2></div>
+  <p class="dek">Cálculo de flecha para placa rectangular apoyada en los cuatro bordes con carga puntual central de 300 N — alguien apoyándose con fuerza en el centro de la mesa.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Material y espesor</th><th class="n">Rigidez D</th><th class="n">Flecha</th><th class="n">Masa</th><th>Veredicto</th></tr></thead>
+    <tbody>
+      <tr><td>Vidrio templado 4 mm</td><td class="n">392 N·m</td><td class="n">3,9 mm</td><td class="n">8,8 kg</td><td><span class="chip c-hi">No</span> se acerca demasiado al panel</td></tr>
+      <tr class="pick"><td><b>Vidrio templado 6 mm</b></td><td class="n">1.324 N·m</td><td class="n"><b>1,2 mm</b></td><td class="n">13,2 kg</td><td><span class="chip c-lo">Elegido</span> margen de sobra con hueco de 10 mm</td></tr>
+      <tr><td>Vidrio templado 8 mm</td><td class="n">3.139 N·m</td><td class="n">0,5 mm</td><td class="n">17,7 kg</td><td>Innecesario; +4,5 kg de envío</td></tr>
+      <tr><td>Policarbonato 6 mm</td><td class="n">48 N·m</td><td class="n">32,1 mm</td><td class="n">5,9 kg</td><td><span class="chip c-hi">No</span> inservible</td></tr>
+      <tr><td>Policarbonato 10 mm</td><td class="n">222 N·m</td><td class="n">6,9 mm</td><td class="n">9,9 kg</td><td><span class="chip c-hi">No</span> flecta, se raya y amarillea</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>La tentación de sustituir el cristal por plástico para ahorrar peso y roturas en el transporte es comprensible y <strong>no funciona</strong>: el policarbonato necesitaría 14-16 mm para igualar la rigidez de 6 mm de vidrio, momento en el que pesa más, cuesta más, se raya con los dados y amarillea con los años. El vidrio se queda.</p>
+
+  <h3>Especificación</h3>
+  <ul>
+    <li><strong>Vidrio bajo hierro</strong> (extra-claro): el vidrio flotado normal tiene un tinte verdoso que desatura los colores del mapa, y eso se nota especialmente en la niebla de guerra.</li>
+    <li><strong>Templado</strong> obligatorio por seguridad — y por normativa, siendo una superficie de mueble.</li>
+    <li><strong>Capa antirreflejo</strong> en la cara superior. Sin ella la mesa es inutilizable con una lámpara encendida encima, que es exactamente la situación de uso.</li>
+    <li><strong>Cantos pulidos</strong> y apoyo sobre junta EPDM continua en el rebaje perimetral de 12 mm: reparte la carga, absorbe vibración y evita el contacto vidrio-metal.</li>
+    <li><strong>Hueco de aire de 10 mm</strong> respecto al panel: 1,2 mm de flecha máxima deja 8,8 mm de margen y permite el flujo de aire de §07.</li>
+  </ul>
+
+  <div class="note">
+    <span class="lbl">Alternativa para la primera serie</span>
+    <p>Dado el riesgo de rotura en tránsito (R-05 del plan comercial), la primera serie puede venderse <strong>sin cristal</strong>, con una plantilla de corte acotada para que el cliente lo encargue en una cristalería local. Cuesta 60-90 € al cliente, elimina el bulto más frágil del envío, y quita de encima el problema logístico justo en la fase en la que menos capacidad tienes de absorber incidencias.</p>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">07</span><h2>Térmica</h2></div>
+  <p class="dek">Un panel boca arriba dentro de un mueble cerrado, con un cristal encima que atrapa el aire caliente. No es el caso de uso para el que se diseñó ese panel.</p>
+
+  <p>Carga térmica estimada: panel 100-150 W, Pi 5 + AI HAT ~15 W, LEDs 20-25 W en uso normal, pérdidas de fuente ~15 W. <strong>Total en régimen: ~190 W.</strong></p>
+  <p>Caudal necesario para evacuarlo con un incremento de temperatura del aire de 8-12 K:</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th class="n">Carga</th><th class="n">ΔT 8 K</th><th class="n">ΔT 12 K</th></tr></thead>
+    <tbody>
+      <tr><td class="n">100 W</td><td class="n">37 m³/h</td><td class="n">25 m³/h</td></tr>
+      <tr class="pick"><td class="n"><b>150 W</b></td><td class="n"><b>56 m³/h</b></td><td class="n">37 m³/h</td></tr>
+      <tr><td class="n">200 W</td><td class="n">75 m³/h</td><td class="n">50 m³/h</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="lbl">Especificación de refrigeración</span>
+    <ul>
+      <li><strong>Dos ventiladores de 120 mm PWM</strong> a régimen bajo (600-800 rpm). A esa velocidad un 120 mm de calidad está en torno a 18-22 dBA y da de sobra los 60 m³/h necesarios. Dos ventiladores lentos son mucho más silenciosos que uno rápido, y una mesa de rol ruidosa es una mesa que nadie usa.</li>
+      <li><strong>Tiro cruzado, no recirculación:</strong> entrada baja en un extremo del faldón, salida alta en el opuesto, con el hueco panel-cristal como conducto. Es el recorrido dibujado en §03.</li>
+      <li><strong>Rejilla con filtro de espuma</strong> en la entrada: por debajo de un cristal, el polvo acumulado sobre el panel es imposible de limpiar sin desmontar la mesa.</li>
+      <li><strong>Control por temperatura</strong> desde el ESP32 con sensor en la superficie del panel; los ventiladores solo suben de régimen si hace falta.</li>
+      <li><strong>Umbral de alarma:</strong> temperatura de superficie del cristal &gt; 40 °C tras 3 h de partida. Es el KPI del riesgo R-10.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">08</span><h2>Eléctrica</h2></div>
+  <ul>
+    <li><strong>Entrada única</strong>: base IEC C14 con portafusibles e interruptor bipolar en el faldón trasero. Un solo cable a la pared — es un requisito de producto, no un detalle.</li>
+    <li><strong>Fuente interna 12 V / 150 W</strong> (tipo Meanwell LRS-150-12 o equivalente, con marcado CE propio) para LEDs, ventiladores y audio.</li>
+    <li><strong>Convertidor reductor 12 V → 5 V / 5 A</strong> para la Raspberry Pi 5, que exige 5 A en picos con el AI HAT montado. Alternativa más segura de certificar: alimentar la Pi con su propia fuente USB-C de 27 W certificada, conectada a una regleta interna.</li>
+    <li><strong>Puesta a tierra del bastidor de acero</strong> obligatoria: es un producto de clase I y el chasis metálico debe estar unido a tierra con conductor verde-amarillo y terminal de anillo. Este punto es de los primeros que revisa un laboratorio de EMC/LVD.</li>
+    <li><strong>Separación física</strong> entre el mazo de 230 V y el cableado de señal (CSI de cámara, datos LED, audio). Cruzarlos en ángulo recto, nunca en paralelo, o el ruido aparecerá en el audio y en las cámaras.</li>
+    <li><strong>Consumo:</strong> ~190 W en régimen, ~260 W en pico. Menos de 1,2 A a 230 V.</li>
+  </ul>
+
+  <div class="note warn">
+    <span class="lbl">Sobre el marcado CE</span>
+    <p>Usar componentes ya certificados <strong>no te exime</strong>. Al integrar red eléctrica, fuente, pantalla y electrónica en un producto de consumo, tú eres el fabricante del producto final: firmas tu propia declaración UE de conformidad y respondes de EMC, baja tensión y, si hay Wi-Fi o Bluetooth, también de la directiva de equipos radioeléctricos. Referencias de coste: 750-1.500 € para electrónica alimentada de red, 1.500-3.000 € si entra el ensayo de radio.</p>
+    <p>El <strong>Kit Núcleo</strong> del plan comercial evita casi todo esto: alimentado por fuente externa certificada, sin red eléctrica dentro de tu carcasa, sin cristal y sin mueble.</p>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">09</span><h2>Iluminación perimetral y sonido</h2></div>
+  <ul>
+    <li><strong>WS2815 (12 V) en lugar de WS2812B (5 V).</strong> Dos ventajas que importan en producto, no en prototipo: no hay caída de tensión perceptible en 4,1 m de tira, y la línea de datos es redundante — <em>un LED averiado no deja muerto el resto de la tira</em>. En una mesa que un cliente no puede abrir fácilmente, eso es la diferencia entre una incidencia y una devolución.</li>
+    <li><strong>246 LED</strong> a 60 LED/m sobre 4,1 m de perímetro interior. Pico teórico ~75 W a blanco pleno; <strong>limitar por software a ~25 W</strong>, que es de sobra para los efectos descritos en VISION.md §4.3 y evita sobredimensionar la fuente y la térmica.</li>
+    <li><strong>Canal de aluminio 17 × 8 mm con difusor de PMMA esmerilado.</strong> Sin difusor se ven los puntos individuales y el acabado cae de «producto» a «montaje casero».</li>
+    <li><strong>Controlador ESP32 por USB-serie</strong>, separado del cómputo principal. Es la decisión correcta: la Pi bajo Linux no garantiza el temporizado estricto que exige el protocolo, y además los efectos de luz no compiten con la inferencia.</li>
+    <li><strong>Segundo canal reservado para la tira IR de 850 nm</strong> (§05). Preverlo ahora cuesta cero; añadirlo después obliga a rediseñar el faldón.</li>
+    <li><strong>Audio:</strong> dos altavoces de rango completo bajo el faldón orientados hacia abajo y afuera, con amplificador clase D. Sonido ambiental, no cine — el faldón actúa como caja acústica improvisada y conviene amortiguarlo con fieltro.</li>
+  </ul>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">10</span><h2>Lista de materiales</h2></div>
+  <p class="dek">Precios estimados en euros, puesto en almacén, a agosto de 2026. La columna de 100 unidades asume compra directa a fabricante y utillaje ya amortizado.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Partida</th><th class="n">1 ud.</th><th class="n">100 ud.</th></tr></thead>
+    <tbody>
+      <tr><td>Panel 55″ 4K <em>open frame</em></td><td class="n">380</td><td class="n">290</td></tr>
+      <tr><td>Vidrio 6 mm bajo hierro, AR, templado, cantos pulidos</td><td class="n">130</td><td class="n">68</td></tr>
+      <tr><td>Bastidor de acero cortado y plegado + pintura en polvo</td><td class="n">220</td><td class="n">110</td></tr>
+      <tr><td>Faldón DM/chapado CNC + acabado</td><td class="n">115</td><td class="n">58</td></tr>
+      <tr><td>Raspberry Pi 5 8 GB</td><td class="n">82</td><td class="n">74</td></tr>
+      <tr><td>AI HAT+ 26 TOPS (Hailo-8)</td><td class="n">115</td><td class="n">100</td></tr>
+      <tr><td>SSD NVMe 128 GB + adaptador</td><td class="n">32</td><td class="n">24</td></tr>
+      <tr><td>Cámaras CM3 Wide + CM3 NoIR + cables</td><td class="n">72</td><td class="n">56</td></tr>
+      <tr><td>Iluminación IR 850 nm + filtro paso banda</td><td class="n">26</td><td class="n">15</td></tr>
+      <tr><td>Tira WS2815 4,1 m + ESP32 + canal y difusor</td><td class="n">58</td><td class="n">36</td></tr>
+      <tr><td>Fuente 12 V 150 W + IEC/fusible/interruptor + mazo</td><td class="n">58</td><td class="n">36</td></tr>
+      <tr><td>Ventiladores 2 × 120 mm PWM + rejillas + filtro</td><td class="n">20</td><td class="n">11</td></tr>
+      <tr><td>Altavoces × 2 + amplificador clase D</td><td class="n">36</td><td class="n">22</td></tr>
+      <tr><td>Tornillería, insertos M8, junta EPDM, pies regulables</td><td class="n">38</td><td class="n">21</td></tr>
+      <tr><td>Embalaje: cajas, cuna de vidrio, espuma, impresión</td><td class="n">58</td><td class="n">40</td></tr>
+      <tr class="total"><td>Subtotal materiales</td><td class="n">1.440</td><td class="n">961</td></tr>
+      <tr><td>Montaje y control de calidad (1,5 h)</td><td class="n">38</td><td class="n">38</td></tr>
+      <tr><td>Reserva de merma y garantía (6 %)</td><td class="n">86</td><td class="n">58</td></tr>
+      <tr class="total"><td>Coste unitario puesto en almacén</td><td class="n">1.564</td><td class="n">1.057</td></tr>
+      <tr><td>Marco táctil IR 55″ — solo SKU Premium</td><td class="n">+190</td><td class="n">+130</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>A un PVP de <strong>2.899 € con IVA</strong> y coste de 100 unidades, la contribución por mesa es de unos <strong>593 €</strong> (25 % del neto) una vez descontadas comisiones de plataforma y marketing amortizado. El desglose completo está en el plan comercial, §08.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">11</span><h2>Embalaje y transporte</h2></div>
+
+  <div class="note stop">
+    <span class="lbl">La restricción que reorganiza el embalaje</span>
+    <p>Los transportistas de paquetería en la UE aceptan <strong>entre 20 y 31,5 kg por bulto</strong> según transportista y tipo de servicio; 31,5 kg es el techo del mercado, no la norma. El reparto en dos cajas de la Rev. A daba un bulto de ~35 kg, que ningún servicio de paquetería recoge. Hay dos salidas y conviene elegir a conciencia, porque cambia el precio de venta.</p>
+  </div>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Opción</th><th class="n">Bultos</th><th class="n">Coste UE</th><th>A favor</th><th>En contra</th></tr></thead>
+    <tbody>
+      <tr class="pick">
+        <td><b>A · Cuatro bultos por paquetería</b></td>
+        <td class="n">4 × 17-24 kg</td><td class="n">48-100 €</td>
+        <td>Entrega en la puerta; sin cita previa; seguimiento por bulto; llega a cualquier domicilio de la UE</td>
+        <td>Cuatro oportunidades de daño o extravío; pueden llegar en días distintos, y eso arruina la experiencia de desembalaje</td>
+      </tr>
+      <tr>
+        <td><b>B · Un palet</b></td>
+        <td class="n">1 × 78 kg</td><td class="n">45-160 €</td>
+        <td>Llega junto; mejor protección del vidrio; barato a dirección comercial (45-75 €)</td>
+        <td>A domicilio particular, 90-160 € con portes y trasera elevadora; entrega a pie de calle; requiere cita</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Reparto propuesto para la opción A</h3>
+  <div class="tw">
+  <table>
+    <thead><tr><th>Bulto</th><th>Contenido</th><th class="n">Masa</th><th class="n">Medidas aprox.</th></tr></thead>
+    <tbody>
+      <tr><td><b>1 · Vidrio</b></td><td>Cristal templado en cuna tipo caballete, cantos protegidos, marcado FRÁGIL y CARA ARRIBA</td><td class="n">17 kg</td><td class="n">1300 × 780 × 90</td></tr>
+      <tr><td><b>2 · Panel y electrónica</b></td><td>Panel <em>open frame</em> + bloque electrónico precableado + cámaras</td><td class="n">21 kg</td><td class="n">1300 × 780 × 130</td></tr>
+      <tr><td><b>3 · Bastidor</b></td><td>Tubos del bastidor, patas, brazo de cámara, tornillería</td><td class="n">18 kg</td><td class="n">1560 × 300 × 180</td></tr>
+      <tr><td><b>4 · Carpintería</b></td><td>Faldón, bandeja inferior, canal LED, difusor, guía impresa</td><td class="n">24 kg</td><td class="n">1560 × 1000 × 120</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Los bultos 3 y 4 (18 y 24 kg) entran en los servicios que llegan a 30-31,5 kg, que es lo habitual en el mercado español y del centro de Europa, pero quedan fuera de las tarifas económicas limitadas a 20 kg. Si en el estudio de transporte aparece que las tarifas de 20 kg son mucho más baratas en tus destinos principales, merece la pena rehacer el reparto a <strong>cinco bultos por debajo de 20 kg</strong> antes de cerrar el diseño del embalaje.</p>
+  <p><strong>Recomendación:</strong> opción A para venta a particular y opción B para B2B, decidido en el momento del pedido según la dirección de entrega. Es una complicación operativa menor comparada con la alternativa de perder el canal particular o regalar el margen en portes.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">12</span><h2>Secuencia de montaje</h2></div>
+  <p class="dek">Ocho pasos, herramienta manual básica (llave Allen incluida), <strong>dos personas</strong> a partir del paso 4.</p>
+  <ol>
+    <li><strong>Patas al bastidor inferior.</strong> Insertos roscados M8 preinstalados de fábrica; sin herramienta eléctrica.</li>
+    <li><strong>Bastidor superior y travesaños.</strong> Tornillería pasante; apretar en cruz, no en secuencia.</li>
+    <li><strong>Faldón y bandeja inferior.</strong> Excéntricas y espigas, el mismo sistema que cualquier mueble en kit.</li>
+    <li><strong>Módulo electrónico.</strong> Pi 5 + AI HAT, fuente y ESP32 llegan cableados como bloque único; se atornilla al compartimento trasero. Un solo conector interno.</li>
+    <li><strong>Panel.</strong> <em>Deslizar por las guías laterales, no levantar.</em> Un único conector agrupa vídeo y alimentación.</li>
+    <li><strong>Tira LED y canal.</strong> Encaja a presión en el canal de aluminio; conector polarizado al controlador, sin soldadura.</li>
+    <li><strong>Cristal</strong> (y marco táctil IR antes, si es Premium). Último paso para no rayarlo durante el resto del montaje. Comprobar que la junta EPDM está asentada en todo el perímetro antes de posarlo.</li>
+    <li><strong>Brazo de cámara, encendido y calibración.</strong> Un solo cable a la pared; la calibración se guía desde la app con un patrón impreso que viene en la caja.</li>
+  </ol>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">13</span><h2>Qué falta validar en prototipo</h2></div>
+  <p class="dek">Ninguna de estas preguntas se puede cerrar con un cálculo. Ordenadas por lo que cuesta equivocarse.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Cuestión abierta</th><th>Cómo se cierra</th><th class="n">Coste</th></tr></thead>
+    <tbody>
+      <tr><td><b>¿Funciona la iluminación IR?</b> (§05) Es el experimento con mejor retorno de todo el proyecto</td><td>Cámara NoIR + filtro 850 nm + tira IR sobre el montaje que ya tienes</td><td class="n">~60 €</td></tr>
+      <tr><td><b>¿Basta con detectar la base para matar el paralaje?</b> (§04)</td><td>Reentrenar el modelo de pose marcando el punto de apoyo y medir el error real en el borde</td><td class="n">0 € · tiempo</td></tr>
+      <tr><td><b>¿Cuánto IR filtra el panel elegido?</b></td><td>Medir con la cámara NoIR sobre el panel encendido a blanco pleno</td><td class="n">0 €</td></tr>
+      <tr><td><b>Temperatura real de superficie tras 3 h</b></td><td>Termopar sobre el cristal, partida real, dos configuraciones de ventilador</td><td class="n">~25 €</td></tr>
+      <tr><td><b>Ruido de los ventiladores en uso</b></td><td>Medir dBA a la altura del oído sentado, con y sin audio</td><td class="n">0 €</td></tr>
+      <tr><td><b>Rigidez real del bastidor a 25 × 25 × 1,5</b></td><td>Carga de 80 kg en el centro del rail y medir la flecha; si supera 3 mm, subir a 30 × 30 × 2 (+7 kg)</td><td class="n">0 €</td></tr>
+      <tr><td><b>Alcance y estabilidad del brazo plegado</b></td><td>Prototipo del mecanismo con el grosor real del faldón</td><td class="n">~80 €</td></tr>
+      <tr><td><b>Curva de transmisión del cristal AR a 850 nm</b></td><td>Pedirla al cristalero antes de encargar el lote</td><td class="n">0 €</td></tr>
+      <tr><td><b>¿Se puede deslizar el panel en lugar de levantarlo?</b></td><td>Maqueta de las guías en madera antes de cortar acero</td><td class="n">~40 €</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="lbl">Orden sugerido</span>
+    <p>Las tres primeras filas cuestan 60 € en total y resuelven el riesgo técnico dominante del proyecto. Todo lo demás —bastidor, brazo, térmica, embalaje— puede esperar a que exista la certeza de que la visión es fiable, porque si no lo es, no hay mesa que valga.</p>
+  </div>
+</section>
+
+<footer>
+  <p>MRPG-TABLE-02 Rev. B · Sustituye a MRPG-TABLE-01 Rev. A · MesaRPG, agosto 2026.<br>
+  Cotas y cálculos de diseño objetivo, no especificaciones de fabricación cerradas. Los cálculos de flecha usan la aproximación de placa rectangular simplemente apoyada con carga puntual central y deben confirmarse con el fabricante del vidrio antes de encargar. Precios estimados a agosto de 2026, sujetos a verificación con proveedores. Todo lo marcado en §13 requiere validación en prototipo físico antes de comprometer utillaje o precio de venta.</p>
+</footer>
+
+</div>
+</body>
+</html>

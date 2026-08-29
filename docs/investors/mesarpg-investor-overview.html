@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>MesaRPG — Resumen para inversores</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm; }
+  * { box-sizing: border-box; }
+  :root{
+    --ink:#1a2332;
+    --ink-soft:#4b5566;
+    --paper:#ffffff;
+    --paper-soft:#f4f6f8;
+    --line:#dde3ea;
+    --teal:#0f8a7e;
+    --teal-soft:#e3f3f1;
+    --amber:#c47a1f;
+    --amber-soft:#faedd9;
+  }
+  html,body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size:11.5pt;
+    line-height:1.45;
+    margin:0;
+    padding:0;
+  }
+  .page{
+    padding: 4mm 2mm;
+  }
+  .page + .page{
+    page-break-before: always;
+    border-top: none;
+  }
+  h1{
+    font-size:26pt;
+    margin:0 0 2mm 0;
+    letter-spacing:-0.02em;
+  }
+  h2{
+    font-size:15pt;
+    color:var(--teal);
+    margin: 0 0 4mm 0;
+    text-transform: uppercase;
+    letter-spacing:0.04em;
+    border-bottom: 2px solid var(--teal);
+    padding-bottom: 2mm;
+  }
+  h3{
+    font-size:11.5pt;
+    margin:0 0 1.5mm 0;
+    color:var(--ink);
+  }
+  p{ margin: 0 0 3mm 0; color: var(--ink-soft); }
+  .tagline{
+    font-size:13pt;
+    color: var(--teal);
+    font-weight:600;
+    margin: 0 0 8mm 0;
+  }
+  .cover-meta{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin-bottom: 10mm;
+    padding-bottom: 3mm;
+    border-bottom: 1px solid var(--line);
+  }
+  .badge{
+    font-size:8.5pt;
+    color:var(--ink-soft);
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+  }
+  .lede{
+    font-size: 13pt;
+    color: var(--ink);
+    font-weight: 400;
+    margin-bottom: 8mm;
+    max-width: 145mm;
+  }
+  .cols3{
+    display:grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 5mm;
+    margin: 6mm 0;
+  }
+  .card{
+    background: var(--paper-soft);
+    border: 1px solid var(--line);
+    border-radius: 3mm;
+    padding: 5mm;
+  }
+  .card .icon{ font-size: 20pt; margin-bottom: 2mm; display:block; }
+  .card h3{ font-size:10.5pt; margin-bottom:1.5mm; }
+  .card p{ font-size:9.5pt; margin:0; }
+  .problem-list{
+    list-style:none;
+    padding:0;
+    margin: 5mm 0;
+    display:grid;
+    gap: 3mm;
+  }
+  .problem-list li{
+    display:flex;
+    gap:4mm;
+    align-items:flex-start;
+    font-size:11pt;
+    color:var(--ink-soft);
+  }
+  .problem-list .mark{
+    color:var(--amber);
+    font-weight:700;
+    font-size:13pt;
+    line-height:1.2;
+  }
+  .flow{
+    display:flex;
+    align-items:stretch;
+    justify-content:space-between;
+    gap: 3mm;
+    margin: 6mm 0 8mm 0;
+  }
+  .flow .step{
+    flex:1;
+    background: var(--teal-soft);
+    border-radius: 3mm;
+    padding: 4mm 3mm;
+    text-align:center;
+  }
+  .flow .step .n{
+    display:inline-block;
+    width:6mm; height:6mm;
+    border-radius:50%;
+    background:var(--teal);
+    color:#fff;
+    font-size:8.5pt;
+    font-weight:700;
+    line-height:6mm;
+    margin-bottom:2mm;
+  }
+  .flow .step h3{ font-size:9.5pt; margin-bottom:1mm; }
+  .flow .step p{ font-size:8.3pt; margin:0; }
+  .flow .arrow{
+    align-self:center;
+    color: var(--teal);
+    font-size:14pt;
+    flex: 0 0 auto;
+  }
+  .footer-note{
+    position:absolute;
+    bottom: 10mm;
+    left: 14mm;
+    right: 14mm;
+    font-size:8pt;
+    color: var(--ink-soft);
+    border-top: 1px solid var(--line);
+    padding-top: 2mm;
+  }
+  .page{ position:relative; min-height: 250mm; }
+  .diagram-wrap{
+    background: var(--paper-soft);
+    border: 1px solid var(--line);
+    border-radius: 3mm;
+    padding: 6mm;
+    margin: 5mm 0 7mm 0;
+  }
+  .sku-cols{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5mm;
+    margin: 5mm 0 7mm 0;
+  }
+  .sku{
+    border: 1.5px solid var(--line);
+    border-radius: 3mm;
+    padding: 5mm;
+  }
+  .sku.premium{ border-color: var(--teal); }
+  .sku .sku-tag{
+    display:inline-block;
+    font-size:8pt;
+    text-transform:uppercase;
+    letter-spacing:0.06em;
+    color:#fff;
+    background:var(--ink-soft);
+    padding:1mm 2.5mm;
+    border-radius:2mm;
+    margin-bottom:2.5mm;
+  }
+  .sku.premium .sku-tag{ background:var(--teal); }
+  .sku ul{ margin:2mm 0 0 0; padding-left:4mm; font-size:9.5pt; color:var(--ink-soft); }
+  .sku ul li{ margin-bottom:1mm; }
+  .why-now{
+    display:flex;
+    gap:6mm;
+    margin: 5mm 0 7mm 0;
+  }
+  .why-now .col{ flex:1; }
+  .quote{
+    background: var(--amber-soft);
+    border-left: 3px solid var(--amber);
+    padding: 4mm 5mm;
+    border-radius: 0 2mm 2mm 0;
+    font-size: 10.5pt;
+    color: var(--ink);
+    margin: 4mm 0 7mm 0;
+  }
+  .revenue-grid{
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4mm;
+    margin: 5mm 0 7mm 0;
+  }
+  .revenue-grid .item{
+    padding: 4mm;
+    background: var(--paper-soft);
+    border-radius: 2.5mm;
+    border-left: 3px solid var(--teal);
+  }
+  .revenue-grid .item h3{ font-size:10pt; }
+  .revenue-grid .item p{ font-size:9pt; margin:0; }
+  table.cost{
+    width:100%;
+    border-collapse: collapse;
+    margin: 4mm 0 7mm 0;
+    font-size:9.5pt;
+  }
+  table.cost th{
+    text-align:left;
+    background: var(--ink);
+    color:#fff;
+    padding: 2.5mm 3mm;
+    font-weight:600;
+  }
+  table.cost td{
+    padding: 2.2mm 3mm;
+    border-bottom: 1px solid var(--line);
+    color: var(--ink-soft);
+  }
+  table.cost tr:last-child td{
+    font-weight:700;
+    color: var(--ink);
+    border-top: 1.5px solid var(--ink);
+    border-bottom:none;
+  }
+  .timeline{
+    display:flex;
+    margin: 5mm 0 7mm 0;
+    gap: 0;
+  }
+  .timeline .tl{
+    flex:1;
+    text-align:center;
+    position:relative;
+    padding-top: 8mm;
+  }
+  .timeline .tl::before{
+    content:"";
+    position:absolute;
+    top:3mm; left:0; right:0;
+    height:2px;
+    background: var(--line);
+  }
+  .timeline .tl:first-child::before{ left:50%; }
+  .timeline .tl:last-child::before{ right:50%; }
+  .timeline .dot{
+    position:absolute;
+    top: 1mm;
+    left:50%;
+    transform:translateX(-50%);
+    width:4.5mm; height:4.5mm;
+    border-radius:50%;
+    background: var(--teal);
+    border: 2px solid var(--paper);
+  }
+  .timeline .tl h3{ font-size:9pt; margin-bottom:1mm; }
+  .timeline .tl p{ font-size:8pt; margin:0; }
+  .closing{
+    margin-top: 8mm;
+    padding: 6mm;
+    background: var(--ink);
+    color: #fff;
+    border-radius: 3mm;
+  }
+  .closing h2{ color:#fff; border-color:#3a4658; }
+  .closing p{ color:#c7ced9; }
+  .closing .ask{ font-size:12.5pt; color:#fff; font-weight:600; margin-bottom:2mm; }
+  .placeholder{ color:#8fd9cd; font-style:italic; }
+</style>
+</head>
+<body>
+
+<!-- PAGE 1 -->
+<div class="page">
+  <div class="cover-meta">
+    <span class="badge">MesaRPG</span>
+    <span class="badge">Resumen para inversores · 2026</span>
+  </div>
+
+  <h1>La mesa de rol que borra el trabajo pesado</h1>
+  <p class="tagline">Hardware + software que convierte cualquier partida de rol o wargame de mesa en una experiencia sin fricción — sin renunciar a la mesa física.</p>
+
+  <p class="lede">Jugar rol y wargames de mesa es una de las formas de ocio social más fieles que existen: la gente lleva décadas volviendo a la mesa. Pero también es la más tediosa de arbitrar — calcular reglas, mover fichas, recordar tablas. MesaRPG automatiza esa parte y deja intacta la parte que la gente ama: miniaturas reales, dados que ruedan, amigos alrededor de una mesa.</p>
+
+  <div class="cols3">
+    <div class="card">
+      <span class="icon">😩</span>
+      <h3>El problema</h3>
+      <p>Arbitrar partidas complejas (Battletech, D&amp;D, wargames) exige calcular reglas a mano, buscar tablas y recordar detalles — la parte menos divertida de jugar, y la que más frena a grupos nuevos.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🎯</span>
+      <h3>La solución</h3>
+      <p>Una mesa física con cámara y pantalla que reconoce las miniaturas reales, calcula las reglas automáticamente y muestra el resultado en el propio tablero — el grupo juega, la mesa arbitra.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🚀</span>
+      <h3>Por qué ahora</h3>
+      <p>El auge de las mesas virtuales (Roll20, Foundry) demostró que hay demanda real de automatizar reglas. Nadie ha llevado esa automatización a la mesa física — ahí está el hueco.</p>
+    </div>
+  </div>
+
+  <h2 style="margin-top:8mm;">Cómo funciona</h2>
+  <div class="flow">
+    <div class="step">
+      <span class="n">1</span>
+      <h3>Miniatura real</h3>
+      <p>El jugador mueve su miniatura física sobre la mesa, como siempre.</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <span class="n">2</span>
+      <h3>La cámara la reconoce</h3>
+      <p>Detecta modelo, posición y orientación en tiempo real, sin marcadores que pegar.</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <span class="n">3</span>
+      <h3>La mesa calcula</h3>
+      <p>Reglas de movimiento, impacto, daño y críticos resueltas al instante.</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="step">
+      <span class="n">4</span>
+      <h3>El grupo juega</h3>
+      <p>Niebla de guerra, dados 3D y luces reaccionando a cada acción, en la propia mesa.</p>
+    </div>
+  </div>
+
+  <div class="footer-note">MesaRPG — Documento de presentación no técnico · 1/3</div>
+</div>
+
+<!-- PAGE 2 -->
+<div class="page">
+  <div class="cover-meta">
+    <span class="badge">MesaRPG</span>
+    <span class="badge">Resumen para inversores · 2026</span>
+  </div>
+
+  <h2>El producto</h2>
+  <p>Una mesa completa que se vende en <strong>kit de montaje (flat-pack)</strong> — el cliente la recibe en caja y la ensambla en casa, como un mueble premium. Incluye pantalla, cámara cenital, luces perimetrales y el ordenador que lo hace funcionar. El grupo solo pone sus propias miniaturas y sus libros de reglas.</p>
+
+  <div class="sku-cols">
+    <div class="sku">
+      <span class="sku-tag">Estándar</span>
+      <h3>Mesa sin táctil</h3>
+      <p style="font-size:9.5pt;margin:0 0 2mm 0;">Toda la interacción se hace desde el móvil/tablet del GM y de cada jugador. La mesa es la superficie de juego.</p>
+      <ul>
+        <li>Pantalla 4K + cristal antirreflejo</li>
+        <li>Cámara de reconocimiento de miniaturas</li>
+        <li>Luces LED perimetrales reactivas</li>
+        <li>Precio de entrada más accesible</li>
+      </ul>
+    </div>
+    <div class="sku premium">
+      <span class="sku-tag">Premium</span>
+      <h3>Mesa con táctil</h3>
+      <p style="font-size:9.5pt;margin:0 0 2mm 0;">Todo lo anterior, más interacción táctil directa sobre el propio tablero físico.</p>
+      <ul>
+        <li>Marco táctil infrarrojo integrado</li>
+        <li>Mover niebla de guerra y medir a mano</li>
+        <li>Mismo hardware base, upgrade de interacción</li>
+        <li>Para grupos que quieren la experiencia completa</li>
+      </ul>
+    </div>
+  </div>
+
+  <h2>Qué la hace distinta</h2>
+  <div class="why-now">
+    <div class="col">
+      <h3 style="color:var(--teal);">Mesas virtuales (Roll20, Foundry…)</h3>
+      <p style="font-size:10pt;">Automatizan reglas, pero son solo software: pantalla, ratón, sin la mesa física ni las miniaturas que hacen memorable una sesión presencial.</p>
+    </div>
+    <div class="col">
+      <h3 style="color:var(--teal);">MesaRPG</h3>
+      <p style="font-size:10pt;">Combina esa misma automatización de reglas con la mesa física real — miniaturas de verdad, dados de verdad, gente sentada junta. No sustituye la experiencia presencial: la mejora.</p>
+    </div>
+  </div>
+
+  <div class="quote">
+    "El objetivo no es quitarle a la mesa lo que la hace especial — es quitarle solo lo tedioso: las tablas, los cálculos, el 'espera que lo busco en el libro'."
+  </div>
+
+  <h2>Funcionalidades clave</h2>
+  <div class="cols3">
+    <div class="card">
+      <span class="icon">🌫️</span>
+      <h3>Niebla de guerra real</h3>
+      <p>Cada jugador ve solo lo que su personaje vería; el GM ve siempre la mesa completa.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🎲</span>
+      <h3>Dados 3D</h3>
+      <p>Dados virtuales con físicas simuladas que ruedan de verdad sobre la mesa.</p>
+    </div>
+    <div class="card">
+      <span class="icon">🤖</span>
+      <h3>Asistente de GM con IA</h3>
+      <p>Automatiza cálculos y arbitraje; a futuro, puede llevar partidas sin master humano.</p>
+    </div>
+  </div>
+
+  <div class="footer-note">MesaRPG — Documento de presentación no técnico · 2/3</div>
+</div>
+
+<!-- PAGE 3 -->
+<div class="page">
+  <div class="cover-meta">
+    <span class="badge">MesaRPG</span>
+    <span class="badge">Resumen para inversores · 2026</span>
+  </div>
+
+  <h2>Modelo de negocio</h2>
+  <div class="revenue-grid">
+    <div class="item">
+      <h3>Venta de la mesa</h3>
+      <p>Ingreso principal: hardware completo en flat-pack, dos versiones (estándar / premium táctil).</p>
+    </div>
+    <div class="item">
+      <h3>Accesorios</h3>
+      <p>Bases de miniatura con identificación reforzada, kits para unir varias mesas en batallas más grandes, recambios.</p>
+    </div>
+    <div class="item">
+      <h3>Suscripción de IA en la nube</h3>
+      <p>El asistente básico corre local sin coste recurrente; una IA más potente en la nube es una mejora de pago opcional.</p>
+    </div>
+    <div class="item">
+      <h3>Marketplace de contenido</h3>
+      <p>A futuro: sistemas de juego y contenido de la comunidad, con reparto de ingresos — mismo modelo que ha funcionado para las mesas virtuales.</p>
+    </div>
+  </div>
+
+  <h2>Estimación de costes de electrónica</h2>
+  <table class="cost">
+    <tr><th>Componente</th><th>Estimación</th></tr>
+    <tr><td>Pantalla 4K + cristal antirreflejo</td><td>~350 €</td></tr>
+    <tr><td>Ordenador embebido (con IA local)</td><td>~600 €</td></tr>
+    <tr><td>Cámara de reconocimiento</td><td>~80 €</td></tr>
+    <tr><td>Luces LED perimetrales</td><td>~50 €</td></tr>
+    <tr><td>Altavoces, cableado, fuente de alimentación</td><td>~100 €</td></tr>
+    <tr><td>Total electrónica (sin estructura ni embalaje)</td><td>~1.200 €</td></tr>
+  </table>
+  <p style="font-size:8.5pt;">Cifras orientativas a fecha de este documento, sujetas a verificación de proveedores antes de fijar precio final de venta. No incluyen estructura, cristal de mesa ni embalaje flat-pack.</p>
+
+  <h2>Hoja de ruta</h2>
+  <div class="timeline">
+    <div class="tl"><span class="dot"></span><h3>Núcleo de mesa</h3><p>Visión, hexágonos, niebla de guerra</p></div>
+    <div class="tl"><span class="dot"></span><h3>Reglas automáticas</h3><p>Motor de combate completo</p></div>
+    <div class="tl"><span class="dot"></span><h3>Producto físico</h3><p>Diseño y validación de la mesa flat-pack</p></div>
+    <div class="tl"><span class="dot"></span><h3>Expansión</h3><p>Más sistemas de juego, marketplace</p></div>
+  </div>
+
+  <div class="closing">
+    <h2>Buscamos</h2>
+    <p class="ask">Financiación y/o socios para completar el desarrollo del producto y fabricar la primera serie piloto.</p>
+    <p>MesaRPG parte de un prototipo ya funcional (visión por computadora entrenada, sincronización en tiempo real, primeras fichas de personaje jugables) — no es una idea en papel, es una base técnica real sobre la que construir el producto comercial.</p>
+    <p style="margin-top:4mm;">Contacto: <span class="placeholder">[añadir nombre y contacto antes de enviar]</span></p>
+  </div>
+
+  <div class="footer-note">MesaRPG — Documento de presentación no técnico · 3/3</div>
+</div>
+
+</body>
+</html>

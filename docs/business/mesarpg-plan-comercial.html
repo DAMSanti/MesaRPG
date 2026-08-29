@@ -1,0 +1,803 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plan comercial MesaRPG</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:ital,wght@0,400;0,600;1,400&display=swap">
+
+<style>
+:root{
+  --paper:#eef1ef; --paper-raised:#e4e9e6; --paper-sunk:#dae1dd;
+  --ink:#161f1d; --ink-soft:#4f5c58; --ink-faint:#82908b;
+  --line:#c3ccc6; --line-strong:#9aa6a0;
+  --blueprint:#0f5f5f; --blueprint-soft:#dcebe9;
+  --amber:#9a5a17; --amber-soft:#f4e5cf;
+  --brick:#8c3226; --brick-soft:#f5dfda;
+  --walnut:#7d5130;
+  --shadow:rgba(22,31,29,.09);
+  --grid:rgba(15,95,95,.10);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#101d1c; --paper-raised:#162624; --paper-sunk:#0b1615;
+    --ink:#e9f3f1; --ink-soft:#a6bdb8; --ink-faint:#6d827e;
+    --line:#284040; --line-strong:#3b5757;
+    --blueprint:#79d2c6; --blueprint-soft:#16332f;
+    --amber:#e0a463; --amber-soft:#372817;
+    --brick:#e08a76; --brick-soft:#3a1e18;
+    --walnut:#c69869;
+    --shadow:rgba(0,0,0,.4);
+    --grid:rgba(121,210,198,.10);
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#101d1c; --paper-raised:#162624; --paper-sunk:#0b1615;
+  --ink:#e9f3f1; --ink-soft:#a6bdb8; --ink-faint:#6d827e;
+  --line:#284040; --line-strong:#3b5757;
+  --blueprint:#79d2c6; --blueprint-soft:#16332f;
+  --amber:#e0a463; --amber-soft:#372817;
+  --brick:#e08a76; --brick-soft:#3a1e18;
+  --walnut:#c69869;
+  --shadow:rgba(0,0,0,.4);
+  --grid:rgba(121,210,198,.10);
+}
+
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:"Source Sans 3","Segoe UI",system-ui,sans-serif;
+  font-size:16.5px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.sheet{max-width:1000px; margin:0 auto; padding:0 28px 120px;}
+
+h1,h2,h3,.kicker,.tb,.chip,.stepnum,th{font-family:"Archivo","Segoe UI",system-ui,sans-serif;}
+.mono,td.n,.num,.tb,.stepnum,.money{font-family:"IBM Plex Mono",ui-monospace,monospace; font-variant-numeric:tabular-nums;}
+
+/* title block */
+.tb{
+  margin-top:36px; border:1.5px solid var(--line-strong);
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+}
+.tb div{padding:9px 13px; border-right:1px solid var(--line); font-size:11px; letter-spacing:.07em; text-transform:uppercase; color:var(--ink-faint);}
+.tb div:last-child{border-right:none;}
+.tb b{display:block; color:var(--ink); font-weight:600; letter-spacing:.02em; font-size:12.5px; margin-top:2px;}
+
+header.hero{padding:44px 0 6px;}
+.kicker{font-size:12px; text-transform:uppercase; letter-spacing:.16em; color:var(--blueprint); margin:0 0 12px; font-weight:600;}
+h1{font-size:clamp(2.15rem,1.5rem+2.4vw,3.35rem); line-height:1.02; letter-spacing:-.022em; font-weight:700; margin:0 0 18px; max-width:19ch; text-wrap:balance;}
+.lede{font-size:1.17rem; color:var(--ink-soft); max-width:64ch; margin:0;}
+
+section{padding:56px 0 4px; border-top:1px solid var(--line);}
+.shead{display:flex; align-items:baseline; gap:14px; margin-bottom:8px;}
+.snum{font-family:"IBM Plex Mono",monospace; font-size:11.5px; color:var(--ink-faint); border:1px solid var(--line-strong); padding:2px 7px;}
+h2{font-size:1.42rem; letter-spacing:-.012em; font-weight:700; margin:0; text-wrap:balance;}
+h3{font-size:1.02rem; font-weight:600; letter-spacing:.005em; margin:30px 0 8px; color:var(--ink);}
+p{color:var(--ink-soft); margin:0 0 15px; max-width:70ch;}
+strong{color:var(--ink); font-weight:600;}
+em{color:var(--ink); font-style:italic;}
+ul,ol{color:var(--ink-soft); max-width:70ch; padding-left:1.15em; margin:0 0 16px;}
+li{margin-bottom:7px;}
+a{color:var(--blueprint);}
+a:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--blueprint); outline-offset:2px;}
+
+.dek{font-size:1.03rem; color:var(--ink-soft); max-width:70ch; margin:0 0 22px;}
+
+/* callouts */
+.note{
+  border-left:3px solid var(--blueprint); background:var(--blueprint-soft);
+  padding:14px 18px; margin:22px 0; max-width:74ch;
+}
+.note.warn{border-left-color:var(--amber); background:var(--amber-soft);}
+.note.stop{border-left-color:var(--brick); background:var(--brick-soft);}
+.note p{margin:0; color:var(--ink); max-width:none;}
+.note p+p{margin-top:9px;}
+.note .lbl{
+  display:block; font-family:"Archivo",sans-serif; font-size:10.5px; font-weight:600;
+  letter-spacing:.13em; text-transform:uppercase; color:var(--blueprint); margin-bottom:6px;
+}
+.note.warn .lbl{color:var(--amber);} .note.stop .lbl{color:var(--brick);}
+
+/* tables */
+.tw{overflow-x:auto; margin:22px 0; border:1px solid var(--line);}
+table{border-collapse:collapse; width:100%; font-size:14.5px; background:var(--paper-raised); min-width:560px;}
+th{
+  text-align:left; font-size:10.5px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--ink-faint); font-weight:600; padding:11px 13px; border-bottom:1.5px solid var(--line-strong);
+  background:var(--paper-sunk); vertical-align:bottom;
+}
+td{padding:11px 13px; border-bottom:1px solid var(--line); color:var(--ink-soft); vertical-align:top;}
+tr:last-child td{border-bottom:none;}
+td.n,th.n{text-align:right; font-family:"IBM Plex Mono",monospace; font-variant-numeric:tabular-nums; white-space:nowrap;}
+td b{color:var(--ink);}
+tr.total td{background:var(--paper-sunk); color:var(--ink); font-weight:600; border-top:1.5px solid var(--line-strong);}
+
+/* chips */
+.chip{
+  display:inline-block; font-size:10px; font-weight:600; letter-spacing:.09em; text-transform:uppercase;
+  padding:2.5px 7px; border:1px solid currentColor; white-space:nowrap;
+}
+.c-hi{color:var(--brick);} .c-md{color:var(--amber);} .c-lo{color:var(--blueprint);}
+.c-yes{color:var(--blueprint);} .c-no{color:var(--brick);}
+
+/* figures */
+figure{margin:26px 0 8px;}
+.frame{background:var(--paper-raised); border:1px solid var(--line); padding:20px 18px; overflow-x:auto;}
+figure svg{display:block; width:100%; height:auto;}
+figcaption{font-size:13px; color:var(--ink-faint); margin-top:11px; max-width:72ch;}
+
+/* phase cards */
+.phases{display:flex; flex-direction:column; gap:2px; margin:26px 0;}
+.phase{background:var(--paper-raised); border:1px solid var(--line); border-left:4px solid var(--blueprint); padding:18px 20px;}
+.phase.gate{border-left-color:var(--amber); background:var(--paper-sunk);}
+.phase-hd{display:flex; flex-wrap:wrap; align-items:baseline; gap:10px 16px; margin-bottom:8px;}
+.stepnum{font-size:11px; font-weight:600; letter-spacing:.1em; color:var(--blueprint); text-transform:uppercase;}
+.phase.gate .stepnum{color:var(--amber);}
+.phase h3{margin:0; font-size:1.13rem;}
+.when{margin-left:auto; font-family:"IBM Plex Mono",monospace; font-size:12px; color:var(--ink-faint);}
+.phase p{max-width:74ch; margin-bottom:10px;}
+.phase ul{max-width:74ch; margin-bottom:10px;}
+.phase p:last-child,.phase ul:last-child{margin-bottom:0;}
+
+/* metric strip */
+.metrics{display:grid; grid-template-columns:repeat(auto-fit,minmax(155px,1fr)); gap:2px; margin:24px 0;}
+.metric{background:var(--paper-raised); border:1px solid var(--line); padding:15px 16px;}
+.metric .k{font-size:10px; letter-spacing:.11em; text-transform:uppercase; color:var(--ink-faint); font-family:"Archivo",sans-serif; font-weight:600;}
+.metric .v{font-family:"IBM Plex Mono",monospace; font-size:1.55rem; font-weight:600; color:var(--ink); line-height:1.2; margin-top:6px; font-variant-numeric:tabular-nums;}
+.metric .s{font-size:12.5px; color:var(--ink-faint); margin-top:3px;}
+.metric.hot .v{color:var(--brick);}
+.metric.good .v{color:var(--blueprint);}
+
+/* segment cards */
+.segs{display:grid; grid-template-columns:repeat(auto-fit,minmax(285px,1fr)); gap:2px; margin:24px 0;}
+.seg{background:var(--paper-raised); border:1px solid var(--line); padding:17px 18px; border-top:3px solid var(--line-strong);}
+.seg.p1{border-top-color:var(--blueprint);}
+.seg.p2{border-top-color:var(--amber);}
+.seg.p3{border-top-color:var(--ink-faint);}
+.seg h3{margin:0 0 3px; font-size:1rem;}
+.seg .rank{font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); font-family:"Archivo",sans-serif; font-weight:600;}
+.seg p{font-size:14px; margin:9px 0 0; max-width:none;}
+.seg dl{margin:11px 0 0; font-size:13px; display:grid; grid-template-columns:auto 1fr; gap:3px 10px;}
+.seg dt{color:var(--ink-faint); font-family:"Archivo",sans-serif; font-size:10.5px; letter-spacing:.07em; text-transform:uppercase; padding-top:3px;}
+.seg dd{margin:0; color:var(--ink-soft);}
+
+footer{margin-top:60px; padding-top:22px; border-top:1.5px solid var(--line-strong); font-size:12.5px; color:var(--ink-faint);}
+footer p{color:var(--ink-faint); font-size:12.5px;}
+
+@media (max-width:640px){
+  .sheet{padding:0 18px 80px;}
+  body{font-size:16px;}
+  .when{margin-left:0; width:100%;}
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important;}}
+</style>
+</head>
+<body>
+<div class="sheet">
+
+<div class="tb">
+  <div>Documento<b>MRPG-BIZ-01</b></div>
+  <div>Revisión<b>A</b></div>
+  <div>Fecha<b>23-08-2026</b></div>
+  <div>Base de partida<b>&lt; 5.000 € · solo · parcial</b></div>
+  <div>Horizonte<b>28 meses</b></div>
+</div>
+
+<header class="hero">
+  <p class="kicker">MesaRPG · Estrategia de salida al mercado</p>
+  <h1>Cómo vender esto sin fabricar una mesa todavía</h1>
+  <p class="lede">Un plan comercial construido sobre la restricción real del proyecto: menos de 5.000 € de capital, un fundador, tiempo parcial. La conclusión no es renunciar a la mesa — es cambiar el orden en que se venden las cosas.</p>
+</header>
+
+<section>
+  <div class="shead"><span class="snum">01</span><h2>El diagnóstico incómodo</h2></div>
+  <p class="dek">Antes del plan, la aritmética que lo condiciona todo.</p>
+
+  <p>El diseño de la mesa que tienes en <span class="mono">docs/product</span> es bueno. El problema no es el diseño: es el <strong>coste de entrada</strong> de convertirlo en un producto que se pueda vender legalmente y enviar a casa de alguien.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Coste de entrada antes de vender la primera mesa</th><th class="n">Mínimo</th><th class="n">Realista</th></tr></thead>
+    <tbody>
+      <tr><td>Prototipo funcional completo (panel, cristal, bastidor, electrónica)</td><td class="n">1.600 €</td><td class="n">2.400 €</td></tr>
+      <tr><td>2ª y 3ª iteración de prototipo (nadie acierta a la primera)</td><td class="n">2.000 €</td><td class="n">4.500 €</td></tr>
+      <tr><td>Marcado CE: EMC + LVD (+ RED si lleva radio)</td><td class="n">1.500 €</td><td class="n">4.000 €</td></tr>
+      <tr><td>Expediente técnico GPSR + análisis de riesgos</td><td class="n">500 €</td><td class="n">2.500 €</td></tr>
+      <tr><td>Utillaje: matriz de plegado, plantillas CNC, cunas de embalaje</td><td class="n">4.000 €</td><td class="n">15.000 €</td></tr>
+      <tr><td>Pedido mínimo de proveedor (paneles, marcos IR, chapa: MOQ 50-100 ud.)</td><td class="n">25.000 €</td><td class="n">55.000 €</td></tr>
+      <tr><td>Marketing de campaña (15-25 % del objetivo de recaudación)</td><td class="n">15.000 €</td><td class="n">45.000 €</td></tr>
+      <tr class="total"><td>Total antes del primer euro de ingreso</td><td class="n">49.600 €</td><td class="n">128.400 €</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Frente a eso tienes 5.000 €. La distancia no se cubre con esfuerzo ni con mejor diseño: se cubre <strong>generando ingresos antes</strong>, y hay una parte del proyecto que ya está lista para generarlos.</p>
+
+  <div class="note warn">
+    <span class="lbl">Dato que cambia la conversación</span>
+    <p>El análisis de 25 campañas de hardware fallidas en Kickstarter encontró que <strong>las campañas dirigidas por equipos recaudan más del triple que las de fundador solo</strong>, y que las tres causas principales de fracaso son fallos de diseño, problemas de hardware y control de calidad en fabricación — no falta de demanda.</p>
+    <p>Ir solo a una campaña de hardware no es valiente. Es el factor de riesgo mejor documentado que existe.</p>
+  </div>
+
+  <h3>Lo que ya tienes y ya vale dinero</h3>
+  <p>Modelos YOLO entrenados para detección de miniaturas, pipeline de visión exportado a OpenVINO, motor de reglas escrito, sincronización WebSocket funcionando, fichas de personaje jugables. Eso <strong>es un producto de software</strong>, y un producto de software no necesita utillaje, ni marcado CE, ni un contenedor de China, ni una caja de 35 kg. Se puede vender el mes que viene.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">02</span><h2>Las tres rutas, comparadas con números</h2></div>
+  <p class="dek">Pediste evaluar las tres. Aquí están, con el coste de entrada y el techo de cada una.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr>
+      <th>&nbsp;</th>
+      <th>A · Mesa completa</th>
+      <th>B · Software primero</th>
+      <th>C · Kit «cerebro» + planos</th>
+    </tr></thead>
+    <tbody>
+      <tr><td><b>Qué vendes</b></td><td>Mueble de 69 kg en flat-pack con panel, cristal y electrónica</td><td>Licencia del sistema; el usuario pone TV, cámara y PC</td><td>Pi + cámaras + LEDs + licencia, montado y calibrado; planos del mueble gratis</td></tr>
+      <tr><td><b>Capital de entrada</b></td><td class="n">50-130 k€</td><td class="n">&lt; 1 k€</td><td class="n">6-12 k€</td></tr>
+      <tr><td><b>Tiempo hasta el primer euro</b></td><td>18-28 meses</td><td>4-6 meses</td><td>10-14 meses</td></tr>
+      <tr><td><b>Riesgo regulatorio</b></td><td><span class="chip c-hi">Alto</span> CE completo, GPSR, RAEE, envases, mueble</td><td><span class="chip c-lo">Nulo</span></td><td><span class="chip c-md">Medio</span> sin red eléctrica interna, sin cristal, sin mueble</td></tr>
+      <tr><td><b>Riesgo logístico</b></td><td><span class="chip c-hi">Alto</span> palet obligatorio, cristal, roturas</td><td><span class="chip c-lo">Nulo</span></td><td><span class="chip c-lo">Bajo</span> paquete de 2,5 kg</td></tr>
+      <tr><td><b>Margen bruto por unidad</b></td><td class="n">~25 %</td><td class="n">~88 %</td><td class="n">~44 %</td></tr>
+      <tr><td><b>Techo realista a 3 años</b></td><td class="n">300-600 ud.</td><td class="n">3-8 k licencias</td><td class="n">400-1.200 ud.</td></tr>
+      <tr><td><b>Encaje con tu situación hoy</b></td><td><span class="chip c-no">Imposible</span></td><td><span class="chip c-yes">Inmediato</span></td><td><span class="chip c-md">Tras la B</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="lbl">Veredicto</span>
+    <p>No son tres alternativas. Son <strong>tres peldaños de la misma escalera</strong>, y el orden correcto es B → C → A. Cada peldaño paga el siguiente y elimina el riesgo dominante del siguiente: la B demuestra que la magia funciona, la C demuestra que funciona en casa de otros, y solo entonces la A tiene sentido pedirle dinero a un mecenas o a un inversor.</p>
+  </div>
+
+  <h3>Por qué el software es la mejor de las tres, no solo la más barata</h3>
+  <p>El mueble no es defendible: cualquiera puede poner una TV bajo un cristal, y de hecho <strong>ya lo hacen</strong> — Wyrmwood, Rathskellers y Game Theory Tables llevan años vendiendo mesas de juego premium, y la Arena de Game Theory Tables ya integra pantalla táctil 4K por 7.299 $. Lo que ninguno de ellos tiene es <strong>una cámara que reconoce la miniatura física y un motor que resuelve las reglas</strong>. Ese es tu foso, y vive en el software.</p>
+  <p>Además, la comparación de mercado es demoledora: Foundry VTT cobra 50 $ una sola vez, tiene <strong>475 sistemas de juego aprobados</strong> y el usuario mediano tiene 19 módulos instalados. Es un negocio de software puro construido sobre el mismo dolor que tú atacas — con la diferencia de que Foundry <em>sustituye</em> la mesa física y tú la <em>mejoras</em>.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">03</span><h2>La escalera, fase a fase</h2></div>
+  <p class="dek">Cinco fases y cuatro puertas. Cada puerta es una decisión de seguir o parar con un número concreto, no una sensación.</p>
+
+  <figure>
+    <div class="frame">
+      <svg viewBox="0 0 900 330" role="img" aria-label="Diagrama de la escalera de cinco fases con puertas de decisión entre ellas">
+        <defs>
+          <pattern id="gridp" width="20" height="20" patternUnits="userSpaceOnUse">
+            <path d="M20 0H0v20" fill="none" stroke="var(--grid)" stroke-width="1"/>
+          </pattern>
+        </defs>
+        <rect width="900" height="330" fill="url(#gridp)"/>
+
+        <!-- steps -->
+        <g font-family="Archivo, sans-serif">
+          <!-- F0 -->
+          <rect x="20" y="248" width="150" height="56" fill="var(--paper-sunk)" stroke="var(--line-strong)"/>
+          <text x="32" y="268" font-size="11" font-weight="600" fill="var(--blueprint)" letter-spacing="1.2">FASE 0</text>
+          <text x="32" y="285" font-size="13" font-weight="600" fill="var(--ink)">El vídeo</text>
+          <text x="32" y="299" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">mes 0-4 · 300 €</text>
+          <!-- F1 -->
+          <rect x="192" y="192" width="150" height="112" fill="var(--paper-sunk)" stroke="var(--line-strong)"/>
+          <text x="204" y="212" font-size="11" font-weight="600" fill="var(--blueprint)" letter-spacing="1.2">FASE 1</text>
+          <text x="204" y="229" font-size="13" font-weight="600" fill="var(--ink)">Licencia</text>
+          <text x="204" y="243" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">mes 4-10</text>
+          <text x="204" y="258" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">+15 k€</text>
+          <!-- F2 -->
+          <rect x="364" y="136" width="150" height="168" fill="var(--paper-sunk)" stroke="var(--line-strong)"/>
+          <text x="376" y="156" font-size="11" font-weight="600" fill="var(--blueprint)" letter-spacing="1.2">FASE 2</text>
+          <text x="376" y="173" font-size="13" font-weight="600" fill="var(--ink)">Kit Núcleo</text>
+          <text x="376" y="187" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">mes 8-16</text>
+          <text x="376" y="202" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">+20 k€</text>
+          <!-- F3 -->
+          <rect x="536" y="80" width="150" height="224" fill="var(--paper-sunk)" stroke="var(--line-strong)"/>
+          <text x="548" y="100" font-size="11" font-weight="600" fill="var(--blueprint)" letter-spacing="1.2">FASE 3</text>
+          <text x="548" y="117" font-size="13" font-weight="600" fill="var(--ink)">La mesa</text>
+          <text x="548" y="131" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">mes 16-28</text>
+          <text x="548" y="146" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">B2B + campaña</text>
+          <!-- F4 -->
+          <rect x="708" y="24" width="172" height="280" fill="var(--blueprint-soft)" stroke="var(--blueprint)" stroke-width="1.5"/>
+          <text x="720" y="44" font-size="11" font-weight="600" fill="var(--blueprint)" letter-spacing="1.2">FASE 4</text>
+          <text x="720" y="61" font-size="13" font-weight="600" fill="var(--ink)">Capital y escala</text>
+          <text x="720" y="75" font-size="10.5" fill="var(--ink-faint)" font-family="IBM Plex Mono, monospace">mes 24+</text>
+        </g>
+
+        <!-- gates -->
+        <g font-family="IBM Plex Mono, monospace" font-size="9.5" fill="var(--amber)" text-anchor="middle">
+          <g stroke="var(--amber)" stroke-width="1.5" stroke-dasharray="4 3" fill="none">
+            <path d="M181 244 v64"/><path d="M353 188 v120"/><path d="M525 132 v176"/><path d="M697 76 v232"/>
+          </g>
+          <text x="181" y="322">P0</text><text x="353" y="322">P1</text>
+          <text x="525" y="322">P2</text><text x="697" y="322">P3</text>
+        </g>
+
+        <!-- baseline -->
+        <line x1="20" y1="304" x2="880" y2="304" stroke="var(--line-strong)" stroke-width="1.5"/>
+      </svg>
+    </div>
+    <figcaption>Cada fase acumula sobre la anterior: los ingresos de la Fase 1 pagan el inventario de la Fase 2, y el margen de la Fase 2 paga el marketing de la Fase 3. Las líneas discontinuas (P0-P3) son puertas de decisión con umbral numérico.</figcaption>
+  </figure>
+
+  <div class="phases">
+
+    <article class="phase">
+      <div class="phase-hd"><span class="stepnum">Fase 0</span><h3>El vídeo de veinte segundos</h3><span class="when">mes 0-4 · &lt; 300 €</span></div>
+      <p>Objetivo único: que exista una prueba visual irrefutable de que esto funciona. No de la mesa — <strong>del efecto</strong>. Una mano mueve una miniatura, la niebla de guerra se abre sola, el daño aparece calculado.</p>
+      <ul>
+        <li><strong>Montaje:</strong> una TV de segunda mano tumbada sobre dos caballetes (80-150 € en Wallapop), tu webcam, tu PC. Sin cristal, sin mueble, sin Raspberry Pi.</li>
+        <li><strong>Trabajo real:</strong> pulir el bucle visión → reglas → pantalla hasta que un clip de 20 s se pueda grabar de una sola toma, sin cortes ni trampas.</li>
+        <li><strong>En paralelo, y esto es lo más importante:</strong> pasar toda la documentación pública y la interfaz a <strong>inglés</strong>. El 90 % de tu mercado no lee español, y es la inversión más barata que vas a hacer en todo el plan.</li>
+        <li>Landing con captura de email desde el primer día. No hace falta producto: hace falta lista.</li>
+      </ul>
+      <p><strong>Salida:</strong> 6-8 piezas publicadas, ≥ 500 emails, ≥ 1 clip por encima de 50.000 visualizaciones.</p>
+    </article>
+
+    <article class="phase gate">
+      <div class="phase-hd"><span class="stepnum">Puerta P0</span><h3>¿Le importa a alguien?</h3><span class="when">mes 4</span></div>
+      <p><strong>Pasa si:</strong> ≥ 500 emails o ≥ 1 clip por encima de 50 k visualizaciones.<br>
+      <strong>Para si:</strong> tras 8 publicaciones ningún clip supera las 10.000 visualizaciones. Eso no es un problema de presupuesto — es que el relato o el producto no conectan, y gastar dinero encima solo lo hace más caro. Rediagnosticar antes de seguir.</p>
+    </article>
+
+    <article class="phase">
+      <div class="phase-hd"><span class="stepnum">Fase 1</span><h3>Vender el software</h3><span class="when">mes 4-10 · objetivo 15 k€</span></div>
+      <p>Modelo Foundry, que está probado en este mercado exacto: <strong>licencia perpetua para el GM, jugadores gratis</strong>. Sugerencia de precio: <span class="money">49 €</span> de licencia + <span class="money">5 €/mes</span> opcional para IA en nube y sincronización de campañas.</p>
+      <ul>
+        <li><strong>Sistema de lanzamiento: D&amp;D SRD 5.2, no BattleTech.</strong> El razonamiento completo está en §06 y no es solo legal: el 64,3 % de los usuarios de Foundry tienen D&amp;D 5e instalado.</li>
+        <li>BattleTech se queda como <em>demo técnica</em> — es el caso difícil (facing, arcos de fuego, calor, críticos) y por eso es la mejor prueba de que la visión funciona de verdad.</li>
+        <li>Distribución: itch.io y web propia. Sin tienda física, sin distribuidor, sin stock.</li>
+      </ul>
+      <p><strong>Salida:</strong> 300 licencias vendidas ≈ <span class="money">14.700 €</span> brutos, ≈ <span class="money">12.900 €</span> netos, con coste marginal cero.</p>
+    </article>
+
+    <article class="phase gate">
+      <div class="phase-hd"><span class="stepnum">Puerta P1</span><h3>¿Vale 49 €?</h3><span class="when">mes 10</span></div>
+      <p><strong>Pasa si:</strong> 300 licencias en 6 meses.<br>
+      <strong>Revisa si:</strong> menos de 100. El producto interesa pero todavía no vale dinero — probablemente porque la detección falla demasiado (ver riesgo R-02). Antes de bajar el precio, medir la tasa de error de visión.</p>
+    </article>
+
+    <article class="phase">
+      <div class="phase-hd"><span class="stepnum">Fase 2</span><h3>El Kit Núcleo</h3><span class="when">mes 8-16 · objetivo 50 ud.</span></div>
+      <p>Vendes <strong>el cerebro, no el mueble</strong>: Raspberry Pi 5 + AI HAT, dos cámaras calibradas de fábrica, brazo plegable, tira LED, todo montado y probado, con la licencia dentro. Pesa 2,5 kg y entra en una caja de 40 × 30 × 15 cm — paquetería normal a toda Europa.</p>
+      <ul>
+        <li><strong>Coste (100 ud.):</strong> <span class="money">369 €</span> · <strong>PVP:</strong> <span class="money">799 €</span> · <strong>Margen bruto:</strong> <span class="money">291 €</span> (44 %).</li>
+        <li><strong>Los planos de la mesa se publican gratis</strong> bajo licencia no comercial. Cada mesa que alguien construya en su garaje es un anuncio que no has pagado, y además te da el mejor banco de pruebas posible: decenas de configuraciones reales de iluminación y montaje que jamás reproducirías en tu salón.</li>
+        <li>50 unidades ≈ <span class="money">40.000 €</span> de ingreso, ≈ <span class="money">14.500 €</span> de margen — pero sobre todo, 50 instalaciones reales fuera de tu control.</li>
+      </ul>
+    </article>
+
+    <article class="phase gate">
+      <div class="phase-hd"><span class="stepnum">Puerta P2</span><h3>¿Funciona en casa de otros?</h3><span class="when">mes 16</span></div>
+      <p><strong>Pasa si:</strong> 50 kits vendidos <em>y</em> tasa de devolución &lt; 8 % <em>y</em> menos de 1 incidencia de soporte por kit y mes.</p>
+      <p>Este es el dato que ningún mecenas ni inversor te va a perdonar que no tengas. «Funciona en mi salón» no vale nada; «funciona en 50 salones que no controlo» lo vale todo.</p>
+    </article>
+
+    <article class="phase">
+      <div class="phase-hd"><span class="stepnum">Fase 3</span><h3>La mesa — primero B2B, después campaña</h3><span class="when">mes 16-28</span></div>
+      <p><strong>B2B antes que hogar.</strong> Tiendas de juegos, clubes, asociaciones, bares lúdicos y ludotecas. Una tienda que paga 3.000 € por una mesa la amortiza en unas 150 horas de alquiler a 4-5 € por jugador y hora — y mientras tanto <strong>la enseña a cientos de jugadores al año</strong>. Es simultáneamente tu primer cliente y tu canal de marketing.</p>
+      <p>Además resuelve el problema logístico del §04: un palet a dirección comercial cuesta 45-75 €; a domicilio particular, con portes y trasera elevadora, 90-160 €.</p>
+      <p><strong>Después</strong>, campaña en Gamefound o Kickstarter con objetivo de 150-300 k€, con las unidades B2B ya instaladas como prueba social y con vídeo real de tiendas usándola.</p>
+    </article>
+
+    <article class="phase gate">
+      <div class="phase-hd"><span class="stepnum">Puerta P3</span><h3>¿Hay campaña?</h3><span class="when">mes 22</span></div>
+      <p><strong>Lanza solo si:</strong> ≥ 3.000 emails en lista, ≥ 1.500 seguidores en la página de prelanzamiento, ≥ 10 mesas B2B instaladas y funcionando, y un fabricante con precio en firme por 100 unidades.<br>
+      Con 1.500 seguidores y una conversión del 30 %, son ~450 mecenas potenciales. Suficiente. Con 300 seguidores, no.</p>
+    </article>
+
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">04</span><h2>Mercado: dónde vender cada cosa</h2></div>
+  <p class="dek">Me pediste que lo recomendara. La respuesta no es un mercado — es uno distinto por producto, y el motivo es el peso.</p>
+
+  <div class="metrics">
+    <div class="metric"><div class="k">Software</div><div class="v">Global</div><div class="s">En inglés desde el día 1</div></div>
+    <div class="metric"><div class="k">Kit Núcleo</div><div class="v">UE + UK</div><div class="s">EE.UU. con socio, más tarde</div></div>
+    <div class="metric"><div class="k">Mesa completa</div><div class="v">UE</div><div class="s">B2B primero, hogar después</div></div>
+    <div class="metric hot"><div class="k">Peso real de la mesa</div><div class="v">69 kg</div><div class="s">no 48 kg — ver MRPG-TABLE-02</div></div>
+  </div>
+
+  <div class="note stop">
+    <span class="lbl">El límite que rompe el plan de envío actual</span>
+    <p>Los transportistas de paquetería en la UE (DHL, UPS, GLS, SEUR) <strong>cortan entre 20 y 31,5 kg por bulto</strong> según transportista y tipo de servicio. Ninguno llega a los ~35 kg de la caja de estructura de la mesa. <strong>No puede ir por paquetería.</strong> Va obligatoriamente por transporte paletizado, que a domicilio particular es caro, lento y entrega a pie de calle, no dentro de casa.</p>
+    <p>Esto no se arregla con un embalaje mejor. Se arregla dividiendo en tres bultos de &lt; 30 kg (posible, encarece el embalaje) o vendiendo a direcciones comerciales, que es exactamente lo que propone la Fase 3.</p>
+  </div>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Ruta de envío desde España</th><th class="n">Coste por palet</th><th>Nota</th></tr></thead>
+    <tbody>
+      <tr><td>Nacional / Portugal</td><td class="n">36-52 €</td><td>El mercado más barato de servir, y el más pequeño</td></tr>
+      <tr><td>Francia (París)</td><td class="n">44-56 €</td><td rowspan="4">Tarifas B2B a dirección comercial. A domicilio particular, sumar 40-90 € de portes y trasera elevadora</td></tr>
+      <tr><td>Italia (Milán)</td><td class="n">52-68 €</td></tr>
+      <tr><td>Alemania (Múnich)</td><td class="n">60-78 €</td></tr>
+      <tr><td>Reino Unido (Londres)</td><td class="n">64-84 €</td></tr>
+      <tr><td>EE.UU. (marítimo + última milla)</td><td class="n">250-450 €</td><td>Más aranceles, FCC y un socio de fulfillment. No en la primera campaña</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Por qué no EE.UU. primero, aunque el mercado sea mayor</h3>
+  <p>Es cierto que el crowdfunding de mesa es abrumadoramente estadounidense. Pero los tres competidores directos —Wyrmwood, Rathskellers, Game Theory Tables— <strong>son fabricantes estadounidenses que envían dentro de su propio país</strong>. Wyrmwood, que recaudó 8,8 M$ con 7.713 mecenas en su campaña de mesa modular, necesitó lanzar <em>una campaña de Kickstarter separada solo para el envío europeo</em>. Si a ellos les cuesta cruzar el Atlántico con toda su infraestructura, a ti te va a costar más.</p>
+  <p>La asimetría útil: <strong>el software y el kit cruzan el Atlántico gratis.</strong> Véndelos allí desde el minuto uno y deja la mesa física en Europa hasta que exista un socio de fabricación local.</p>
+
+  <h3>Plataforma: Gamefound por encima de Kickstarter</h3>
+  <p>Kickstarter lleva tres años consecutivos de caída en la categoría de mesa (270 M$ en 2021 → 220 M$ en 2024) y su recaudación media por proyecto en 2024 fue de 41.400 $, la más baja desde 2014. Gamefound creció un 49 % en el mismo periodo, con ~395.000 $ de media por proyecto y 8 de los 10 juegos más financiados. La comisión de Kickstarter desde España es del 5 % + 3 % de procesamiento; Gamefound está en el mismo rango y trae gestión de IVA para UE/UK integrada, que en tu caso ahorra un problema real.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">05</span><h2>Clientes potenciales</h2></div>
+  <p class="dek">Ordenados por lo único que importa cuando estás solo y a tiempo parcial: cuánto cuesta llegar a ellos.</p>
+
+  <div class="segs">
+    <article class="seg p1">
+      <span class="rank">Prioridad 1 · Fases 0-1</span>
+      <h3>El grupo veterano de BattleTech</h3>
+      <p>El dolor más agudo que existe en la mesa: calor, modificadores de impacto, tablas de críticos, hojas de registro. Que <strong>MegaMek</strong> —software libre, 20 años de vida, mantenido por voluntarios— exista y tenga comunidad activa es la mejor prueba de mercado que vas a encontrar de que esta gente <em>quiere</em> automatizar sus reglas.</p>
+      <dl>
+        <dt>Dónde</dt><dd>r/battletech, foros oficiales de battletech.com, Discord de MegaMek, Sarna.net</dd>
+        <dt>Coste</dt><dd>Cero. Publicar el clip</dd>
+        <dt>Riesgo</dt><dd>Nicho pequeño; no monetizable directamente por IP (§06)</dd>
+      </dl>
+    </article>
+
+    <article class="seg p1">
+      <span class="rank">Prioridad 1 · Fases 1-2</span>
+      <h3>DMs de D&amp;D con presupuesto</h3>
+      <p>El mercado grande. 64,3 % de los usuarios de Foundry tienen D&amp;D 5e instalado, y ya están acostumbrados a pagar por herramientas de GM. El dolor por sesión es menor que en BattleTech, pero hay cien veces más gente.</p>
+      <dl>
+        <dt>Dónde</dt><dd>r/DnD, r/dndnext, r/rpg, r/battlemaps, Discord de Foundry VTT, BoardGameGeek</dd>
+        <dt>Coste</dt><dd>Cero-bajo</dd>
+        <dt>Palanca</dt><dd>SRD 5.2 en CC-BY permite integración legal total</dd>
+      </dl>
+    </article>
+
+    <article class="seg p1">
+      <span class="rank">Prioridad 1 · Fase 2</span>
+      <h3>Constructores y makers</h3>
+      <p>La gente que ya está construyendo mesas de D&amp;D con una TV en su garaje. Compran el kit precisamente porque no quieren pelearse con la visión por computadora. Son además el público natural de Hackaday, Hackster.io y el blog de Raspberry Pi — que publican proyectos Pi + Hailo + YOLO gratis y con enorme credibilidad técnica.</p>
+      <dl>
+        <dt>Dónde</dt><dd>Hackaday, Hackster.io, blog de Raspberry Pi, r/raspberry_pi, r/DIY</dd>
+        <dt>Coste</dt><dd>Cero. Escribir bien el proyecto</dd>
+      </dl>
+    </article>
+
+    <article class="seg p2">
+      <span class="rank">Prioridad 2 · Fase 3</span>
+      <h3>Tiendas, clubes y bares lúdicos</h3>
+      <p><strong>El mejor comprador para la mesa física</strong>, y probablemente el primero. Amortizan el coste alquilando la mesa; tienen personal que la calibra; reciben palets en dirección comercial sin recargo; y exponen el producto a cientos de jugadores al año.</p>
+      <dl>
+        <dt>Dónde</dt><dd>Ferias (§07), visita directa, distribuidores del sector</dd>
+        <dt>Ticket</dt><dd>2.900-3.500 €, con opción de renting</dd>
+        <dt>Ciclo</dt><dd>2-6 meses; requiere demo presencial</dd>
+      </dl>
+    </article>
+
+    <article class="seg p2">
+      <span class="rank">Prioridad 2 · Fase 3</span>
+      <h3>Creadores de contenido y streamers</h3>
+      <p>No son clientes: son distribución. La mesa es visualmente espectacular y eso es exactamente lo que necesitan. Cede unidades en préstamo antes de venderlas. La función de «modo espectador / salida limpia para OBS» que ya tienes en VISION.md §4.7 está diseñada para ellos — súbela de prioridad.</p>
+      <dl>
+        <dt>Coste</dt><dd>1-2 unidades cedidas</dd>
+        <dt>Retorno</dt><dd>El más alto del plan si aciertas el canal</dd>
+      </dl>
+    </article>
+
+    <article class="seg p3">
+      <span class="rank">Prioridad 3 · Fase 4+</span>
+      <h3>Wargamers de Warhammer 40k</h3>
+      <p>Mercado enorme y dolor real, pero Games Workshop no publica SRD, es agresiva con la propiedad intelectual y reescribe sus reglas cada pocos años. Soportable como plugin de comunidad; nunca como sistema que tú distribuyas.</p>
+      <dl>
+        <dt>Veredicto</dt><dd>No invertir hasta tener abogado</dd>
+      </dl>
+    </article>
+
+    <article class="seg p3">
+      <span class="rank">Prioridad 3 · Fase 4+</span>
+      <h3>Educación, museos y formación</h3>
+      <p>Mapas hexagonales, simulación, historia militar, planificación. Ticket alto y presupuesto público, pero ciclo de venta de 12-18 meses y pliegos. Es un negocio distinto, no una extensión de este. Anótalo y olvídalo hasta la Fase 4.</p>
+    </article>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">06</span><h2>La decisión de IP que ya no puedes aplazar</h2></div>
+  <p class="dek">VISION.md §5 la aplaza «hasta antes de comercializar». Ese momento es la Fase 1, dentro de cuatro meses.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Sistema</th><th>Situación legal</th><th>Uso comercial</th><th>Recomendación</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><b>D&amp;D 5e (SRD 5.2)</b></td>
+        <td>Publicado bajo <b>Creative Commons Attribution 4.0</b>, licencia <b>irrevocable</b></td>
+        <td><span class="chip c-yes">Sí</span> explícitamente permitido en VTTs y productos comerciales; solo exige atribución</td>
+        <td><b>Sistema de lanzamiento.</b> Es la única base sobre la que puedes construir un negocio sin pedirle permiso a nadie, jamás</td>
+      </tr>
+      <tr>
+        <td><b>BattleTech</b></td>
+        <td>IP propiedad de <b>Topps</b>, licenciada a <b>Catalyst Game Labs</b>. No hay SRD ni licencia abierta</td>
+        <td><span class="chip c-no">No</span> el ecosistema de herramientas (MegaMek) sobrevive precisamente porque es gratuito y GPL</td>
+        <td><b>Demo técnica, no producto.</b> Los datos los aporta el usuario o un plugin de comunidad, igual que en Foundry</td>
+      </tr>
+      <tr>
+        <td><b>Warhammer 40k</b></td>
+        <td>Games Workshop, sin SRD, histórico de defensa agresiva de marca</td>
+        <td><span class="chip c-no">No</span></td>
+        <td>Plugin de comunidad o nada</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="lbl">Recomendación concreta</span>
+    <p><strong>Invierte el orden que tienes en VISION.md.</strong> Hoy BattleTech es el sistema primero y D&amp;D el segundo. Debería ser al revés — y no por miedo legal, sino porque las dos razones apuntan al mismo sitio:</p>
+    <p>1. BattleTech es <em>el mejor caso técnico</em>: facing real, arcos de fuego, elevación, calor. Si tu visión por computadora resuelve BattleTech, resuelve cualquier cosa. Eso lo convierte en la demo perfecta.<br>
+    2. D&amp;D es <em>el mejor caso comercial</em>: mercado 50 veces mayor, licencia abierta e irrevocable, y usuarios que ya pagan por herramientas.</p>
+    <p>Arquitectura resultante: el motor es agnóstico y se alimenta de datos; tú distribuyes el paquete de D&amp;D SRD; BattleTech vive como paquete que <strong>el usuario instala</strong>, mantenido por la comunidad. Es exactamente el modelo que ha llevado a Foundry a tener 475 sistemas sin licenciar ninguno.</p>
+  </div>
+
+  <p>Coste de equivocarse aquí: si lanzas cobrando por un producto que incluye nombres, tablas y datos de BattleTech, el escenario probable no es un juicio — es una carta de cese y desistimiento que te obliga a retirar el producto <strong>después</strong> de haber cobrado a los mecenas. Ese es el punto de no retorno de un proyecto de crowdfunding.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">07</span><h2>Publicidad: qué hacer con cada tramo de presupuesto</h2></div>
+  <p class="dek">Con un fundador a tiempo parcial, el presupuesto de marketing es sobre todo tiempo. Ordenado por coste creciente.</p>
+
+  <h3>Tramo 0 € — el producto es el anuncio</h3>
+  <p>MesaRPG tiene una ventaja que casi ningún proyecto de software tiene: <strong>es fotogénico</strong>. Un clip de 20 segundos explica el producto entero sin una palabra. Esa es toda tu estrategia de adquisición durante los primeros seis meses.</p>
+  <ul>
+    <li><strong>Devlog en vídeo.</strong> «Estoy construyendo una mesa de rol que reconoce las miniaturas» es un formato con demanda comprobada en YouTube. Publica el proceso, incluidos los fallos: el género premia la honestidad técnica.</li>
+    <li><strong>Reddit, con criterio.</strong> r/battletech, r/DnD, r/rpg, r/battlemaps, r/boardgames, r/raspberry_pi. Publica resultados, no anuncios; estas comunidades detectan el marketing a un kilómetro y castigan.</li>
+    <li><strong>Prensa técnica gratuita.</strong> Hackaday y Hackster.io publican proyectos exactamente como el tuyo. El blog de Raspberry Pi destaca proyectos de comunidad. Un Pi 5 + Hailo corriendo YOLO sobre miniaturas es contenido que ellos <em>quieren</em> publicar. Escribe el proyecto bien documentado y preséntalo.</li>
+    <li><strong>Foros verticales:</strong> BoardGameGeek, foros de battletech.com, Discord de Foundry VTT, Discord de MegaMek.</li>
+  </ul>
+
+  <h3>Tramo 500-1.500 € — construir la lista</h3>
+  <p>Solo cuando el clip ya funcione orgánicamente. Anuncios en Meta/Instagram y Reddit dirigidos a una landing de prelanzamiento. Referencias del sector:</p>
+  <div class="metrics">
+    <div class="metric"><div class="k">Coste por email</div><div class="v">1-3 €</div><div class="s">Lista propia</div></div>
+    <div class="metric"><div class="k">Coste por seguidor</div><div class="v">2-5 €</div><div class="s">Página de prelanzamiento</div></div>
+    <div class="metric good"><div class="k">Seguidor → mecenas</div><div class="v">~30 %</div><div class="s">Media del sector</div></div>
+    <div class="metric good"><div class="k">ROAS seguidores</div><div class="v">9-13×</div><div class="s">Mediana / media</div></div>
+  </div>
+  <p>Con 1.500 seguidores a 3,50 € de media (5.250 € de inversión) y un 30 % de conversión, salen ~450 mecenas. A un ticket mixto de 400 € entre licencias, kits y mesas, son ~180.000 €. Ese es el modelo de la campaña, y explica por qué las Fases 1 y 2 existen: <strong>ese dinero de anuncios tiene que salir de algún sitio.</strong></p>
+
+  <h3>Tramo 1.500-5.000 € — presencia física</h3>
+  <p>Una mesa funcionando en una feria vende más que mil impresiones. Calendario español relevante:</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>Evento</th><th>Ciudad</th><th>Cuándo</th><th>Encaje</th></tr></thead>
+    <tbody>
+      <tr><td>Freak Wars</td><td>Madrid</td><td>Septiembre</td><td><b>El mejor:</b> wargames y miniaturas, público exacto</td></tr>
+      <tr><td>Festival Internacional de Juegos (FIJ)</td><td>Córdoba</td><td>Octubre</td><td>Gran volumen, público generalista de mesa</td></tr>
+      <tr><td>DAU Barcelona</td><td>Barcelona</td><td>Noviembre</td><td>Alta afluencia, buena prensa</td></tr>
+      <tr><td>InterOcio</td><td>Madrid (IFEMA)</td><td>Marzo</td><td>Grande, mixto</td></tr>
+      <tr><td>Protos y Tipos</td><td>Zaragoza</td><td>Marzo</td><td>Aforo limitado pero muy prescriptor</td></tr>
+      <tr><td>Zona Lúdica</td><td>—</td><td>Consultar edición</td><td>Comunidad activa</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Fuera de España, y solo con la mesa ya validada: <strong>Spiel Essen</strong> (Alemania, octubre) es el mayor evento de mesa del mundo y el sitio natural para buscar distribución europea; <strong>UK Games Expo</strong> (junio) es el segundo mercado más accesible desde España.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">08</span><h2>Financiación: la escalera del dinero</h2></div>
+  <p class="dek">Con menos de 5.000 € y a tiempo parcial no hay ronda de inversión. Hay una secuencia, y cada peldaño desbloquea el siguiente.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Peldaño</th><th class="n">Importe</th><th>Cuándo</th><th>Qué exige</th><th>Coste real</th></tr></thead>
+    <tbody>
+      <tr><td><b>1 · Capital propio</b></td><td class="n">&lt; 5 k€</td><td>Ahora</td><td>Nada</td><td>Tu tiempo</td></tr>
+      <tr><td><b>2 · Ingresos de licencias</b></td><td class="n">13-45 k€</td><td>Mes 6-14</td><td>Producto que funcione</td><td><span class="chip c-lo">Ninguno</span> no diluye</td></tr>
+      <tr><td><b>3 · Ingresos de kits</b></td><td class="n">15-40 k€</td><td>Mes 12-20</td><td>6-12 k€ de inventario inicial</td><td><span class="chip c-lo">Ninguno</span></td></tr>
+      <tr><td><b>4 · NEOTEC (CDTI)</b></td><td class="n">hasta 250 k€</td><td>Convocatoria anual, ~abril</td><td>SL de &lt; 3 años, capital ≥ 20 k€, presupuesto de proyecto ≥ 175 k€, cubre hasta el 70 %</td><td><span class="chip c-lo">Subvención</span> no diluye</td></tr>
+      <tr><td><b>5 · ENISA Jóvenes Emprendedores</b></td><td class="n">hasta 75 k€</td><td>Ventanilla abierta</td><td>Socios mayoritarios &lt; 41 años, empresa constituida en los 24 meses anteriores y con algo de validación de mercado, <b>50 % del préstamo en fondos propios</b></td><td>Préstamo participativo, sin avales; comisión de apertura 0,5 %</td></tr>
+      <tr><td><b>6 · Crowdfunding</b></td><td class="n">150-300 k€</td><td>Mes 22-26</td><td>Lista de 3.000+, 10 mesas B2B instaladas, fabricante en firme</td><td>8-10 % de comisión + obligación de entregar</td></tr>
+      <tr><td><b>7 · Business angels</b></td><td class="n">200-500 k€</td><td>Post-campaña</td><td>Tracción demostrada y dedicación completa</td><td>15-25 % de dilución</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note warn">
+    <span class="lbl">Tres cosas que conviene saber ya</span>
+    <p><strong>NEOTEC es el mejor encaje que existe para este proyecto</strong> — visión por computadora, IA en el borde, hardware propio: es literalmente lo que financia. Pero exige una SL constituida con 20.000 € de capital y un presupuesto de proyecto de 175.000 €, así que no es un peldaño 1, es un peldaño 4. La convocatoria de 2026 cerró el 14 de mayo; apunta a la de 2027.</p>
+    <p><strong>ENISA no pide avales pero sí fondos propios</strong>: para 75.000 € de préstamo necesitas 37.500 € de patrimonio neto en la empresa, y la sociedad debe haberse constituido en los 24 meses anteriores. Ese dinero puede venir de los ingresos de las Fases 1-2 — otro motivo para no constituir la SL antes de tiempo. Confirma las condiciones vigentes directamente con ENISA: los intermediarios que las publican no siempre coinciden entre sí.</p>
+    <p><strong>El IVA del crowdfunding mata proyectos.</strong> En España, el dinero de una preventa es ingreso devengado cuando lo cobras. Recaudas en el mes 1, liquidas el IVA en el trimestre siguiente, y fabricas en el mes 8 — con el 21 % ya pagado. Habla con un asesor fiscal <em>antes</em> de lanzar la campaña, no después.</p>
+  </div>
+
+  <h3>Cuidado con el espejismo de la recaudación</h3>
+  <p>Una campaña de 290.000 € con 100 mesas suena a éxito. Este es el reparto real de cada mesa vendida a 2.899 € con IVA incluido, al coste de 100 unidades:</p>
+
+  <figure>
+    <div class="frame">
+      <svg viewBox="0 0 900 132" role="img" aria-label="Barra apilada del reparto de los 2.899 euros de precio de una mesa">
+        <g font-family="IBM Plex Mono, monospace" font-size="11">
+          <!-- proportional widths of 2899: IVA 503, COGS 1057, fees 377, mkt 359, envío 10, margen 593 -->
+          <rect x="10" y="26" width="149" height="44" fill="var(--paper-sunk)" stroke="var(--line-strong)"/>
+          <rect x="159" y="26" width="313" height="44" fill="var(--amber-soft)" stroke="var(--amber)"/>
+          <rect x="472" y="26" width="112" height="44" fill="var(--paper-sunk)" stroke="var(--line-strong)"/>
+          <rect x="584" y="26" width="106" height="44" fill="var(--paper-sunk)" stroke="var(--line-strong)"/>
+          <rect x="690" y="26" width="24" height="44" fill="var(--paper-sunk)" stroke="var(--line-strong)"/>
+          <rect x="714" y="26" width="176" height="44" fill="var(--blueprint-soft)" stroke="var(--blueprint)" stroke-width="1.5"/>
+
+          <text x="14" y="20" fill="var(--ink-faint)" font-size="9.5">IVA</text>
+          <text x="163" y="20" fill="var(--amber)" font-size="9.5">COSTE DE FABRICACIÓN</text>
+          <text x="476" y="20" fill="var(--ink-faint)" font-size="9.5">COMISIONES</text>
+          <text x="588" y="20" fill="var(--ink-faint)" font-size="9.5">MARKETING</text>
+          <text x="718" y="20" fill="var(--blueprint)" font-size="9.5">LO QUE TE QUEDA</text>
+
+          <text x="14" y="53" fill="var(--ink-soft)">503</text>
+          <text x="163" y="53" fill="var(--ink)" font-weight="600">1.057 €</text>
+          <text x="476" y="53" fill="var(--ink-soft)">377</text>
+          <text x="588" y="53" fill="var(--ink-soft)">359</text>
+          <text x="718" y="53" fill="var(--ink)" font-weight="600">593 €</text>
+          <text x="718" y="66" fill="var(--blueprint)" font-size="9.5">25 % del neto</text>
+
+          <text x="10" y="98" fill="var(--ink-faint)" font-size="10.5">Envío: se cobra aparte y sale casi a cero. Del margen de 593 € salen todavía soporte, garantías,</text>
+          <text x="10" y="113" fill="var(--ink-faint)" font-size="10.5">devoluciones, tu sueldo y el capital para la siguiente serie.</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>Reparto de una mesa vendida a 2.899 € (IVA incluido) con coste de 100 unidades. 100 mesas ≈ 290 k€ de recaudación bruta pero solo ≈ 59 k€ de contribución. 200 mesas ≈ 119 k€.</figcaption>
+  </figure>
+
+  <p>Compáralo con el software: <strong>2.000 licencias a 59 € dejan ~104.000 € netos con coste marginal cero</strong>, y se pueden vender desde un piso a tiempo parcial. Ese es el argumento numérico de toda la escalera.</p>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">09</span><h2>Registro de riesgos</h2></div>
+  <p class="dek">Ordenado por severidad. Cada uno con su señal de alerta temprana — lo que verás <em>antes</em> de que sea un problema.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>Riesgo</th><th>Sev.</th><th>Mitigación</th><th>Señal temprana</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="n">R-01</td>
+        <td><b>La visión no es lo bastante fiable.</b> Miniaturas pintadas distinto, manos que tapan, luz que cambia, modelos nunca vistos. Al 90 % de acierto el producto es inusable: cada fallo interrumpe la partida</td>
+        <td><span class="chip c-hi">Crítico</span></td>
+        <td>Definir un KPI numérico <em>hoy</em> (&lt; 1 error por 100 movimientos) y medirlo en cada versión. Corrección manual siempre a un toque. Ver la propuesta de iluminación IR en MRPG-TABLE-02 §05 — puede resolver esto por 25 €</td>
+        <td>Tiempo medio entre correcciones manuales por partida</td>
+      </tr>
+      <tr>
+        <td class="n">R-02</td>
+        <td><b>Fundador solo, a tiempo parcial.</b> Documentado como el mayor predictor de fracaso en hardware crowdfunded</td>
+        <td><span class="chip c-hi">Crítico</span></td>
+        <td>La escalera lo mitiga (nada irreversible hasta la Fase 3). Antes de la campaña, buscar socio con perfil industrial/comercial, no técnico — el técnico ya lo tienes</td>
+        <td>Hitos de fase que se retrasan &gt; 6 semanas de forma consistente</td>
+      </tr>
+      <tr>
+        <td class="n">R-03</td>
+        <td><b>Cobrar por contenido de BattleTech.</b> Carta de cese y desistimiento <em>después</em> de cobrar a los mecenas</td>
+        <td><span class="chip c-hi">Crítico</span></td>
+        <td>D&amp;D SRD 5.2 como sistema distribuido; BattleTech como plugin instalado por el usuario (§06)</td>
+        <td>No hay señal previa. Es una decisión, no un accidente</td>
+      </tr>
+      <tr>
+        <td class="n">R-04</td>
+        <td><b>El IVA de la preventa.</b> Cobras en el mes 1, liquidas en el trimestre siguiente, fabricas en el mes 8 sin ese 21 %</td>
+        <td><span class="chip c-hi">Crítico</span></td>
+        <td>Asesor fiscal antes de la campaña. Reservar el IVA en cuenta separada el día que entra</td>
+        <td>Caja disponible &lt; 120 % del coste de fabricación pendiente</td>
+      </tr>
+      <tr>
+        <td class="n">R-05</td>
+        <td><b>Rotura de cristal en tránsito.</b> Un cristal templado de 13 kg en una caja de 35 kg manipulada por paquetería</td>
+        <td><span class="chip c-md">Alto</span></td>
+        <td>No enviar cristal en la primera serie: mesa sin cristal + plantilla de corte para cristalería local. Alternativa: cuna de madera tipo caballete y seguro de transporte. El policarbonato <b>no</b> es alternativa (MRPG-TABLE-02 §06)</td>
+        <td>Tasa de rotura &gt; 2 % en el primer lote de 20</td>
+      </tr>
+      <tr>
+        <td class="n">R-06</td>
+        <td><b>Carga regulatoria continua.</b> CE es solo el principio: RAEE por país, RAP de envases, expediente GPSR con 10 años de conservación, persona responsable en la UE</td>
+        <td><span class="chip c-md">Alto</span></td>
+        <td>El Kit Núcleo reduce el alcance drásticamente: sin red eléctrica interna (fuente externa certificada), sin cristal, sin mueble. Presupuestar 3-5 k€/año de cumplimiento desde la Fase 3</td>
+        <td>Primer requerimiento de un marketplace pidiendo documentación</td>
+      </tr>
+      <tr>
+        <td class="n">R-07</td>
+        <td><b>Peso y montaje.</b> 69 kg reales. Una persona sola no puede levantar con seguridad un panel de 55" más un cristal sobre un bastidor a 74 cm</td>
+        <td><span class="chip c-md">Alto</span></td>
+        <td>Rediseñar el montaje para dos personas <em>declaradamente</em>, o incorporar guías que permitan deslizar el panel en lugar de levantarlo. Es también un asunto de responsabilidad civil</td>
+        <td>Primer vídeo de un cliente montándola</td>
+      </tr>
+      <tr>
+        <td class="n">R-08</td>
+        <td><b>Soporte de calibración a distancia.</b> Calibrar una cámara por correo electrónico es una pesadilla operativa que escala linealmente con las ventas</td>
+        <td><span class="chip c-md">Alto</span></td>
+        <td>Autocalibración con patrón impreso guiada desde la app; diagnóstico remoto opcional; medir incidencias por unidad como KPI de la Puerta P2</td>
+        <td>&gt; 1 incidencia por kit y mes</td>
+      </tr>
+      <tr>
+        <td class="n">R-09</td>
+        <td><b>Obsolescencia del panel.</b> Un modelo concreto de panel de 55" desaparece del catálogo en ~18 meses</td>
+        <td><span class="chip c-md">Medio</span></td>
+        <td>Diseñar el chasis para una <em>clase</em> de panel (envolvente de grosor + patrón VESA + rango de conectores), no para una referencia</td>
+        <td>Aviso de fin de vida del proveedor</td>
+      </tr>
+      <tr>
+        <td class="n">R-10</td>
+        <td><b>Térmica.</b> Panel boca arriba, bajo cristal, en un mueble cerrado, con Pi y LEDs. El calor sube y el cristal lo atrapa</td>
+        <td><span class="chip c-md">Medio</span></td>
+        <td>Tiro forzado diseñado, no improvisado: 45-75 m³/h. Cálculo en MRPG-TABLE-02 §07</td>
+        <td>Temperatura de superficie &gt; 40 °C tras 3 h de partida</td>
+      </tr>
+      <tr>
+        <td class="n">R-11</td>
+        <td><b>Pedidos mínimos de proveedor.</b> Marcos táctiles IR y chapa plegada con MOQ de 50-100 ud. = 25-55 k€ de inventario inmovilizado</td>
+        <td><span class="chip c-md">Medio</span></td>
+        <td>No comprometer MOQ hasta tener el dinero de la campaña en el banco. Negociar primer lote de 20-25 aceptando sobrecoste unitario</td>
+        <td>Proveedor que exige señal antes de la campaña</td>
+      </tr>
+      <tr>
+        <td class="n">R-12</td>
+        <td><b>Un competidor con fábrica añade una cámara.</b> Wyrmwood o Game Theory Tables ya tienen mueble, marca y audiencia</td>
+        <td><span class="chip c-md">Medio</span></td>
+        <td>Tu foso es el software y los modelos entrenados, no el mueble. Reforzarlo: dataset propio, plugins de sistema, comunidad. Y considerar que <em>venderles el kit</em> es un desenlace perfectamente bueno</td>
+        <td>Cualquiera de ellos publicando I+D de visión</td>
+      </tr>
+      <tr>
+        <td class="n">R-13</td>
+        <td><b>Mercado direccionable pequeño en España.</b> Una mesa de 2.900 € para gente que ya gastó 500 € en miniaturas</td>
+        <td><span class="chip c-md">Medio</span></td>
+        <td>Inglés desde el día 1; B2B como comprador principal de la mesa; el software como el producto de volumen</td>
+        <td>Lista de correo &gt; 70 % española en el mes 8</td>
+      </tr>
+      <tr>
+        <td class="n">R-14</td>
+        <td><b>Reescritura completa antes de vender nada.</b> VISION.md plantea rehacer frontend, backend y persistencia. Es correcto técnicamente y peligroso comercialmente</td>
+        <td><span class="chip c-md">Medio</span></td>
+        <td>Reescribir <em>por detrás</em> del clip de la Fase 0. La demo no necesita arquitectura limpia; necesita funcionar 20 segundos seguidos. No inviertas 6 meses de tiempo parcial en refactorizar antes de saber si a alguien le importa</td>
+        <td>Mes 3 sin ningún clip publicable</td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <div class="shead"><span class="snum">10</span><h2>Los siete números a vigilar</h2></div>
+  <p class="dek">Si solo puedes seguir siete cosas, que sean estas. Todas son medibles desde el mes 1.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>Indicador</th><th>Por qué</th><th class="n">Objetivo mes 6</th><th class="n">Objetivo mes 18</th></tr></thead>
+    <tbody>
+      <tr><td><b>Emails en lista</b></td><td>Es el activo real del proyecto, más que el código</td><td class="n">500</td><td class="n">3.000</td></tr>
+      <tr><td><b>% de lista fuera de España</b></td><td>Mide si el giro al inglés funcionó</td><td class="n">&gt; 40 %</td><td class="n">&gt; 70 %</td></tr>
+      <tr><td><b>Errores de visión por 100 movimientos</b></td><td>El único KPI técnico que decide si el producto existe</td><td class="n">&lt; 5</td><td class="n">&lt; 1</td></tr>
+      <tr><td><b>Licencias vendidas</b></td><td>Valida disposición a pagar sin riesgo físico</td><td class="n">100</td><td class="n">1.000</td></tr>
+      <tr><td><b>Incidencias de soporte por unidad y mes</b></td><td>Predice si el negocio escala o te sepulta</td><td class="n">—</td><td class="n">&lt; 1</td></tr>
+      <tr><td><b>Caja disponible</b></td><td>El proyecto muere de caja, no de falta de ideas</td><td class="n">&gt; 3 k€</td><td class="n">&gt; 25 k€</td></tr>
+      <tr><td><b>Horas reales dedicadas por semana</b></td><td>El recurso más escaso. Si baja de 8, el plan se estira, no se cumple</td><td class="n">10-15</td><td class="n">10-15</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note">
+    <span class="lbl">Lo primero que haría esta semana</span>
+    <p>1. Cambiar el orden de sistemas: D&amp;D SRD 5.2 como sistema comercial, BattleTech como demo.<br>
+    2. Poner la landing con captura de email, en inglés, hoy. Sin producto, solo con la promesa y un GIF.<br>
+    3. Grabar el clip de 20 segundos con lo que ya funciona, aunque el código sea el prototipo viejo.<br>
+    4. Definir y empezar a medir el KPI de errores de visión.<br>
+    5. Pedir presupuesto de una Raspberry Pi 5 + AI HAT + una cámara NoIR (~230 €) y probar la hipótesis IR de MRPG-TABLE-02 §05. Es el experimento con mejor relación coste/información de todo el proyecto.</p>
+  </div>
+</section>
+
+<footer>
+  <p>MRPG-BIZ-01 Rev. A · Documento interno de estrategia · MesaRPG, agosto 2026.<br>
+  Las cifras de mercado, comisiones, tarifas de transporte y ayudas públicas proceden de fuentes públicas consultadas en agosto de 2026 y deben verificarse antes de comprometer dinero. Las estimaciones de coste, margen y calendario son modelos, no presupuestos cerrados. Este documento no constituye asesoramiento legal ni fiscal: las decisiones de propiedad intelectual, cumplimiento normativo y tributación de preventas requieren un profesional.</p>
+</footer>
+
+</div>
+</body>
+</html>

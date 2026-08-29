@@ -57,21 +57,10 @@ temp/
 .pytest_cache/
 .mypy_cache/
 
-# Datos locales (mantener en local, no subir)
-data/*.json
-!data/.gitkeep
-
-# Marcadores generados
-assets/markers/*.png
-!assets/markers/.gitkeep
-
 # Secretos y configuración local
 *.local.json
 secrets.json
 .env.local
-
-# Modelos YOLO (muy grandes, se descargan automáticamente)
-*.pt
 
 # Rewrite (stack nuevo, ver rewrite/README.md)
 rewrite/frontend/node_modules/
