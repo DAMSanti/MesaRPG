@@ -25,7 +25,7 @@ import {
   hexToWorld, mapCenter, WALK_SPEED, worldToHex,
 } from '../hexMath'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
-import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE } from './Mech3D'
+import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE, type SeveredLimbInfo } from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
 import { LightPool } from './LightPool'
@@ -35,6 +35,8 @@ import {
 import { getStampVersion, RELIEF_SKIP_TERRAINS, stampDeformation } from '../terrainRelief'
 import { TILE_RAMP_FRACTION, tileHeightInputs } from '../tileHeightField'
 import { useProfiledFrame } from './PerfProbe'
+import { dropLimb, droppedLimbList, droppedLimbVersion } from '../droppedLimbs'
+import { FallenLimb } from './FallenLimb'
 
 // Real user request: "no es muy largo hacer que las armas disparen de esas
 // zonas y los impactos se hagan en esos puntos?" — MechLab's own
@@ -921,6 +923,8 @@ type UnitMarkerProps = {
   destroyedReason?: 'structural' | 'pilot_killed' | null
   /** Location codes whose structure has reached 0 — see Mech3D's own prop. */
   severedLocations?: Set<string>
+  /** Forwarded straight to Mech3D — see its own prop. */
+  onLimbSevered?: (info: SeveredLimbInfo) => void
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void
   onPointerUp?: (e: ThreeEvent<PointerEvent>) => void
   /** Fires once this unit finishes walking a real leg of movement (the
@@ -958,7 +962,7 @@ type UnitMarkerProps = {
 
 const UnitMarker = memo(function UnitMarker({
   unit, elevation, terrain, terrainAt, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
-  prone, shutdown, destroyedReason, severedLocations, boardgameScale,
+  prone, shutdown, destroyedReason, severedLocations, onLimbSevered, boardgameScale,
   onPointerDown, onPointerUp, onWalkDone, onWalkStep, onFootstep,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
@@ -1362,6 +1366,7 @@ const UnitMarker = memo(function UnitMarker({
               isMoving={isMoving} movementType={movementType === 'run' ? 'run' : 'walk'}
               jumpPhase={jumpPhase} fallen={tiltProne} dead={destroyedReason != null}
               severedLocations={severedLocations}
+              onLimbSevered={onLimbSevered}
               emissive={glowEmissive} emissiveIntensity={glowEmissiveIntensity}
               tintStrength={tintStrength}
               onLoaded={() => forceMeshRegistered((n) => n + 1)}
@@ -2905,6 +2910,36 @@ export function HexMap({
   // noticeably bigger, deeper gouge than a mech's own footprint below.
   const IMPACT_CRATER_RADIUS = 3
   const IMPACT_CRATER_DEPTH = 1.2
+  // Mirrors droppedLimbs' own version counter, purely to re-render when a
+  // limb is added — see recordDroppedLimb.
+  const [limbVersion, setLimbVersion] = useState(droppedLimbVersion())
+  const fallenLimbs = useMemo(() => droppedLimbList(), [limbVersion])
+
+  // A limb that has just come off, on its way to the ground. The board
+  // owns this rather than the unit does, because wreckage belongs to the
+  // place it fell: the mech walks on, the arm stays.
+  const recordDroppedLimb = (unitId: number, info: SeveredLimbInfo) => {
+    // Mech3D reports true world coordinates; everything inside this map's
+    // own group is offset by [-centerX, 0, -centerZ], so the board-space
+    // position is the world one with the centre added back.
+    const x = info.worldX + centerX
+    const z = info.worldZ + centerZ
+    dropLimb({
+      key: `${unitId}:${info.location}`,
+      x,
+      z,
+      y: 0,
+      dropY: info.worldY,
+      facing: info.facing,
+      geometry: info.geometry,
+      material: info.material,
+    })
+    // The store is module-level, so it cannot re-render anything by
+    // itself; mirroring its version into state is what puts the new limb
+    // on screen.
+    setLimbVersion(droppedLimbVersion())
+  }
+
   const addImpactMark = (pos: [number, number, number]) => {
     // Real user report: the mark floated slightly above the ground, and
     // one landing off the edge of the map got drawn anyway (shown
@@ -3017,6 +3052,15 @@ export function HexMap({
           props are short enough that the fog volume covers them anyway. */}
       {/* Grooves and blend strips for the whole board, merged by region
           — 404 draw calls down to a couple of dozen, see TerrainSkin. */}
+      {/* Blown-off limbs, lying where they landed. Rendered by the BOARD
+          and not by the unit that lost them, so they stay put when it
+          moves — see droppedLimbs.ts. */}
+      {fallenLimbs.map((limb) => {
+        const hex = worldToHex(limb.x, limb.z)
+        return (
+          <FallenLimb key={limb.key} limb={limb} groundY={groundYAt(hex.q, hex.r)} />
+        )
+      })}
       <TerrainSkin tiles={map.tiles} lookup={lookup} />
       <GroundVegetation
         tiles={map.tiles} lookup={lookup}
@@ -3052,6 +3096,7 @@ export function HexMap({
           shutdown={shutdownUnitIds?.has(unit.id) ?? false}
           destroyedReason={destroyedReasonByUnitId?.get(unit.id) ?? null}
           severedLocations={severedLocationsByUnitId?.get(unit.id)}
+          onLimbSevered={(info) => recordDroppedLimb(unit.id, info)}
           boardgameScale={boardgameScale}
           onWalkDone={() => onUnitWalkDone?.(unit.id)}
           onWalkStep={(index) => onUnitWalkStep?.(unit.id, index)}

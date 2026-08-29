@@ -78,12 +78,31 @@ const MECH_COLOR_BOOST = 1.7
  * this generic placeholder). Omitting them always renders the generic
  * placeholder, same as before this existed.
  */
+/** Everything needed to drop a limb on the ground: which location it was,
+ * what it was being drawn with, and where in the world it was at the
+ * instant it came off. */
+export interface SeveredLimbInfo {
+  location: string
+  geometry: THREE.BufferGeometry
+  material: THREE.Material
+  worldX: number
+  worldY: number
+  worldZ: number
+  facing: number
+}
+
 interface Mech3DProps {
   color: string
   /** Location codes whose structure has reached 0. Any mesh named for one
    * of them (see LIMB_MESH_NAMES) stops being drawn. Models that do not
    * carry separate limb meshes ignore this entirely. */
   severedLocations?: ReadonlySet<string>
+  /** Called the moment a limb is newly cut off, with everything needed to
+   * drop it on the ground: which location, the geometry and material it was
+   * being drawn with, and where in the world it was at that instant. Not
+   * called for limbs already missing when this mounts — those are wreckage
+   * that fell before anyone was watching. */
+  onLimbSevered?: (info: SeveredLimbInfo) => void
   emissive?: string
   emissiveIntensity?: number
   chassis?: string | null
@@ -674,7 +693,7 @@ export function useMechPbr(
 
 function Mech3DModel({
   color, emissive, emissiveIntensity, chassis, model, isMoving, movementType, jumpPhase, fallen, dead,
-  tintStrength, onLoaded, onSurfaceClick, playAnimation, onFootstep, severedLocations,
+  tintStrength, onLoaded, onSurfaceClick, playAnimation, onFootstep, severedLocations, onLimbSevered,
 }: Mech3DProps) {
   const url = resolveMechModelUrl(chassis, model)
   const { scene, animations } = useGLTF(url)
@@ -723,15 +742,42 @@ function Mech3DModel({
   // these maps on every poll, and depending on identity would walk the
   // whole model several times a second for nothing.
   const severedKey = severedLocations ? [...severedLocations].sort().join(',') : ''
+  // What was already missing when this mounted. Those limbs fell before
+  // this component existed, so they must not be dropped again — otherwise
+  // every remount (and the views remount on every poll) would rain arms.
+  const knownSeveredRef = useRef<Set<string> | null>(null)
   useEffect(() => {
     const severed = new Set(severedKey ? severedKey.split(',') : [])
+    const firstRun = knownSeveredRef.current === null
+    const known = knownSeveredRef.current ?? severed
     instance.traverse((object) => {
       const mesh = object as THREE.Mesh
       if (!mesh.isMesh) return
       const location = limbLocationOfMesh(mesh.name)
       if (!location) return
-      mesh.visible = !severed.has(location)
+      const gone = severed.has(location)
+      // Reported BEFORE hiding it, while its world transform is still the
+      // arm's own — once it is invisible its matrix is no longer updated
+      // and the piece would fall from wherever it last happened to be.
+      if (gone && !known.has(location) && !firstRun && onLimbSevered) {
+        mesh.updateWorldMatrix(true, false)
+        const position = new THREE.Vector3()
+        mesh.getWorldPosition(position)
+        const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+        onLimbSevered({
+          location,
+          geometry: mesh.geometry,
+          material,
+          worldX: position.x,
+          worldY: position.y,
+          worldZ: position.z,
+          facing: groupRef.current?.rotation.y ?? 0,
+        })
+      }
+      mesh.visible = !gone
     })
+    knownSeveredRef.current = severed
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instance, severedKey])
 
   // Rigged curated assets (see the Blender envelope-weighting pipeline
