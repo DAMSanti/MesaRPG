@@ -117,6 +117,28 @@ function drawBurst(ctx: CanvasRenderingContext2D, width: number, height: number)
   }
 }
 
+/** Real user request: "el splatter de sangre debe desaparecer con el
+ * tiempo."
+ *
+ * Done by repeatedly erasing a little of the canvas rather than by fading
+ * the element, because the two behave differently in the case that
+ * matters: fading the whole layer would take a fresh wound down with the
+ * old ones, and the fade would have to be restarted from full every time
+ * the pilot is hit, which reads as the old blood coming BACK. Erasing
+ * multiplies what is already there, so each splatter decays from the
+ * moment it lands and a new one arrives at full strength over whatever is
+ * left of the last.
+ *
+ * The decay is geometric (each tick keeps 1 - PER_TICK of what remains),
+ * so these two numbers mean: effectively gone about a minute after the
+ * last hit. */
+const BLOOD_FADE_TICK_MS = 900
+const BLOOD_FADE_PER_TICK = 0.075
+/** Ticks to run before wiping the last invisible residue and stopping. A
+ * geometric fade never quite reaches zero, and a timer that runs forever
+ * for the sake of alpha nobody can see is a timer that runs forever. */
+const BLOOD_FADE_TICKS = 60
+
 export function CockpitBlood({ hits }: { hits: number }) {
   // ?blood=N paints N wounds regardless of the pilot's real state. Looking
   // at this effect otherwise means getting a pilot shot first, which is a
@@ -134,8 +156,43 @@ export function CockpitBlood({ hits }: { hits: number }) {
   // reopening the cockpit mid-fight does not replay every hit at once as a
   // sudden faceful of blood.
   const paintedRef = useRef<number | null>(null)
+  const fadeTimerRef = useRef<number | null>(null)
+  const fadeTicksRef = useRef(0)
+
+  // Stopped on unmount — leaving the cockpit while the blood is still
+  // drying would otherwise leave an interval running against a canvas
+  // that no longer exists.
+  useEffect(() => () => {
+    if (fadeTimerRef.current !== null) window.clearInterval(fadeTimerRef.current)
+    fadeTimerRef.current = null
+  }, [])
 
   useEffect(() => {
+    // Restarts the clock rather than the fade: whatever is on the glass
+    // keeps whatever strength it has left, it just gets the full window
+    // again before the layer is wiped and the timer stops.
+    const keepFading = () => {
+      fadeTicksRef.current = BLOOD_FADE_TICKS
+      if (fadeTimerRef.current !== null) return
+      fadeTimerRef.current = window.setInterval(() => {
+        const target = canvasRef.current
+        const targetCtx = target?.getContext('2d')
+        if (!target || !targetCtx) return
+        targetCtx.save()
+        // Erases a fraction of what is there instead of painting over it,
+        // which is what makes this work on a transparent layer.
+        targetCtx.globalCompositeOperation = 'destination-out'
+        targetCtx.fillStyle = `rgba(0, 0, 0, ${BLOOD_FADE_PER_TICK})`
+        targetCtx.fillRect(0, 0, target.width, target.height)
+        targetCtx.restore()
+        fadeTicksRef.current -= 1
+        if (fadeTicksRef.current > 0) return
+        targetCtx.clearRect(0, 0, target.width, target.height)
+        if (fadeTimerRef.current !== null) window.clearInterval(fadeTimerRef.current)
+        fadeTimerRef.current = null
+      }, BLOOD_FADE_TICK_MS)
+    }
+
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -152,6 +209,7 @@ export function CockpitBlood({ hits }: { hits: number }) {
       // First mount: catch up silently to whatever the pilot already has.
       for (let i = 0; i < wounds; i++) drawBurst(ctx, canvas.width, canvas.height)
       paintedRef.current = wounds
+      if (wounds > 0) keepFading()
       return
     }
     if (wounds <= paintedRef.current) {
@@ -161,6 +219,7 @@ export function CockpitBlood({ hits }: { hits: number }) {
 
     for (let i = paintedRef.current; i < wounds; i++) drawBurst(ctx, canvas.width, canvas.height)
     paintedRef.current = wounds
+    keepFading()
 
     // A new wound also throws a red pulse across the whole screen — the
     // splatter alone is easy to miss when it lands out at the edge, which

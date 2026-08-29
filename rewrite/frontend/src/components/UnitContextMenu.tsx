@@ -25,6 +25,7 @@ export function UnitContextMenu({
   showRollInitiative, canRollInitiative, onRollInitiative,
   showPhaseMovement, canPhaseMove, onPhaseMove, onRotate, onSkipMovement, onStandUp,
   onFallOver, forceJump, onForceJumpChange,
+  onDebugPilotHit, onDebugSeverLimbs,
 }: {
   unit: Unit
   mech: Mech | null
@@ -95,6 +96,22 @@ export function UnitContextMenu({
    * unit id); undefined hides the checkbox. */
   forceJump?: boolean
   onForceJumpChange?: (value: boolean) => void
+  /** Debug-only (real user request: "quiero una forma de debuggear la
+   * pérdida de extremidades y el splatter de sangre en la cabina... deberá
+   * aparecer sección debug, daño piloto, pérdida extremidad").
+   *
+   * Both effects are normally reachable only by playing until the dice go
+   * a particular way -- the cockpit only bleeds when a real attack gets
+   * through to the pilot, and a limb only drops when a location's
+   * structure is actually shot to zero -- which makes them close to
+   * untestable while you are working on how they LOOK. These two put the
+   * game in that state directly.
+   *
+   * Deliberately outside the phase-gated block above: this section is not
+   * a move or an attack and has no turn to wait for. Undefined hides the
+   * whole section, so callers with no debug tooling never show it. */
+  onDebugPilotHit?: () => void
+  onDebugSeverLimbs?: () => void
 }) {
   const label = mech ? `${mech.chassis} ${mech.model ?? ''}`.trim() : `unidad #${unit.id}`
 
@@ -135,6 +152,17 @@ export function UnitContextMenu({
               />
               {' '}Forzar salto al arrastrar (debug)
             </label>
+          )}
+        </>
+      )}
+      {(onDebugPilotHit || onDebugSeverLimbs) && (
+        <>
+          <div className="unit-menu-section">debug</div>
+          {onDebugPilotHit && (
+            <button onClick={onDebugPilotHit}>Daño piloto</button>
+          )}
+          {onDebugSeverLimbs && (
+            <button onClick={onDebugSeverLimbs}>Perder extremidades</button>
           )}
         </>
       )}

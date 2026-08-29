@@ -23,6 +23,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Tooltip } from '../components/Tooltip'
 import { CameraBridge } from '../components/CameraBridge'
 import { DieStylePicker } from '../components/DieStylePicker'
+import { SEVERABLE_LOCATIONS } from '../components/Mech3D'
 import { MECH_CHASSIS_ASSETS } from '../mechAssets'
 import { FACTION_COLORS, FACTION_LABELS, NEUTRAL_UNIT_COLOR, type Faction } from '../factions'
 import { suggestPilotColor } from '../pilotColors'
@@ -75,6 +76,7 @@ import {
   submitMeleeAttack,
   undoLastAction,
   updateMech,
+  updateMechLocation,
   updatePilot,
   type Campaign,
   type CampaignEvent,
@@ -696,6 +698,57 @@ function GMViewBattletech() {
   // siempre") — see UnitContextMenu's own forceJump prop doc comment.
   // Purely client-side, per-unit, never sent to the backend.
   const [forceJumpUnitIds, setForceJumpUnitIds] = useState<Set<number>>(new Set())
+
+  // Debug tooling for two effects that are otherwise only reachable by
+  // playing until the dice happen to produce them (real user request:
+  // "quiero una forma de debuggear la pérdida de extremidades y el
+  // splatter de sangre en la cabina"). Both go through the ordinary
+  // endpoints and write real state rather than poking the renderer: the
+  // views derive the cockpit blood from the pilot's own `hits` and a
+  // severed limb from `structure_current <= 0`, so driving those two
+  // numbers is what exercises the actual code path end to end — including
+  // the broadcast, so an open FPV on another screen reacts the same way it
+  // would to a real hit.
+  const debugPilotHit = async (unit: Unit) => {
+    const pilot = pilots.find((p) => p.id === unit.pilot_id)
+    if (!pilot) return
+    // Capped one short of the six that kill a MechWarrior: the point of
+    // this button is to WATCH the cockpit, and a dead pilot's mech is
+    // destroyed and its FPV closes itself (see PlayerView's own forced
+    // exit), which would end the thing being debugged.
+    const hits = Math.min(5, (pilot.hits ?? 0) + 1)
+    if (hits === pilot.hits) return
+    try {
+      await updatePilot(pilot.id, { hits })
+      await refetch()
+    } catch {
+      setError('No se pudo aplicar el daño de piloto (debug).')
+    }
+  }
+
+  const debugSeverLimbs = async (unit: Unit) => {
+    const mech = mechForUnit(unit)
+    if (!mech) return
+    // All four at once, per the request ("las perderá todas"). A location
+    // with structure_max 0 does not exist on this chassis at all, which is
+    // not the same as one that has been blown off — zeroing it would tell
+    // the model to drop a limb the mech never had.
+    const limbs = (mech.locations ?? []).filter(
+      (l) => SEVERABLE_LOCATIONS.includes(l.location) && l.structure_max > 0 && l.structure_current > 0,
+    )
+    if (limbs.length === 0) return
+    try {
+      // Sequential rather than Promise.all: each PATCH returns the whole
+      // mech and broadcasts, and firing four concurrent writes at the same
+      // row is how you get one of them silently reverted.
+      for (const limb of limbs) {
+        await updateMechLocation(mech.id, limb.location, { structure_current: 0 })
+      }
+      await refetch()
+    } catch {
+      setError('No se pudieron arrancar las extremidades (debug).')
+    }
+  }
   // unit_walked (real user report) covers every move this screen didn't
   // itself resolve — PlayerView's Acciones tab, FirstPersonView's cockpit
   // HUD, or another connected GM screen — which this client would
@@ -1689,6 +1742,8 @@ function GMViewBattletech() {
             onSkipMovement={() => { submitMoveUnit(menu.unit, menu.unit.q, menu.unit.r, false); setMenu(null) }}
             onStandUp={() => { standUp(menu.unit.id).then(refetch).catch(() => {}); setMenu(null) }}
             onFallOver={() => { fallOver(menu.unit.id).then(refetch).catch(() => {}); setMenu(null) }}
+            onDebugPilotHit={menuUnitPilot ? () => { debugPilotHit(menu.unit); setMenu(null) } : undefined}
+            onDebugSeverLimbs={mechForUnit(menu.unit) ? () => { debugSeverLimbs(menu.unit); setMenu(null) } : undefined}
             forceJump={forceJumpUnitIds.has(menu.unit.id)}
             onForceJumpChange={(value) => {
               setForceJumpUnitIds((prev) => {

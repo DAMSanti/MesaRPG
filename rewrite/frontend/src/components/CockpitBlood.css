@@ -8,10 +8,16 @@
   width: 100%;
   height: 100%;
   pointer-events: none;
-  /* Above the cockpit HUD, because the blood is on the glass and the HUD is
-     behind it — the whole point of the ask. Under the CRT overlay (z 20)
-     so the scanlines still pass over it. */
-  z-index: 18;
+  /* Real user request: "la sangre del splatter del piloto estara por detras
+     del hud y los efectos de pantalla." So it sits at the very bottom of
+     the overlay stack — above the 3D canvas (z 0) and above the tilt-shift
+     band (z 1, whose backdrop-filter is meant to blur the distant map, not
+     something on the glass a hand's width from the pilot's face), and below
+     every HUD element (frame z 5, topbar/phase row z 10-15), the CRT pass
+     (z 20) and the hit flash (z 30). The instruments read over the blood
+     rather than through it, and nothing on the glass can obscure a number
+     the pilot needs. */
+  z-index: 2;
   /* Slightly multiplied into what is behind rather than laid flatly on top:
      glass with blood on it darkens what you see through it. */
   mix-blend-mode: multiply;
@@ -25,7 +31,9 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  z-index: 19;
+  /* Kept one step above the splatter and below everything else, same
+     reasoning as .fp-blood. */
+  z-index: 3;
   opacity: 0;
   background: radial-gradient(
     ellipse at center,

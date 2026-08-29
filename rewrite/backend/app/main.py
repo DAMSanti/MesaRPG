@@ -603,7 +603,7 @@ class MechLocationPatchIn(BaseModel):
 
 
 @app.patch("/api/mechs/{mech_id}/locations/{location}")
-def patch_mech_location(
+async def patch_mech_location(
     mech_id: int, location: str, body: MechLocationPatchIn,
     x_device_token: str | None = Header(default=None, alias="X-Device-Token"),
 ) -> dict:
@@ -611,6 +611,15 @@ def patch_mech_location(
         raise HTTPException(422, f"Unknown location {location!r}")
     _require_owner(_require_mech(mech_id), x_device_token)
     updated = mechs.update_location(mech_id, location, **body.model_dump())
+    # Everyone looking at this mech needs to hear about it, not just the
+    # screen that made the edit. Structure reaching zero is what the 3D
+    # views read as "that limb came off" (GMView's own
+    # severedLocationsByUnitId), so without this a limb blown off in one
+    # view stayed attached in every other one until something unrelated
+    # happened to refresh them -- and a pencil-marked armour change is a
+    # fact about the board like any other. One patch per committed edit,
+    # not per keystroke, so this is not a chatty broadcast.
+    await manager.broadcast(updated["campaign_id"], {"type": "roster_updated"})
     return _sanitize_mech(updated, x_device_token)
 
 

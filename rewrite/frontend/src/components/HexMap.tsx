@@ -8,7 +8,8 @@ import * as THREE from 'three'
 import type {
   AttackResult, HexTileData, MapData, Mech, MechAnnotation, Unit,
 } from '../api'
-import { addBoardMark, listBoardMarks, listMechAnnotations } from '../api'
+import { addBoardMark, listBoardMarks } from '../api'
+import { useMechAnnotationsCache } from '../mechAnnotations'
 import { Mech3D } from './Mech3D'
 import { TerrainDecor, terrainSinkY } from './TerrainDecor'
 import { RoadMarkings } from './RoadMarkings'
@@ -38,19 +39,11 @@ import { useProfiledFrame } from './PerfProbe'
 import { adoptSavedLimb, clearDroppedLimbs, dropLimb, droppedLimbList, droppedLimbVersion } from '../droppedLimbs'
 import { FallenLimb } from './FallenLimb'
 
-// Real user request: "no es muy largo hacer que las armas disparen de esas
-// zonas y los impactos se hagan en esos puntos?" — MechLab's own
-// mech_model_annotations only ever get written by that editor; loaded
-// once per mounted view (GMView/TableView/FirstPersonView each hold their
-// own copy) since they change rarely and this only needs to be "close
-// enough," not live-reactive to someone editing MechLab in another tab.
-export function useMechAnnotationsCache() {
-  const [annotations, setAnnotations] = useState<MechAnnotation[]>([])
-  useEffect(() => {
-    listMechAnnotations().then(setAnnotations).catch(() => {})
-  }, [])
-  return annotations
-}
+// useMechAnnotationsCache moved to ../mechAnnotations — Mech3D needs it
+// too (to read a limb's real membership out of the same saved data), and
+// this file already imports Mech3D, so leaving it here would close an
+// import cycle. Re-exported so the views keep their existing import.
+export { useMechAnnotationsCache }
 
 /** The local point (Mech3D's own normalized space, pre-MODEL_SCALE — see
  * normalizeMechInstance) an attack should visually originate from/land
@@ -792,8 +785,35 @@ function ExplosionDebris({
 // (`worldOffset={[centerX, centerZ]}`), so they need value comparison,
 // not reference — a plain shallow memo would never match on those and
 // silently defeat itself.
+/** Compares two severed-location sets by CONTENTS.
+ *
+ * Real user report: "cuando 'pierde extremidades'... no se actualiza ni el
+ * FPV, ni el GMView ni el TableView, si les refresco se ve sin
+ * extremidades... nunca veo las extremidades en el mapa, ni las veo caer."
+ *
+ * unitMarkerPropsEqual did not look at severedLocations at all, so a mech
+ * that had just lost an arm compared equal to the same mech with the arm
+ * still on: the marker never re-rendered, Mech3D never saw the new set,
+ * and — because the fall is reported from that same effect — no limb was
+ * ever handed to the board to drop. A reload looked like it worked only
+ * because a fresh mount has no memoised render to skip.
+ *
+ * By contents and not by identity: the views rebuild these sets from
+ * scratch on every poll, so comparing references would re-render every
+ * mech on the board several times a second, which is the exact cost this
+ * comparator exists to avoid. */
+function sameSeveredLocations(prev?: ReadonlySet<string>, next?: ReadonlySet<string>) {
+  if (prev === next) return true
+  const prevSize = prev?.size ?? 0
+  if (prevSize !== (next?.size ?? 0)) return false
+  if (prevSize === 0) return true
+  for (const location of prev!) if (!next!.has(location)) return false
+  return true
+}
+
 function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<UnitMarkerProps>) {
-  return prev.unit === next.unit
+  return sameSeveredLocations(prev.severedLocations, next.severedLocations)
+    && prev.unit === next.unit
     && prev.elevation === next.elevation
     && prev.terrain === next.terrain
     && prev.physics === next.physics
@@ -2972,6 +2992,10 @@ export function HexMap({
       facing: info.facing,
       modelUrl: info.modelUrl,
       location: info.location,
+      // The already-baked piece, in the pose and at the scale it was
+      // actually being drawn at. Lives only in the module store — the POST
+      // below deliberately does not carry it (see droppedLimbs.ts).
+      piece: info.piece,
     })
     // Fire and forget, and only for a limb nobody had recorded yet. A limb
     // the player just watched fall off is a limb that has fallen off:
@@ -3110,7 +3134,10 @@ export function HexMap({
       {fallenLimbs.map((limb) => {
         const hex = worldToHex(limb.x, limb.z)
         return (
-          <FallenLimb key={limb.key} limb={limb} groundY={groundYAt(hex.q, hex.r)} />
+          <FallenLimb
+            key={limb.key} limb={limb} groundY={groundYAt(hex.q, hex.r)}
+            mechScale={boardgameScale ? BOARDGAME_MECH_SCALE : 1}
+          />
         )
       })}
       <TerrainSkin tiles={map.tiles} lookup={lookup} />

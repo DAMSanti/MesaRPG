@@ -17,3 +17,18 @@
   padding: 4px 2px 2px;
   cursor: pointer;
 }
+
+/* Header for the debug block at the foot of the menu (real user request:
+   "deberá aparecer sección debug"). Reads as a divider with a label
+   rather than as another entry: these are not game actions, and the rule
+   above them is what keeps a stray click from landing on one while
+   aiming for the last real button. */
+.unit-menu-section {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted, #888);
+  border-top: 1px solid var(--border);
+  padding: 6px 2px 0;
+  margin-top: 4px;
+}

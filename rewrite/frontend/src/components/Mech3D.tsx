@@ -6,6 +6,8 @@ import { SkeletonUtils } from 'three-stdlib'
 import { WALK_CYCLE_TIME_SCALE } from '../hexMath'
 import type { JumpPhase } from '../jumpFlight'
 import { resolveMechModelUrl } from '../mechAssets'
+import { limbLocationLookup, useMechAnnotationsCache } from '../mechAnnotations'
+import { buildBakedPiece, recenterBakedPiece } from '../bakedPiece'
 import { useProfiledFrame } from './PerfProbe'
 
 // Real user request: "añade un PBR para el Jenner", then: "PBR van a
@@ -86,10 +88,35 @@ export interface SeveredLimbInfo {
   /** The .glb it belongs to, so the fallen piece can find the very same
    * mesh again without anything having to hold on to the geometry. */
   modelUrl: string
+  /** Where the piece's own VISUAL BULK was, not where its node origin
+   * was — see `piece` below. */
   worldX: number
   worldY: number
   worldZ: number
   facing: number
+  /** The piece as a standalone object, ready to fall: skinning baked into
+   * real vertex positions, recentered on its own bounding box, plus the
+   * world orientation and scale it was being drawn at.
+   *
+   * Real user report: "las extremidades directamente desaparecen... debe
+   * ser como en el mechlab, los brazos cayendo por gravedad hasta que
+   * colisionan con el suelo." Handing over the raw geometry instead is the
+   * bug MechLab already hit and documented (see bakeSkinnedGeometry): a
+   * skinned mesh's vertex data lives near the armature origin, so an arm
+   * drawn from it appears at the mech's centre in bind pose rather than
+   * where the arm actually is. Baking has to happen HERE, in the one
+   * moment the limb is still posed in the scene with a current world
+   * matrix — a frame later it is hidden and its matrix goes stale.
+   *
+   * Undefined only for a limb restored from the server, which nobody
+   * watched come off; FallenLimb bakes those from the model's rest pose
+   * instead. */
+  piece?: {
+    geometry: THREE.BufferGeometry
+    material: THREE.Material
+    quaternion: THREE.Quaternion
+    scale: number
+  }
 }
 
 interface Mech3DProps {
@@ -284,6 +311,20 @@ const LIMB_MESH_NAMES: Record<string, readonly string[]> = {
   LL: ['piernai', 'leftleg', 'leg_l', 'legleft'],
   RL: ['piernad', 'rightleg', 'leg_r', 'legright'],
 }
+
+/** Fallback only, for a chassis nobody has annotated in MechLab yet.
+ *
+ * The real source of truth is the model's own saved `kind: 'limb'`
+ * annotation -- see limbLocationLookup in ../mechAnnotations for why a
+ * hardcoded list of guessed names cannot work (three.js renames a node at
+ * load time when it collides with a bone, which is exactly what happens to
+ * the Jenner's legs).
+ */
+/** Every location this file knows how to take off a mech -- the keys of
+ * LIMB_MESH_NAMES above. Exported so anything that needs to talk about
+ * "the limbs" (GMView's debug tooling) asks the code that actually hides
+ * them instead of keeping a second list that can drift out of step. */
+export const SEVERABLE_LOCATIONS: readonly string[] = Object.keys(LIMB_MESH_NAMES)
 
 /** The location a mesh stands for, or null if it is not a severable limb. */
 export function limbLocationOfMesh(name: string): string | null {
@@ -710,6 +751,13 @@ function Mech3DModel({
 
   const instance = useMemo(() => normalizeMechInstance(scene), [scene])
 
+  // Which of THIS model's nodes make up each limb, straight out of what
+  // was configured for it in MechLab -- the same list that screen hides
+  // when it previews a break, so the board and the lab now agree by
+  // construction instead of by two lists happening to say the same thing.
+  const annotations = useMechAnnotationsCache()
+  const limbLookup = useMemo(() => limbLocationLookup(annotations, url), [annotations, url])
+
   // Real foot-bone lookup + real sole shape (see this file's own
   // findFootBones/getFootShape doc comments) — bones re-found fresh per
   // mounted instance (SkeletonUtils.clone gives each instance its own
@@ -754,7 +802,8 @@ function Mech3DModel({
     instance.traverse((object) => {
       const mesh = object as THREE.Mesh
       if (!mesh.isMesh) return
-      const location = limbLocationOfMesh(mesh.name)
+      const location = limbLookup.get(mesh.name.trim().toLowerCase())
+        ?? limbLocationOfMesh(mesh.name)
       if (!location) return
       const gone = severed.has(location)
       // Reported BEFORE hiding it, while its world transform is still the
@@ -762,22 +811,39 @@ function Mech3DModel({
       // and the piece would fall from wherever it last happened to be.
       if (gone && !known.has(location) && !firstRun && onLimbSevered) {
         mesh.updateWorldMatrix(true, false)
-        const position = new THREE.Vector3()
-        mesh.getWorldPosition(position)
+        const skinned = mesh as THREE.SkinnedMesh
+        // Baked exactly the way MechLab bakes it for the same preview, so
+        // the piece that falls on the board and the piece that falls in the
+        // lab are built by the same code.
+        const baked = skinned.isSkinnedMesh
+          ? buildBakedPiece(skinned, skinned.geometry)
+          : recenterBakedPiece(mesh.geometry.clone(), mesh.matrixWorld)
+        const source = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
         onLimbSevered({
           location,
           modelUrl: url,
-          worldX: position.x,
-          worldY: position.y,
-          worldZ: position.z,
+          // The bulk's own centre, not the node origin — for this rig every
+          // limb node sits at the armature origin, so the old world
+          // position was the same point for all four of them.
+          worldX: baked.worldPosition.x,
+          worldY: baked.worldPosition.y,
+          worldZ: baked.worldPosition.z,
           facing: groupRef.current?.rotation.y ?? 0,
+          piece: {
+            geometry: baked.geometry,
+            // Cloned: this instance's material is disposed with it, and the
+            // limb outlives the mech that dropped it.
+            material: source.clone(),
+            quaternion: baked.worldQuaternion,
+            scale: baked.scale,
+          },
         })
       }
       mesh.visible = !gone
     })
     knownSeveredRef.current = severed
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instance, severedKey])
+  }, [instance, severedKey, limbLookup])
 
   // Rigged curated assets (see the Blender envelope-weighting pipeline
   // documented in mechAssets.ts) ship "Idle" and "Walk" clips; HexMap's

@@ -1,3 +1,5 @@
+import type * as THREE from 'three'
+
 /** Limbs that have been blown off, and where they landed.
  *
  * Real user report: "el Jenner ha perdido la extremidad, pero esta no ha
@@ -45,6 +47,18 @@ export interface DroppedLimb {
    * here rather than rolled at render time so a remount does not reshuffle
    * wreckage that is supposed to be lying still. */
   seed: number
+  /** The real, already-baked piece, when this limb was watched coming off
+   * — see Mech3D's SeveredLimbInfo. Deliberately NOT part of what goes to
+   * the server: it is live THREE objects, and the whole point of the
+   * record above is that a handful of numbers is enough to describe a limb
+   * on the ground. A limb restored from a previous session arrives without
+   * one and FallenLimb bakes its own from the model's rest pose. */
+  piece?: {
+    geometry: THREE.BufferGeometry
+    material: THREE.Material
+    quaternion: THREE.Quaternion
+    scale: number
+  }
 }
 
 const limbs = new Map<string, DroppedLimb>()

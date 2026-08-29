@@ -466,7 +466,7 @@ export function ImpactFlash({ position, color }: { position: THREE.Vector3; colo
  * ramps up with the ball, spikes as it lets go, and the target end only
  * lights while the beam is actually connected. */
 function LaserAttack({
-  from, to, color, pulses, chargeMs, beamMs, fadeMs,
+  from, to, color, pulses, chargeMs, beamMs, fadeMs, scatter,
 }: {
   from: THREE.Vector3
   to: THREE.Vector3
@@ -475,13 +475,32 @@ function LaserAttack({
   chargeMs: number
   beamMs: number
   fadeMs: number
+  /** How far each pulse may land from the aim point. Zero on a hit -- see
+   * MISS_SCATTER. */
+  scatter: number
 }) {
   const chargeRef = useRef<THREE.Mesh>(null)
   const beamGroupRef = useRef<THREE.Group>(null)
+  const beamPivotRef = useRef<THREE.Group>(null)
   const start = useRef<number | null>(null)
   const lightColor = useMemo(() => new THREE.Color(color), [color])
   const cycleMs = chargeMs + beamMs
   const totalMs = cycleMs * pulses
+
+  // A burst that misses missed once per pulse, each time by a different
+  // amount -- so every pulse gets its own aim error rather than five beams
+  // being drawn through the same two points (see MISS_SCATTER).
+  //
+  // Stored as a YAW rather than as a target offset because the muzzle end
+  // must not move: swinging the beam about the barrel by d/distance puts
+  // the far end d off target and leaves the near end exactly where the
+  // mech's weapon is. Offsetting the endpoint instead would mean rebuilding
+  // StraightBeam's geometry once per pulse for the same picture.
+  const pulseYaw = useMemo(() => {
+    if (scatter <= 0) return null
+    const distance = Math.max(1e-3, from.distanceTo(to))
+    return Array.from({ length: pulses }, () => ((Math.random() - 0.5) * 2 * scatter) / distance)
+  }, [pulses, scatter, from, to])
 
   useProfiledFrame('disparos', (state) => {
     if (start.current === null) start.current = state.clock.elapsedTime
@@ -511,6 +530,23 @@ function LaserAttack({
     if (beamGroupRef.current) beamGroupRef.current.visible = firing && tail > 0
     setGroupFade(beamGroupRef.current, tail)
 
+    // Which pulse is on screen right now, and how far wide it is going.
+    const pulseIndex = Math.min(pulses - 1, Math.max(0, Math.floor(elapsedMs / cycleMs)))
+    const yaw = pulseYaw ? pulseYaw[pulseIndex] : 0
+    if (beamPivotRef.current) beamPivotRef.current.rotation.y = yaw
+    // Where that swung beam actually ends, so the light at the far end
+    // follows the pulse instead of staying nailed to the aim point.
+    let endX = to.x
+    let endZ = to.z
+    if (yaw !== 0) {
+      const dx = to.x - from.x
+      const dz = to.z - from.z
+      const cos = Math.cos(yaw)
+      const sin = Math.sin(yaw)
+      endX = from.x + dx * cos + dz * sin
+      endZ = from.z - dx * sin + dz * cos
+    }
+
     // Builds with the charge and spikes on release, rather than being on
     // or off: this is the light the shooter's own mech is lit by.
     const beamT = firing ? (inCycle - chargeMs) / beamMs : 0
@@ -523,7 +559,7 @@ function LaserAttack({
     // target lit during the charge would give the shot away before it left.
     if (firing) {
       setPoolLight(
-        LIGHT_IMPACT, to.x, to.y, to.z,
+        LIGHT_IMPACT, endX, to.y, endZ,
         lightColor, 5 * ATTACK_LIGHT_INTENSITY_SCALE * tail, ATTACK_LIGHT_DISTANCE,
       )
     }
@@ -535,10 +571,17 @@ function LaserAttack({
         <GlowSprite meshRef={chargeRef} color={color} size={0.75 * MECH_FACTOR} />
       </group>
       <group ref={beamGroupRef}>
-        <StraightBeam
-          from={from} to={to} color={color}
-          coreRadius={0.03 * MECH_FACTOR} glowRadius={0.08 * MECH_FACTOR}
-        />
+        {/* Pivot sits ON the muzzle, with the beam counter-translated back
+            into world space inside it, so the yaw above swings the far end
+            while the near end stays welded to the barrel. */}
+        <group ref={beamPivotRef} position={[from.x, from.y, from.z]}>
+          <group position={[-from.x, -from.y, -from.z]}>
+            <StraightBeam
+              from={from} to={to} color={color}
+              coreRadius={0.03 * MECH_FACTOR} glowRadius={0.08 * MECH_FACTOR}
+            />
+          </group>
+        </group>
       </group>
     </group>
   )
@@ -869,7 +912,7 @@ function TracerAttack({
  * flashes. Which profile (and which model) comes from `kind`: see
  * MISSILE_KINDS, and weaponEffectCategory for how a weapon picks one. */
 function MissileAttack({
-  from, to, color, travelMs, kind, count,
+  from, to, color, travelMs, kind, count, scatter,
 }: {
   from: THREE.Vector3
   to: THREE.Vector3
@@ -877,6 +920,9 @@ function MissileAttack({
   travelMs: number
   kind: MissileKind
   count: number
+  /** How far each missile may land from the volley's aim point. Zero on a
+   * hit -- see MISS_SCATTER. */
+  scatter: number
 }) {
   const distance = from.distanceTo(to)
   const seeds = useMemo(
@@ -894,13 +940,25 @@ function MissileAttack({
       // clock.elapsedTime), so a long slow flight and a short fast one
       // both stagger proportionally instead of bunching up.
       delay: (i / count) * (travelMs / 1000) * 0.22,
+      // Where THIS missile ends up. On a hit that is the target, dead on --
+      // the salvo converges. On a miss each one goes wide by its own
+      // amount, so the volley sprays across the ground and each impact
+      // flash lands somewhere of its own instead of all of them piling up
+      // on a single point (see MISS_SCATTER).
+      target: scatter > 0
+        ? to.clone().add(new THREE.Vector3(
+          (Math.random() - 0.5) * 2 * scatter,
+          0,
+          (Math.random() - 0.5) * 2 * scatter,
+        ))
+        : to,
     })),
-    [count, travelMs, kind, distance],
+    [count, travelMs, kind, distance, scatter, to],
   )
   return (
     <group>
-      {seeds.map((s, i) => (
-        <Missile key={i} from={from} to={to} color={color} travelMs={travelMs} kind={kind} {...s} />
+      {seeds.map(({ target, ...seed }, i) => (
+        <Missile key={i} from={from} to={target} color={color} travelMs={travelMs} kind={kind} {...seed} />
       ))}
     </group>
   )
@@ -1100,8 +1158,8 @@ function Missile({
  * "burst cone" instead of every round landing on the exact same point,
  * moving much faster than the missile's own lobbed arc. */
 function MachineGunAttack({
-  from, to, color, travelMs,
-}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number }) {
+  from, to, color, travelMs, scatter,
+}: { from: THREE.Vector3; to: THREE.Vector3; color: string; travelMs: number; scatter: number }) {
   const rounds = useMemo(
     () => Array.from({ length: 6 }, (_, i) => ({
       // Staggered fire, evenly spread across roughly the first half of
@@ -1110,13 +1168,17 @@ function MachineGunAttack({
       // still reads as one continuous burst instead of the rounds
       // bunching together.
       delay: (i / 6) * (travelMs / 1000) * 0.5,
+      // A burst that connects is already a tight cone on the target. A
+      // burst that missed opens up by MISS_SCATTER on the horizontal axes,
+      // so the rounds walk across the ground instead of six tracers
+      // threading one hole.
       spread: new THREE.Vector3(
-        (Math.random() - 0.5) * 0.35 * MECH_FACTOR,
+        (Math.random() - 0.5) * (0.35 * MECH_FACTOR + 2 * scatter),
         (Math.random() - 0.5) * 0.22 * MECH_FACTOR,
-        (Math.random() - 0.5) * 0.35 * MECH_FACTOR,
+        (Math.random() - 0.5) * (0.35 * MECH_FACTOR + 2 * scatter),
       ),
     })),
-    [travelMs],
+    [travelMs, scatter],
   )
   return (
     <>
@@ -1251,6 +1313,29 @@ export interface AttackEffectData {
 const MAX_MISS_LATERAL = 2.0 * HEX_SIZE
 const MIN_MISS_LATERAL = 0.8 * HEX_SIZE
 
+/** How far apart the individual shots of a MISSED volley land.
+ *
+ * Real user report: "cuando un ataque tiene varias animaciones... por
+ * ejemplo rockets, o laser de pulsos, cuando falla, todas las animaciones
+ * acaban en el mismo punto de fallo... genera impactos fallidos por cada
+ * pulso del laser o por cada cohete del burst."
+ *
+ * A miss picks one point beside the target, and every rocket in the salvo
+ * and every pulse in the burst used to fly to that exact dot. Two things
+ * were wrong with that. It reads as a weapon that missed with perfect
+ * precision -- the shots stayed in formation all the way to a spot nobody
+ * was standing on. And because each rocket spawns its own impact flash
+ * where it lands, five rockets missing into one point stacked five flashes
+ * on one pixel, which is what looked like a separate failed impact per
+ * shot. Spreading them fixes both at once: the volley sprays, and the
+ * flashes are five scattered puffs instead of one over-bright hole.
+ *
+ * Zero on a hit, always -- a volley that connects converges on what it hit,
+ * and the target itself sells that impact. Kept well under MIN_MISS_LATERAL
+ * so the spray still clearly belongs to one miss rather than reading as the
+ * shots having gone off in all directions. */
+const MISS_SCATTER = 0.55 * HEX_SIZE
+
 /** One weapon's whole visual — resolves a category from the weapon
  * name, builds the real 3D from/to points (raised to roughly torso
  * height on a hit), and self-unmounts via onDone once its category's
@@ -1355,6 +1440,7 @@ export function AttackEffect({
       <LaserAttack
         from={from} to={to} color={color} pulses={1}
         chargeMs={LASER_CHARGE_MS} beamMs={LASER_BEAM_MS} fadeMs={LASER_FADE_MS}
+        scatter={0}
       />
     )
   }
@@ -1363,6 +1449,7 @@ export function AttackEffect({
       <LaserAttack
         from={from} to={to} color={color} pulses={PULSE_COUNT}
         chargeMs={PULSE_CHARGE_MS} beamMs={PULSE_BEAM_MS} fadeMs={LASER_FADE_MS}
+        scatter={data.hit ? 0 : MISS_SCATTER}
       />
     )
   }
@@ -1382,10 +1469,18 @@ export function AttackEffect({
       <MissileAttack
         from={from} to={to} color={color} travelMs={travelMs}
         kind={kind} count={missileCount(data.weaponName, kind)}
+        scatter={data.hit ? 0 : MISS_SCATTER}
       />
     )
   }
-  if (category === 'mg') return <MachineGunAttack from={from} to={to} color={color} travelMs={travelMs} />
+  if (category === 'mg') {
+    return (
+      <MachineGunAttack
+        from={from} to={to} color={color} travelMs={travelMs}
+        scatter={data.hit ? 0 : MISS_SCATTER}
+      />
+    )
+  }
   if (category === 'flame') return <FlameAttack from={from} to={to} color={color} duration={duration} />
   return (
     <>
