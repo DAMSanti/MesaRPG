@@ -23,6 +23,8 @@ import { FACTION_COLORS } from '../factions'
 import { SquareMap } from '../components/SquareMap'
 import './TableView.css'
 import { SceneLighting } from '../components/SceneLighting'
+import { GlDiagnostics } from '../components/GlDiagnostics'
+import { deviceProfile } from '../deviceProfile'
 import { DEFAULT_TIME_OF_DAY } from '../dayNight'
 import { PerfProbe, PerfPhysicsProbe } from '../components/PerfProbe'
 import { PerfHud } from '../components/PerfHud'
@@ -97,6 +99,8 @@ function TableViewBattletech() {
   const timeOfDay = (mapTime && mapTime.mapId === mapId ? mapTime.hour : undefined)
     ?? map?.time_of_day
     ?? DEFAULT_TIME_OF_DAY
+  // What this device can be asked to draw — see deviceProfile.
+  const gpu = deviceProfile()
 
   // Real user request: "cuando un enemigo entra en el LoS del equipo,
   // en el tableview se abre un modal... a modo de cinemática de
@@ -569,8 +573,10 @@ function TableViewBattletech() {
           per-tile bug; a first, more aggressive far cut clipped the whole
           map at a normal "zoomed all the way out" distance, a real
           regression, not a fix). */}
+      <GlDiagnostics>
       <Canvas
-        shadows
+        shadows={gpu.shadows}
+        dpr={gpu.dpr}
         camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 1 * HEX_SIZE, far: 500 * HEX_SIZE }}
       >
         {/* First child on purpose: it closes each frame's measurements,
@@ -589,7 +595,10 @@ function TableViewBattletech() {
             <Environment> below is actually for. Real user report: "en algun
             momento subimos el brillo o la iluminacion de TableView y se
             quedo asi, igualalo a GMView". */}
-        <SceneLighting hour={timeOfDay} />
+        <SceneLighting
+          hour={timeOfDay}
+          castShadow={gpu.shadows} shadowMapSize={gpu.shadowMapSize}
+        />
         {/* Real user request: metallic/glass dice need real reflections
             to read as true chrome/glass rather than a flat tinted
             material (see dieStyles.ts's own doc comment) — lighting/
@@ -598,9 +607,15 @@ function TableViewBattletech() {
             partly used for FirstPersonView's sky (public/textures/
             CREDITS.md), offline per VISION.md §3 — no network fetch at
             runtime, just a local file under public/. */}
-        <Suspense fallback={null}>
-          <Environment files="/textures/dice-env.exr" background={false} />
-        </Suspense>
+        {/* Skipped on a constrained device: an .exr is a floating-point
+            texture, which some mobile GPUs will not allocate at all, and
+            this one exists purely so the dice read as real chrome. Losing
+            a reflection is not losing the board. */}
+        {gpu.heavyEffects && (
+          <Suspense fallback={null}>
+            <Environment files="/textures/dice-env.exr" background={false} />
+          </Suspense>
+        )}
         {/* -9.81 was real Earth gravity for the dice, the only dynamic
             (gravity-affected) bodies in this Physics world — every tile/
             mech/decor collider is fixed or kinematic, so this never
@@ -708,6 +723,7 @@ function TableViewBattletech() {
             without the endless slow spin. */}
         <OrbitControls enablePan minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
       </Canvas>
+      </GlDiagnostics>
       <PerfHud />
 
       {revealCinematicUnit && (

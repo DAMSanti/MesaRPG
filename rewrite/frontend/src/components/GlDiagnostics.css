@@ -1,0 +1,68 @@
+/* On-device report for a canvas that failed — see GlDiagnostics.tsx. */
+
+.gl-diagnostics-host {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.gl-diagnostics-report {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  background: var(--panel, #14181c);
+  color: var(--text, #e6e6e6);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.gl-diagnostics-report strong {
+  color: var(--danger, #e35d5d);
+  font-size: 14px;
+}
+
+.gl-diagnostics-report p {
+  margin: 0;
+  max-width: 60ch;
+}
+
+.gl-diagnostics-report dl {
+  margin: 0;
+  display: grid;
+  gap: 4px 14px;
+}
+
+.gl-diagnostics-report dl > div {
+  display: flex;
+  gap: 8px;
+  /* Wraps instead of overflowing: a GPU name on a phone is long and the
+     whole point of this panel is being readable there. */
+  flex-wrap: wrap;
+}
+
+.gl-diagnostics-report dt {
+  min-width: 92px;
+  color: var(--text-secondary, #9aa4ad);
+}
+
+.gl-diagnostics-report dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
+
+.gl-diagnostics-hint {
+  color: var(--text-secondary, #9aa4ad);
+  font-size: 12px;
+}
+
+.gl-diagnostics-hint code {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  padding: 1px 4px;
+}

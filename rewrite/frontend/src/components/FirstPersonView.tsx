@@ -23,6 +23,9 @@ import { hexToWorld, mapCenter, WALK_SPEED } from '../hexMath'
 import type { FogWalkStep, MeleeResult, UnitWalked } from '../ws'
 import './FirstPersonView.css'
 import { SceneLighting } from './SceneLighting'
+import { SkyDome } from './SkyDome'
+import { GlDiagnostics } from './GlDiagnostics'
+import { deviceProfile } from '../deviceProfile'
 import { DEFAULT_TIME_OF_DAY } from '../dayNight'
 import { useProfiledFrame } from './PerfProbe'
 import { PerfProbe } from './PerfProbe'
@@ -298,16 +301,6 @@ function WalkingFirstPersonCam({
 // THREE.TextureLoader rather than r3f's useLoader (which suspends and
 // this codebase sets up no Suspense boundary anywhere) — starts blank,
 // repaints once the image loads, same as a normal <img>.
-function SkyBackground() {
-  const texture = useMemo(() => {
-    const t = new THREE.TextureLoader().load('/textures/sky.jpg')
-    t.mapping = THREE.EquirectangularReflectionMapping
-    t.colorSpace = THREE.SRGBColorSpace
-    return t
-  }, [])
-  return <primitive object={texture} attach="background" />
-}
-
 // Kept off the true viewport edge so an edge indicator never overlaps
 // HudFrame's own corner brackets/arcs.
 const OFFSCREEN_EDGE_MARGIN_PX = 46
@@ -1337,6 +1330,8 @@ export function FirstPersonView({
   // Live value first, then whatever this map was carrying when the cockpit
   // opened — see the prop's own doc comment.
   const timeOfDay = timeOfDayLive ?? map?.time_of_day ?? DEFAULT_TIME_OF_DAY
+  // What this device can be asked to draw — see deviceProfile.
+  const gpu = deviceProfile()
   // Real user request: "la posicion que selecciono de 'cabina' es donde
   // tiene que estar la camara en FPV" — MechLab's own saved cockpit point
   // for this unit's exact model, or null for a mech nobody's annotated
@@ -1644,7 +1639,8 @@ export function FirstPersonView({
             onPointerCancel={onLookPointerUp}
             onContextMenu={(e) => e.preventDefault()}
           >
-            <Canvas shadows camera={{ fov: CAMERA_FOV_DEG }}>
+            <GlDiagnostics>
+            <Canvas shadows={gpu.shadows} dpr={gpu.dpr} camera={{ fov: CAMERA_FOV_DEG }}>
               {/* First child on purpose — see TableView's own note. */}
               <PerfProbe />
               <FrameGate policy={renderPolicy} />
@@ -1662,14 +1658,17 @@ export function FirstPersonView({
                   UnitMarker claims each detected enemy via outlineUnitIds
                   -> <Select enabled>. */}
               <Selection>
-                <SkyBackground />
+                <SkyDome hour={timeOfDay} />
                 {/* Lit harder than the tabletop views on purpose — a
                     pilot sits inside the mech, not above the board. Those
                     are this view's own midday scales; the shape of the day
                     is shared with everyone else. background=false: the
                     cockpit has a real sky above (SkyBackground), and a flat
                     colour would paint straight over it. */}
-                <SceneLighting hour={timeOfDay} sunScale={1.8} ambientScale={1.2} background={false} />
+                <SceneLighting
+                  hour={timeOfDay} sunScale={1.8} ambientScale={1.2} background={false}
+                  castShadow={gpu.shadows} shadowMapSize={gpu.shadowMapSize}
+                />
                 <WalkingFirstPersonCam
                   q={unit.q} r={unit.r} facingDeg={unit.facing_deg}
                   path={walkPaths.get(unit.id)} movementType={walkMovementTypes.get(unit.id)}
@@ -1728,19 +1727,28 @@ export function FirstPersonView({
                   labelRefs={labelRefs}
                   offscreenRefs={offscreenRefs}
                 />
-                <EffectComposer autoClear={false}>
-                  {/* Real user report: against a light background (the
-                      sky) the outline read as too thin to notice —
-                      edgeStrength alone didn't do much since it's a
-                      glow-intensity multiplier, not a width; kernelSize
-                      is what actually widens the blurred edge. */}
-                  <Outline
-                    visibleEdgeColor={0xe35d5d} hiddenEdgeColor={0xe35d5d} edgeStrength={10}
-                    blur kernelSize={KernelSize.LARGE} width={1000}
-                  />
-                </EffectComposer>
+                {/* Skipped on a constrained device: the outline is a
+                    post-processing pass with its own full-size render
+                    targets, which is both the most expensive thing in this
+                    view and the one a phone is least likely to be able to
+                    allocate. The enemy markers below still name every
+                    contact, so nothing is lost but the glow. */}
+                {gpu.heavyEffects && (
+                  <EffectComposer autoClear={false}>
+                    {/* Real user report: against a light background (the
+                        sky) the outline read as too thin to notice —
+                        edgeStrength alone didn't do much since it's a
+                        glow-intensity multiplier, not a width; kernelSize
+                        is what actually widens the blurred edge. */}
+                    <Outline
+                      visibleEdgeColor={0xe35d5d} hiddenEdgeColor={0xe35d5d} edgeStrength={10}
+                      blur kernelSize={KernelSize.LARGE} width={1000}
+                    />
+                  </EffectComposer>
+                )}
               </Selection>
             </Canvas>
+            </GlDiagnostics>
           </div>
           {/* OUTSIDE .fp-canvas-wrap on purpose. That wrapper carries the
               tilt-shift's own `filter: saturate() contrast()`, and a

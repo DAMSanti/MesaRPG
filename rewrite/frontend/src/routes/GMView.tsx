@@ -98,6 +98,8 @@ import {
 import './GMView.css'
 import { SceneLighting } from '../components/SceneLighting'
 import { NightVision } from '../components/NightVision'
+import { GlDiagnostics } from '../components/GlDiagnostics'
+import { deviceProfile } from '../deviceProfile'
 import { dayNightRig, DEFAULT_TIME_OF_DAY, formatTimeOfDay } from '../dayNight'
 import { PerfProbe } from '../components/PerfProbe'
 import { PerfHud } from '../components/PerfHud'
@@ -721,6 +723,8 @@ function GMViewBattletech() {
   // a night battle, and remembering to switch a view mode on is not part
   // of running one.
   const nightVision = dayNightRig(timeOfDay).darkness >= 1
+  // What this device can be asked to draw — see deviceProfile.
+  const gpu = deviceProfile()
 
   // Debug tooling for two effects that are otherwise only reachable by
   // playing until the dice happen to produce them (real user request:
@@ -1370,14 +1374,19 @@ function GMViewBattletech() {
                 1:20000 to 1:500 (40x), while empirically staying well
                 clear of where a normal "whole board" zoom-out actually
                 sits. */}
+            <GlDiagnostics>
             <Canvas
-              shadows
+              shadows={gpu.shadows}
+              dpr={gpu.dpr}
               camera={{ position: [0, 16 * HEX_SIZE, 0.01], fov: 40, near: 1 * HEX_SIZE, far: 500 * HEX_SIZE }}
             >
               {/* First child on purpose — see TableView's own note. */}
               <PerfProbe />
               <FrameGate policy={renderPolicy} />
-              <SceneLighting hour={timeOfDay} nightVision={nightVision} />
+              <SceneLighting
+                hour={timeOfDay} nightVision={nightVision}
+                castShadow={gpu.shadows} shadowMapSize={gpu.shadowMapSize}
+              />
               <TableBackground hexScale />
               <CameraBridge onReady={(fn) => { raycastToGroundRef.current = fn }} />
               <Suspense fallback={null}>
@@ -1416,6 +1425,7 @@ function GMViewBattletech() {
                   drag/rotate release, real user report). */}
               <OrbitControls enablePan enableRotate={!isDraggingUnit} minPolarAngle={0} maxPolarAngle={0} dampingFactor={0.2} />
             </Canvas>
+            </GlDiagnostics>
             <NightVision active={nightVision} />
             <PerfHud />
           </div>

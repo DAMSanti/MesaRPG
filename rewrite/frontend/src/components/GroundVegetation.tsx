@@ -6,6 +6,10 @@ import type { HexTileData } from '../api'
 import { HEX_SIZE, hexToWorld } from '../hexMath'
 import { groundVariant, hashTile, terrainColor, type GroundVariant } from '../terrain'
 import { GRASS_COVER, isGrassTerrain, makeGrassDensitySampler, treeGroveAt } from '../grassPatches'
+import { sceneLightLevel } from '../dayNight'
+import { deviceProfile } from '../deviceProfile'
+
+const VEGETATION_DENSITY = deviceProfile().vegetationDensity
 import { makeTileHeightSampler } from '../tileHeightField'
 import { useProfiledFrame } from './PerfProbe'
 
@@ -364,7 +368,7 @@ const CARPET_MEAN_KEEP = 0.45
  * so a huge map degrades to thinner grass instead of to an unusable frame
  * rate — this layer's cost stops depending on how big a map someone builds.
  * 520k cards is ~2M triangles, in ONE draw call. */
-const CARPET_MAX_CARDS = 900000
+const CARPET_MAX_CARDS = deviceProfile().carpetCards
 
 const TIER_SPECIES: Record<Tier, SpeciesKey[]> = {
   cover: ['bermuda', 'moss'],
@@ -580,7 +584,11 @@ function placeTile(tile: HexTileData): Placement[] {
   // stand; the rest fills in around them.
   const tierOrder: Tier[] = ['hero', 'tree', 'cover', 'grass', 'herb', 'shrub', 'prop', 'sapling']
   for (const tier of tierOrder) {
-    const want = density[tier]
+    // Thinned on a phone — see deviceProfile.vegetationDensity. Applied to
+    // the DENSITY rather than by dropping whole tiers, so a meadow stays a
+    // meadow and a forest stays a forest: everything that was there is
+    // still there, just less of it.
+    const want = density[tier] * VEGETATION_DENSITY
     const count = Math.floor(want) + (rand(q, r, `veg-frac-${tier}`, 0) < want % 1 ? 1 : 0)
     const pool = tier === 'prop'
       ? (only ? WATER_PROPS : variant === 'earth' ? EARTH_PROPS : TIER_SPECIES[tier])
@@ -886,7 +894,7 @@ export function vegetationRegion(q: number, r: number, span: number | null): str
  * "el LoD a partir de 6 hexes", in the cockpit.
  *
  * Hex spacing is sqrt(3) * HEX_SIZE, so this is six hexes of real board. */
-export const LOD_DISTANCE = 6 * Math.sqrt(3) * HEX_SIZE
+export const LOD_DISTANCE = 6 * Math.sqrt(3) * HEX_SIZE * deviceProfile().lodDistanceScale
 
 /** Smallest board on which the level of detail is worth switching on.
  *
@@ -976,6 +984,15 @@ const impostorVertexShader = /* glsl */ `
 
 const impostorFragmentShader = /* glsl */ `
   uniform sampler2D uMap;
+  // How lit the world is, and in what colour. These billboards are baked
+  // images, not geometry, so no light in the scene reaches them -- which
+  // went unnoticed for as long as the board only ever had one lighting
+  // condition. The moment a day/night cycle existed, distant trees were
+  // the one thing that stayed at full noon brightness while everything
+  // around them went dark, which reads as a forest of glowing shrubs.
+  // Applying the same factor the real lights apply keeps the LOD swap
+  // invisible, which is the entire contract of an impostor.
+  uniform vec3 uDayLight;
   varying vec2 vUv;
   varying float vTint;
   void main() {
@@ -984,9 +1001,18 @@ const impostorFragmentShader = /* glsl */ `
     // sorting problem, and an alpha test has none. The threshold is low
     // because the bake's own antialiased edges thin out under mipmaps.
     if (texel.a < 0.35) discard;
-    gl_FragColor = vec4(texel.rgb * (0.88 + vTint * 0.24), 1.0);
+    gl_FragColor = vec4(texel.rgb * (0.88 + vTint * 0.24) * uDayLight, 1.0);
   }
 `
+
+/** Keeps an impostor batch lit like the rest of the board — see
+ * sceneLightLevel for why the value comes from a module and not from the
+ * scene or a prop. One uniform write per frame per batch, no traversal. */
+function useImpostorDayLight(material: THREE.ShaderMaterial) {
+  useProfiledFrame('vegetacion', () => {
+    (material.uniforms.uDayLight.value as THREE.Color).copy(sceneLightLevel())
+  })
+}
 
 /** One region's worth of distant trees, as camera-facing billboards.
  *
@@ -1009,8 +1035,13 @@ function ImpostorBatch({ instances, meshRef }: {
   const material = useMemo(() => new THREE.ShaderMaterial({
     vertexShader: impostorVertexShader,
     fragmentShader: impostorFragmentShader,
-    uniforms: { uMap: { value: texture } },
+    uniforms: { uMap: { value: texture }, uDayLight: { value: new THREE.Color(1, 1, 1) } },
   }), [texture])
+  // Read from the scene each frame rather than threaded down as a prop:
+  // these batches are rebuilt per region and the hour changes on a slider,
+  // so a prop would rebuild geometry to change a colour. A uniform write is
+  // free and the value is already in the scene as its own ambient light.
+  useImpostorDayLight(material)
 
   useEffect(() => {
     texture.colorSpace = THREE.SRGBColorSpace
@@ -1589,6 +1620,16 @@ function VegetationBatch({ variant, matrices }: { variant: Variant; matrices: TH
  * string filled cache entries that a later `useGLTF(array)` never looked
  * at: measured on a cold load, eu43-3.glb (17,8 MB) and eu43-5.glb (11 MB)
  * were each fetched twice, 29 MB of pure waste out of 98 MB. */
-const SPECIES_URLS = [...new Set(Object.values(SPECIES).map((s) => s.url))]
+/** The two "hero" trees are the unoptimised originals — eu43-3.glb is
+ * 17.4 MB and eu43-5.glb is 10.8 MB, 28 of the 38.7 MB this preload pulls
+ * in. On a phone that is most of the memory budget spent before a single
+ * mech has loaded, which is the leading suspect for the board never
+ * appearing there at all (real user report). Dropped on a constrained
+ * device; the four ordinary tree species, about 1 MB each, stay. */
+const SPECIES_URLS = [...new Set(
+  Object.entries(SPECIES)
+    .filter(([, s]) => deviceProfile().heroVegetation || s.tier !== 'hero')
+    .map(([, s]) => s.url),
+)]
 
 useGLTF.preload(SPECIES_URLS)

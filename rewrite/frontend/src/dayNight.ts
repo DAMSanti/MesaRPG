@@ -131,6 +131,32 @@ export function dayNightRig(hour: number): DayNightRig {
   }
 }
 
+/** How lit the board is right now, as a colour multiplier.
+ *
+ * Written by SceneLighting (the one thing that decides the lighting) and
+ * read by anything that renders WITHOUT taking part in three.js's lighting
+ * — today that is GroundVegetation's distant-tree impostors, which are
+ * baked billboards no light can reach. They looked correct for as long as
+ * the board had a single lighting condition; the moment a day/night cycle
+ * existed they were the only thing still at full noon brightness in the
+ * dark, which reads as a forest of glowing shrubs.
+ *
+ * A module value rather than a prop or a scene lookup, for two reasons that
+ * both matter here: the impostor batches are rebuilt per region, so a prop
+ * would rebuild geometry every time the slider moved a colour; and reading
+ * it back off the scene means a full scene.traverse() per batch per frame,
+ * which on this board is exactly the kind of cost the LOD work existed to
+ * remove. */
+const sceneLight = new THREE.Color(1, 1, 1)
+
+export function setSceneLightLevel(color: THREE.ColorRepresentation, level: number): void {
+  sceneLight.set(color).multiplyScalar(level)
+}
+
+export function sceneLightLevel(): THREE.Color {
+  return sceneLight
+}
+
 /** "13:30" from 13.5 — for the slider's own readout. */
 export function formatTimeOfDay(hour: number): string {
   const h = ((hour % 24) + 24) % 24
