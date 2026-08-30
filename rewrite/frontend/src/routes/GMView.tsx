@@ -165,16 +165,20 @@ function GMViewBattletech() {
   // "Siguiente ronda" button's own submitStartRound calls this exact
   // same endpoint), so once currentPhase lands on 'other' (every phase
   // this round has to offer is done), it starts the next one itself
-  // instead of waiting on a manual click. Safe against a second GM tab/a
-  // re-fired effect the same way the heat one is: a successful call
-  // advances round_number, which changes `roundState` and moves
-  // currentPhase off 'other' on the very next render, so this can't
-  // double-advance — it only ever fires again for a NEW round genuinely
-  // reaching its own end.
+  // instead of waiting on a manual click. A single tab can't double-fire
+  // this (a successful call advances round_number, which moves
+  // currentPhase off 'other' on the next render) — but a SECOND GM tab
+  // open on the same campaign gets the same round_updated broadcast and
+  // fires this same effect before either tab's own response arrives to
+  // move its local phase off 'other', so two concurrent calls for the
+  // same round transition were possible. Passing round_number as
+  // expected_round_number makes the backend collapse that into one real
+  // advance (see turns.py's start_round) — the same role heat_resolved
+  // already plays for the effect above.
   useEffect(() => {
     if (!campaignId || !roundState) return
     if (currentPhase(roundState) !== 'other') return
-    startRound(campaignId).catch(() => {})
+    startRound(campaignId, roundState.round_number).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [campaignId, roundState])
 
@@ -255,16 +259,40 @@ function GMViewBattletech() {
   // mesh names and does nothing for the single-mesh chassis — so this just
   // reports the fact and lets the model answer for itself.
   const severedLocationsByUnitId = new Map(
-    units.map((u) => {
+    // flatMap, not map: a unit whose mech hasn't loaded yet must be left OUT
+    // of the map entirely (so .get(unitId) reads as "unknown, don't touch")
+    // rather than mapped to an empty Set indistinguishable from "loaded,
+    // nothing severed" — the latter used to make the effect below un-drop
+    // and permanently delete every already-fallen limb during the render(s)
+    // before `mechs` finishes fetching.
+    units.flatMap((u) => {
       const mech = mechs.find((m) => m.id === u.mech_id)
+      if (!mech) return []
       const severed = new Set(
-        (mech?.locations ?? [])
+        mech.locations
           // structure_max 0 means the location does not exist on this
           // chassis at all, which is not the same as having been blown off.
           .filter((l) => l.structure_max > 0 && l.structure_current <= 0)
           .map((l) => l.location),
       )
-      return [u.id, severed] as const
+      return [[u.id, severed] as const]
+    }),
+  )
+  // Real user request: "vamos a replicar el efecto de daño... el juego los
+  // discrimine y sustituya cuando necesita" — same shape/reasoning as
+  // severedLocationsByUnitId above, one tier earlier (armor gone, structure
+  // not yet), for a raw game-extracted placeholder model's own `_dmg`
+  // sub-mesh variant (Mech3D's own damagedLocations prop).
+  const damagedLocationsByUnitId = new Map(
+    units.flatMap((u) => {
+      const mech = mechs.find((m) => m.id === u.mech_id)
+      if (!mech) return []
+      const damaged = new Set(
+        mech.locations
+          .filter((l) => l.structure_max > 0 && l.armor_current <= 0)
+          .map((l) => l.location),
+      )
+      return [[u.id, damaged] as const]
     }),
   )
 
@@ -485,7 +513,7 @@ function GMViewBattletech() {
   const submitStartRound = async () => {
     if (!campaignId) return
     try {
-      await startRound(campaignId)
+      await startRound(campaignId, roundState?.round_number)
     } catch {
       setError('No se pudo empezar la ronda.')
     }
@@ -710,6 +738,15 @@ function GMViewBattletech() {
   // the scene at once instead of waiting on a round trip; the server is
   // told as it moves, and every other view hears about it over the socket.
   const [timeOfDayDraft, setTimeOfDayDraft] = useState<number | null>(null)
+  // GMViewBattletech never remounts when the GM projects a different map
+  // (useMapId updates mapId in place), so without this the draft from the
+  // map just left behind would keep winning — every ?? below it (this
+  // map's own mapTime/time_of_day) never gets a chance to apply — and the
+  // newly projected map would render lit at whatever hour the slider was
+  // last dragged to on the PREVIOUS map.
+  useEffect(() => {
+    setTimeOfDayDraft(null)
+  }, [mapId])
   const timeOfDay = timeOfDayDraft
     ?? (mapTime && mapTime.mapId === mapId ? mapTime.hour : undefined)
     ?? map?.time_of_day
@@ -1410,6 +1447,7 @@ function GMViewBattletech() {
                   shutdownUnitIds={shutdownUnitIds}
                   destroyedReasonByUnitId={destroyedReasonByUnitId}
                   severedLocationsByUnitId={severedLocationsByUnitId}
+                  damagedLocationsByUnitId={damagedLocationsByUnitId}
                   unfilteredOverlays={nightVision}
                   activeAttack={activeAttackVfx}
                   onAttackEffectDone={onAttackEffectDone}

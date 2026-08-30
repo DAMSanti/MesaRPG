@@ -204,13 +204,34 @@ export const terrainReliefGLSL = /* glsl */ `
 // upload. `stampedDepthAt` was always plain math and never the buggy
 // part, so it survives unchanged; the canvas machinery around it doesn't.
 
+/** A decoded footprint silhouette (MechLabView's Huella tab, real user
+ * request: "quiero que ademas se use ya como forma real de la pisada") —
+ * `alpha[row * width + col]` is that pixel's own coverage (0..255, same
+ * convention the capture's own rendered alpha channel already used: solid
+ * mech geometry = opaque, background = transparent). Decoded once per
+ * chassis/model by the caller (Mech3D.tsx owns the actual image decode —
+ * this file only ever samples an already-decoded grid, keeping with its
+ * own "no canvas, no GPU upload" contract for anything that lands in
+ * `stampedDepthAt`'s hot per-vertex path — see this file's own top-of-file
+ * doc comment on why the general terrain relief stays plain JS/math). */
+export interface StampMask {
+  width: number
+  height: number
+  alpha: Uint8ClampedArray
+}
+
 interface TileStampData {
   /** Tile-local, normalized to STAMP_RADIUS on each axis; halfWidth/
    * halfDepth/depth in world units, angle in radians (three.js Y-rotation
    * convention — see `stampDeformation`'s own doc comment). A plain
    * circular stamp (weapon craters, the old footprint approximation) is
-   * just `halfWidth === halfDepth, angle === 0`. */
-  stamps: { lx: number; lz: number; halfWidth: number; halfDepth: number; angle: number; depth: number }[]
+   * just `halfWidth === halfDepth, angle === 0`. `mask` (optional) swaps
+   * the analytic radial falloff for a real sampled silhouette — see
+   * `stampedDepthAt`'s own use of it below. */
+  stamps: {
+    lx: number; lz: number; halfWidth: number; halfDepth: number; angle: number; depth: number
+    mask?: StampMask | null
+  }[]
   lastTouchedMs: number
 }
 
@@ -277,7 +298,15 @@ function getOrCreateTileStamp(q: number, r: number): TileStampData {
  * geometric-fallback footprint path) is unchanged without touching its
  * own call site. `angle` is radians, same convention as a mounted
  * mech's own `group.rotation.y` (three.js Y-axis rotation) — the axis
- * `halfDepth` extends along. */
+ * `halfDepth` extends along.
+ *
+ * `mask` (real user request: "quiero que ademas se use ya como forma real
+ * de la pisada") swaps the plain analytic ellipse falloff for a real
+ * sampled silhouette — see `stampedDepthAt`'s own use of it. `halfWidth`/
+ * `halfDepth` still matter with a mask (they're its real-world extent,
+ * i.e. how big to stretch the image, not just a fallback), so callers
+ * pass both together. `null`/omitted keeps the plain ellipse, unchanged
+ * from before this parameter existed. */
 export function stampDeformation(
   worldX: number,
   worldZ: number,
@@ -285,6 +314,7 @@ export function stampDeformation(
   rawDepth: number,
   halfDepth: number = halfWidth,
   angle = 0,
+  mask: StampMask | null = null,
 ): void {
   // Real user report: actual HOLES in the terrain mesh at a distance —
   // "veo cosas de debajo del tablero, se rompe la textura". A stamp with
@@ -309,7 +339,7 @@ export function stampDeformation(
   const lx = (worldX - tileCenterX) / STAMP_RADIUS
   const lz = (worldZ - tileCenterZ) / STAMP_RADIUS
   data.stamps.push({
-    lx, lz, halfWidth: safeHalfWidth / STAMP_RADIUS, halfDepth: safeHalfDepth / STAMP_RADIUS, angle, depth,
+    lx, lz, halfWidth: safeHalfWidth / STAMP_RADIUS, halfDepth: safeHalfDepth / STAMP_RADIUS, angle, depth, mask,
   })
   const key = tileKey(q, r)
   stampVersions.set(key, (stampVersions.get(key) ?? 0) + 1)
@@ -347,6 +377,23 @@ export function stampedDepthAt(worldX: number, worldZ: number): number {
     // as a real oriented ellipse instead of an axis-aligned one.
     const localX = dx * Math.cos(s.angle) - dz * Math.sin(s.angle)
     const localZ = dx * Math.sin(s.angle) + dz * Math.cos(s.angle)
+    if (s.mask) {
+      // Real user request: "quiero que ademas se use ya como forma real
+      // de la pisada" — u/v in the mask's own [0,1] image space, same
+      // orientation convention FootprintCapture.tsx's capture() itself
+      // bakes in (col 0 = local -halfWidth/left; row 0 = local
+      // +halfDepth/top, since that function flips WebGL's bottom-up
+      // readback into a top-down image before ever handing it back).
+      const u = (localX / s.halfWidth + 1) / 2
+      const v = (localZ / s.halfDepth + 1) / 2
+      if (u < 0 || u > 1 || v < 0 || v > 1) continue // outside the captured box entirely
+      const col = Math.min(s.mask.width - 1, Math.max(0, Math.round(u * (s.mask.width - 1))))
+      const row = Math.min(s.mask.height - 1, Math.max(0, Math.round((1 - v) * (s.mask.height - 1))))
+      const coverage = s.mask.alpha[row * s.mask.width + col] / 255
+      if (coverage <= 0) continue
+      total += s.depth * coverage
+      continue
+    }
     const d = Math.hypot(localX / s.halfWidth, localZ / s.halfDepth)
     if (d >= 1) continue
     const falloff = 1 - d

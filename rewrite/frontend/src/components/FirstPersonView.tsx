@@ -1517,16 +1517,40 @@ export function FirstPersonView({
   // mesh names and does nothing for the single-mesh chassis — so this just
   // reports the fact and lets the model answer for itself.
   const severedLocationsByUnitId = new Map(
-    sceneUnits.map((u) => {
+    // flatMap, not map: a unit whose mech hasn't loaded yet must be left OUT
+    // of the map entirely (so .get(unitId) reads as "unknown, don't touch")
+    // rather than mapped to an empty Set indistinguishable from "loaded,
+    // nothing severed" — the latter used to make the effect that prunes
+    // fallen limbs un-drop and permanently delete every already-fallen limb
+    // during the render(s) before `mechs` finishes fetching.
+    sceneUnits.flatMap((u) => {
       const mech = (mechs ?? []).find((m) => m.id === u.mech_id)
+      if (!mech) return []
       const severed = new Set(
-        (mech?.locations ?? [])
+        mech.locations
           // structure_max 0 means the location does not exist on this
           // chassis at all, which is not the same as having been blown off.
           .filter((l) => l.structure_max > 0 && l.structure_current <= 0)
           .map((l) => l.location),
       )
-      return [u.id, severed] as const
+      return [[u.id, severed] as const]
+    }),
+  )
+  // Real user request: "vamos a replicar el efecto de daño... el juego los
+  // discrimine y sustituya cuando necesita" — same shape/reasoning as
+  // severedLocationsByUnitId above, one tier earlier (armor gone, structure
+  // not yet), for a raw game-extracted placeholder model's own `_dmg`
+  // sub-mesh variant (Mech3D's own damagedLocations prop).
+  const damagedLocationsByUnitId = new Map(
+    sceneUnits.flatMap((u) => {
+      const mech = (mechs ?? []).find((m) => m.id === u.mech_id)
+      if (!mech) return []
+      const damaged = new Set(
+        mech.locations
+          .filter((l) => l.structure_max > 0 && l.armor_current <= 0)
+          .map((l) => l.location),
+      )
+      return [[u.id, damaged] as const]
     }),
   )
 
@@ -1715,6 +1739,7 @@ export function FirstPersonView({
                     destroyedReasonByUnitId={destroyedReasonByUnitId}
                     onAttackImpact={onAttackImpact}
                     severedLocationsByUnitId={severedLocationsByUnitId}
+                    damagedLocationsByUnitId={damagedLocationsByUnitId}
                     teamVisibleHexes={cockpitVisibleHexes}
                     fogSubtle
                   />

@@ -730,7 +730,7 @@ def save_mech_annotations(body: MechAnnotationsSaveIn) -> list[dict]:
 
 
 class MechAnnotationReviewIn(BaseModel):
-    model_url: str
+    chassis: str
     track: str
     status: str
 
@@ -743,7 +743,7 @@ def list_mech_annotation_review() -> list[dict]:
 @app.put("/api/mech-annotations/review")
 def set_mech_annotation_review(body: MechAnnotationReviewIn) -> dict:
     try:
-        return mech_annotations.set_review_status(body.model_url, body.track, body.status)
+        return mech_annotations.set_review_status(body.chassis, body.track, body.status)
     except mech_annotations.InvalidReview as exc:
         raise HTTPException(422, str(exc)) from exc
 
@@ -775,6 +775,31 @@ def save_mech_pbr_settings(body: MechPbrSettingsIn) -> dict:
     try:
         return mech_annotations.save_pbr_settings(body.model_url, body.model_dump(exclude={"model_url"}))
     except mech_annotations.InvalidPbrSettings as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+# Real user request: "en la seccion de huella, quiero un boton de guardar,
+# para cuando capture una, que se use esa siempre" — see db.py's own
+# mech_footprint_masks doc comment.
+class MechFootprintMaskIn(BaseModel):
+    model_url: str
+    image_data_url: str
+    half_width: float
+    half_depth: float
+
+
+@app.get("/api/mech-footprint-masks")
+def list_mech_footprint_masks() -> list[dict]:
+    return mech_annotations.list_footprint_masks()
+
+
+@app.put("/api/mech-footprint-masks")
+def save_mech_footprint_mask(body: MechFootprintMaskIn) -> dict:
+    try:
+        return mech_annotations.save_footprint_mask(
+            body.model_url, body.image_data_url, body.half_width, body.half_depth
+        )
+    except mech_annotations.InvalidFootprintMask as exc:
         raise HTTPException(422, str(exc)) from exc
 
 
@@ -1588,9 +1613,9 @@ def get_round(campaign_id: int) -> dict:
 
 
 @app.post("/api/campaigns/{campaign_id}/round/start")
-async def start_round(campaign_id: int) -> dict:
+async def start_round(campaign_id: int, expected_round_number: int | None = None) -> dict:
     _require_campaign(campaign_id)
-    result = turns.start_round(campaign_id)
+    result = turns.start_round(campaign_id, expected_round_number=expected_round_number)
     await manager.broadcast(campaign_id, {"type": "round_started", **result})
     return result
 

@@ -73,3 +73,11 @@ rewrite/backend/*.db
 # referencia local durante el desarrollo — no se versionan.
 rewrite/*.pdf
 rewrite/*BattleTech*.txt
+
+# Volcado bruto de assets del juego (AssetStudio) usado como material de
+# origen para exportar los .glb en rewrite/frontend/public/models/mechs/ —
+# cientos de MB/GB de FBX/PNG y un catalogo de 500+MB, no se versionan.
+# Anclados a la raiz (con /) para no afectar a public/models/mechs/.
+/assets.xml
+/mech/
+/models/

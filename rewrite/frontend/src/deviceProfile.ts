@@ -111,6 +111,19 @@ export function deviceProfile(): DeviceProfile {
     return cached
   }
 
+  // Checked here, not only in applyQualityOverride below, because a few
+  // modules (GroundVegetation.tsx's VEGETATION_DENSITY/CARPET_MAX_CARDS/
+  // LOD_DISTANCE) call deviceProfile() as a top-level module constant.
+  // ES module evaluation order runs main.tsx's whole static import tree
+  // (App -> ... -> GroundVegetation) before main.tsx's own body gets to
+  // call applyQualityOverride, so those constants were caching the
+  // auto-detected profile and never seeing `?calidad=...` at all. Reading
+  // the query string on this very first call closes that race regardless
+  // of which module happens to trigger it.
+  const forced = new URLSearchParams(window.location.search).get('calidad')
+  if (forced === 'alta') return (cached = { ...DESKTOP, reason: 'forzado a alta' })
+  if (forced === 'baja') return (cached = { ...CONSTRAINED, reason: 'forzado a baja' })
+
   const nav = navigator as Navigator & { deviceMemory?: number }
   const memory = nav.deviceMemory
   const cores = nav.hardwareConcurrency
@@ -132,7 +145,13 @@ export function deviceProfile(): DeviceProfile {
  * Detection is a guess, and a guess that cannot be overridden is a trap:
  * this is what lets a phone that copes fine ask for the full picture, and
  * (more usefully) what lets a desktop reproduce the mobile path without a
- * phone in hand. */
+ * phone in hand.
+ *
+ * deviceProfile() itself now checks the same query param on its first
+ * call (see comment there), so this call from main.tsx is redundant on
+ * every path that matters today — kept as the explicit, readable place a
+ * future caller (e.g. a settings panel re-forcing the profile without a
+ * reload) would look to force one on demand. */
 export function applyQualityOverride(search: string): void {
   const value = new URLSearchParams(search).get('calidad')
   if (value === 'alta') cached = { ...DESKTOP, reason: 'forzado a alta' }

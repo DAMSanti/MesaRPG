@@ -324,17 +324,24 @@ CREATE TABLE IF NOT EXISTS mech_model_annotations (
 
 -- Real user request: "necesito en el desplegable de mechs... poder ver a
 -- simple vista en que estado se encuentra el anotar armas, extremidades y
--- rig... Solo yo puedo aceptar cada parte" — one row per (model_url,
--- track), tracking a review status independent of the annotation data
--- itself ('done' is set automatically by the frontend once there's real
--- data/a first look for that track; 'accepted' is ONLY ever set by an
--- explicit user action, never inferred).
+-- rig... Solo yo puedo aceptar cada parte" — one row per (chassis, track),
+-- tracking a review status independent of the annotation data itself
+-- ('done' is set automatically by the frontend once there's real data/a
+-- first look for that track; 'accepted' is ONLY ever set by an explicit
+-- user action, never inferred).
+-- Real user request (later): "los marcadores... deberian estar en el
+-- chasis ahora, no en los modelos" — every catalog variant of a
+-- placeholder-tier chassis already shares one .glb (mechAssets.ts), so
+-- per-model_url tracking was really tracking the chassis by coincidence;
+-- keyed explicitly by chassis name now (was model_url — see
+-- _migrate_mech_model_review_to_chassis below for the rename). Also gained
+-- a 5th track, 'footprint' (previously untracked entirely).
 CREATE TABLE IF NOT EXISTS mech_model_review (
-    model_url TEXT NOT NULL,
-    track TEXT NOT NULL,       -- 'weapons' | 'limbs' | 'rig' | 'texture'
+    chassis TEXT NOT NULL,
+    track TEXT NOT NULL,       -- 'weapons' | 'limbs' | 'rig' | 'texture' | 'footprint'
     status TEXT NOT NULL DEFAULT 'not_started',  -- 'not_started' | 'done' | 'accepted'
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-    PRIMARY KEY (model_url, track)
+    PRIMARY KEY (chassis, track)
 );
 
 -- Real user request: "quiero poder guardarlo desde el mechlab y como lo
@@ -353,6 +360,25 @@ CREATE TABLE IF NOT EXISTS mech_pbr_settings (
     metalness REAL NOT NULL,
     color_boost REAL NOT NULL,
     ao_intensity REAL NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Real user request: "en la seccion de huella, quiero un boton de guardar,
+-- para cuando capture una, que se use esa siempre... quiero que ademas se
+-- use ya como forma real de la pisada" — MechLabView's Huella tab captures
+-- a top-down silhouette (a PNG data URL, small/capped resolution — see
+-- FOOTPRINT_CAPTURE_RESOLUTION) of whatever's inside its 3D gizmo box, one
+-- row per model_url same as mech_pbr_settings above. half_width/half_depth
+-- are the box's own half-extents in the SAME normalized (pre-MODEL_SCALE)
+-- units Mech3D.tsx's own FootShape already uses for the geometric-fallback
+-- foot size, so a real caller multiplies by MODEL_SCALE itself exactly
+-- like it already does for that fallback — this table only adds a real
+-- SHAPE (the image) on top of a size that was already being computed.
+CREATE TABLE IF NOT EXISTS mech_footprint_masks (
+    model_url TEXT PRIMARY KEY,
+    image_data_url TEXT NOT NULL,
+    half_width REAL NOT NULL,
+    half_depth REAL NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -591,6 +617,20 @@ def init_db() -> None:
         # built from several separate meshes (upper arm/forearm/hand,
         # say). NULL for kind='weapon'/'cockpit' rows, which don't use it.
         _ensure_column(conn, "mech_model_annotations", "mesh_names", "TEXT")
+        _migrate_mech_model_review_to_chassis(conn)
+
+
+def _migrate_mech_model_review_to_chassis(conn: sqlite3.Connection) -> None:
+    """Light migration: an older dev DB has mech_model_review keyed by
+    model_url (see that table's own comment for why this moved to chassis).
+    Dev-only review-status data (this table has no gameplay effect, just UI
+    markers) — renaming the column is enough, no value transformation
+    needed, since every row's old model_url either already equals its
+    chassis name (unlikely) or is simply stale and gets naturally
+    re-derived the next time each tab is revisited in MechLabView."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(mech_model_review)")}
+    if "model_url" in existing and "chassis" not in existing:
+        conn.execute("ALTER TABLE mech_model_review RENAME COLUMN model_url TO chassis")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

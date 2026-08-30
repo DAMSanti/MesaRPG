@@ -200,12 +200,22 @@ def _round_mode(campaign_id: int) -> str:
     return campaign["initiative_mode"] if campaign else "team"
 
 
-def start_round(campaign_id: int) -> dict:
+def start_round(campaign_id: int, *, expected_round_number: int | None = None) -> dict:
     """Begin a new round: increments round_number, clears prior rolls and
     which pilots had acted. Team mode rolls initiative for both sides
     immediately, same as always. Individual mode rolls nothing here —
     the round starts with zero rolls, and each pilot's is submitted
-    separately via roll_pilot_initiative (see module docstring)."""
+    separately via roll_pilot_initiative (see module docstring).
+
+    expected_round_number, when given, is the round the caller last saw —
+    a no-op (current state returned unchanged) if the DB has already moved
+    past it. Without this, GMView's auto-advance effect (fires whenever a
+    round's phase lands on 'other') double-advances round_number when two
+    GM tabs are open on the same campaign: both receive the same
+    round_updated broadcast and both call this before either one's own
+    response lands to move their local phase off 'other'. resolve_heat_phase
+    avoids the equivalent race via bt_rounds.heat_resolved; nothing played
+    that role for round advancement until now."""
     campaign = campaigns.get_campaign(campaign_id)
     mode = campaign["initiative_mode"] if campaign else "team"
     combat_pilots = _combat_pilots(campaign_id)
@@ -231,6 +241,8 @@ def start_round(campaign_id: int) -> dict:
             "SELECT round_number FROM bt_rounds WHERE campaign_id = ?", (campaign_id,)
         ).fetchone()
         prev_round_number = prev_round_row["round_number"] if prev_round_row else 0
+        if expected_round_number is not None and prev_round_number != expected_round_number:
+            return get_round(campaign_id)
         conn.execute(
             """
             INSERT INTO bt_rounds (campaign_id, round_number, heat_resolved, mode)

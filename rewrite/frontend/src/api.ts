@@ -590,16 +590,24 @@ export const saveMechAnnotations = (modelUrl: string, points: MechAnnotationPoin
     body: JSON.stringify({ model_url: modelUrl, points }),
   })
 
-/** Per-model, per-track review state for MechLab (real user request: "poder
- * ver a simple vista en que estado se encuentra el anotar armas,
+/** Per-chassis, per-track review state for MechLab (real user request:
+ * "poder ver a simple vista en que estado se encuentra el anotar armas,
  * extremidades y rig"). `'accepted'` is only ever set by an explicit user
- * action in MechLabView — never inferred here or on the backend. A model
- * with no row for a track is implicitly `'not_started'`. */
-export type MechAnnotationTrack = 'weapons' | 'limbs' | 'rig' | 'texture'
+ * action in MechLabView — never inferred here or on the backend. A chassis
+ * with no row for a track is implicitly `'not_started'`.
+ *
+ * Real user request (later): "los marcadores... deberian estar en el
+ * chasis ahora, no en los modelos" — keyed by chassis name (was
+ * `model_url`; every catalog variant of a placeholder-tier chassis already
+ * shares one .glb in mechAssets.ts, so per-model tracking was really
+ * tracking the chassis by coincidence). Also gained 'footprint' as a 5th
+ * track — previously untracked entirely (MechLabView's Huella tab had no
+ * review badge). */
+export type MechAnnotationTrack = 'weapons' | 'limbs' | 'rig' | 'texture' | 'footprint'
 export type MechAnnotationReviewStatus = 'not_started' | 'done' | 'accepted'
 
 export interface MechAnnotationReview {
-  model_url: string
+  chassis: string
   track: MechAnnotationTrack
   status: MechAnnotationReviewStatus
   updated_at: string
@@ -607,10 +615,10 @@ export interface MechAnnotationReview {
 
 export const listMechAnnotationReview = () => request<MechAnnotationReview[]>('/api/mech-annotations/review')
 
-export const setMechAnnotationReview = (modelUrl: string, track: MechAnnotationTrack, status: MechAnnotationReviewStatus) =>
+export const setMechAnnotationReview = (chassis: string, track: MechAnnotationTrack, status: MechAnnotationReviewStatus) =>
   request<MechAnnotationReview>('/api/mech-annotations/review', {
     method: 'PUT',
-    body: JSON.stringify({ model_url: modelUrl, track, status }),
+    body: JSON.stringify({ chassis, track, status }),
   })
 
 /** MechLabView's Textura tab (real user request: "quiero poder guardarlo
@@ -636,6 +644,27 @@ export const listMechPbrSettings = () => request<MechPbrSettingsRecord[]>('/api/
 
 export const saveMechPbrSettings = (record: Omit<MechPbrSettingsRecord, 'updated_at'>) =>
   request<MechPbrSettingsRecord>('/api/mech-pbr-settings', {
+    method: 'PUT',
+    body: JSON.stringify(record),
+  })
+
+/** MechLabView's Huella tab's own saved capture — see the backend's
+ * mech_footprint_masks doc comment. `half_width`/`half_depth` are in the
+ * SAME normalized (pre-MODEL_SCALE) units as Mech3D.tsx's own FootShape,
+ * so a real caller multiplies by MODEL_SCALE itself exactly like it
+ * already does for the geometric-fallback foot size. */
+export interface MechFootprintMaskRecord {
+  model_url: string
+  image_data_url: string
+  half_width: number
+  half_depth: number
+  updated_at: string
+}
+
+export const listMechFootprintMasks = () => request<MechFootprintMaskRecord[]>('/api/mech-footprint-masks')
+
+export const saveMechFootprintMask = (record: Omit<MechFootprintMaskRecord, 'updated_at'>) =>
+  request<MechFootprintMaskRecord>('/api/mech-footprint-masks', {
     method: 'PUT',
     body: JSON.stringify(record),
   })
@@ -1046,8 +1075,15 @@ export const standUp = (unitId: number) =>
 export const fallOver = (unitId: number) =>
   request<Record<string, unknown>>(`/api/units/${unitId}/fall-over`, { method: 'POST' })
 
-export const startRound = (campaignId: number) =>
-  request<RoundState>(`/api/campaigns/${campaignId}/round/start`, { method: 'POST' })
+// expectedRoundNumber: the round the caller last saw ending — lets the
+// backend collapse two concurrent calls for the same round transition
+// (e.g. two GM tabs' auto-advance effects) into a single real advance
+// instead of double-incrementing. See turns.py's start_round docstring.
+export const startRound = (campaignId: number, expectedRoundNumber?: number) =>
+  request<RoundState>(
+    `/api/campaigns/${campaignId}/round/start${expectedRoundNumber != null ? `?expected_round_number=${expectedRoundNumber}` : ''}`,
+    { method: 'POST' },
+  )
 
 export const setInitiativeMode = (campaignId: number, mode: InitiativeMode) =>
   request<Campaign>(`/api/campaigns/${campaignId}/initiative-mode`, {

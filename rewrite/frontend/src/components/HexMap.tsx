@@ -26,7 +26,10 @@ import {
   hexToWorld, mapCenter, WALK_SPEED, worldToHex,
 } from '../hexMath'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
-import { DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE, type SeveredLimbInfo } from './Mech3D'
+import {
+  DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE, getSavedFootprintMask, weaponHitSeverity,
+  type SeveredLimbInfo,
+} from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
 import { LightPool } from './LightPool'
@@ -132,6 +135,15 @@ export interface ActiveAttackVfx {
   targetR: number
   weaponName: string
   hit: boolean
+  /** Real user request: "ataque a distancia" / "reacciones a impacto por
+   * dirección" — UnitMarker needs to know WHICH unit it is relative to
+   * this attack (attacker plays Mech3D's attackSignal, target plays its
+   * hitSignal) plus the firing weapon's own BT location (LA/RA/other,
+   * already resolved above for the beam VFX) to pick the right arm/torso
+   * clip. */
+  attackerUnitId: number
+  targetUnitId: number
+  weaponLocation: string | null
   /** Real user request: "no es muy largo hacer que las armas disparen de
    * esas zonas y los impactos se hagan en esos puntos?" — the attacker's
    * own weapon-mount point (kind='weapon') and the target's own
@@ -222,6 +234,9 @@ export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, u
       hit: lastAttack.hit,
       attackerOffset: attackerLocal ? rotateLocalOffset(attackerLocal, attackerUnit.facing_deg) : null,
       targetOffset: targetLocal ? rotateLocalOffset(targetLocal, targetUnit.facing_deg) : null,
+      attackerUnitId: attackerUnit.id,
+      targetUnitId: targetUnit.id,
+      weaponLocation,
     }
     if (activeRef.current === null) {
       setActive(vfx)
@@ -279,6 +294,21 @@ export const TURN_SPEED = Math.PI * 2.2
 // counts as "basically turning in place" for fog-reveal purposes — see
 // UnitMarker's/WalkingFirstPersonCam's own firstStepFiredEarlyRef.
 export const BIG_TURN_THRESHOLD = Math.PI / 2
+// Below this much remaining angular delta (radians), UnitMarker's own
+// in-place-turn detection (moveCoreTurnLeftIdle/RightIdle) considers the
+// mech settled onto its new facing rather than still turning — real user
+// request: "locomoción extra para los giros". Small enough that a mech
+// facing exactly its commanded direction never flickers into "turning" from
+// float rounding alone, tiny enough that a real reface reads as turning for
+// nearly its whole duration, not just the first instant.
+const TURN_IDLE_EPSILON = 0.03
+// Below this much bearing offset (radians) toward the target, an attacker
+// firing counts as already facing it — no torso twist. Real user request:
+// "a la hora de atacar tendra que ponerse defrente al enemigo, que lo use
+// [torso twist]" — a target within ~30° of dead ahead reads as "already
+// aimed at it" without any visible twist, matching how forgiving the
+// hitReact/attack clips' own authored aim cone already looks in-game.
+const TORSO_TWIST_EPSILON = Math.PI / 6
 
 /** Shortest signed angular difference from `from` to `to` (radians), in
  * (-π, π] — e.g. 350°→10° comes out as +20°, not -340°. The delta
@@ -829,6 +859,15 @@ function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<Un
     && prev.prone === next.prone
     && prev.shutdown === next.shutdown
     && prev.destroyedReason === next.destroyedReason
+    // Real user request: "ataque a distancia"/"reacciones a impacto por
+    // dirección" — a fresh activeAttack is a new object every shot
+    // (useAttackVfxQueue's own setActive), so a reference compare is
+    // enough to catch it; EVERY marker re-renders on each shot (not just
+    // the attacker/target), same tradeoff sameSeveredLocations' own doc
+    // comment already accepts elsewhere in this comparator — cheap to
+    // recompute, and skipping it here would silently never fire the new
+    // attackSignal/hitSignal below.
+    && prev.activeAttack === next.activeAttack
     && prev.worldOffset[0] === next.worldOffset[0] && prev.worldOffset[1] === next.worldOffset[1]
     && (prev.dragPosition === next.dragPosition
       || (prev.dragPosition != null && next.dragPosition != null
@@ -946,6 +985,15 @@ type UnitMarkerProps = {
   destroyedReason?: 'structural' | 'pilot_killed' | null
   /** Location codes whose structure has reached 0 — see Mech3D's own prop. */
   severedLocations?: Set<string>
+  /** Location codes whose armor has reached 0 — see Mech3D's own prop. */
+  damagedLocations?: Set<string>
+  /** Real user request: "ataque a distancia" / "reacciones a impacto por
+   * dirección" — HexMap's own useAttackVfxQueue().activeAttack, passed
+   * straight through unfiltered; this marker checks attackerUnitId/
+   * targetUnitId against its own `unit.id` to decide whether it's the one
+   * playing Mech3D's attackSignal, hitSignal, both (unlikely, but nothing
+   * stops a mech from being its own target) or neither. */
+  activeAttack?: ActiveAttackVfx | null
   /** Forwarded straight to Mech3D — see its own prop. */
   onLimbSevered?: (info: SeveredLimbInfo) => void
   onPointerDown?: (e: ThreeEvent<PointerEvent>) => void
@@ -985,7 +1033,7 @@ type UnitMarkerProps = {
 
 const UnitMarker = memo(function UnitMarker({
   unit, elevation, terrain, terrainAt, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
-  prone, shutdown, destroyedReason, severedLocations, onLimbSevered, boardgameScale,
+  prone, shutdown, destroyedReason, severedLocations, damagedLocations, activeAttack, onLimbSevered, boardgameScale,
   onPointerDown, onPointerUp, onWalkDone, onWalkStep, onFootstep,
 }: UnitMarkerProps) {
   const target = dragPosition ?? hexToWorld(unit.q, unit.r)
@@ -1081,6 +1129,13 @@ const UnitMarker = memo(function UnitMarker({
   // immediately, independent of how far X/Z had actually walked).
   const animatedY = useRef<number>(baseY)
   const [isMoving, setIsMoving] = useState(false)
+  // Real user request: "locomoción extra para los giros" — a pure in-place
+  // reface (facing_deg changed, no hex movement) reads as a boring instant
+  // snap of Idle today; Mech3D's own moveCoreTurnLeftIdle/RightIdle exists
+  // for exactly this. Edge-triggered the same way isMoving already is (set
+  // in the frame loop below, not every frame) — see TURN_IDLE_EPSILON.
+  const [turning, setTurning] = useState<'left' | 'right' | null>(null)
+  const turningRef = useRef<'left' | 'right' | null>(null)
   const canWalk = !dragPosition
 
   // Turns to face the direction it's actually walking at each leg of a
@@ -1286,6 +1341,15 @@ const UnitMarker = memo(function UnitMarker({
           const travelAngle = Math.atan2(legDz, legDx)
           const perpAngle = travelAngle + Math.PI / 2
           const ux = legDx / legDist, uz = legDz / legDist
+          // Real user request: "quiero que ademas se use ya como forma
+          // real de la pisada" — this geometric fallback (every chassis
+          // besides the Jenner, which has real per-bone tracking via
+          // onFootstep below) used to always stamp the same fixed 1.2-
+          // radius circle; a saved Huella capture now shapes it for real,
+          // oriented along the actual direction of travel (`travelAngle`
+          // — this fallback has no live foot-bone rotation to use
+          // instead, unlike handleUnitFootstep's own real rotationY).
+          const savedFootprint = getSavedFootprintMask(unit.mech_chassis, unit.mech_model)
           for (let step = 1; step <= STEPS_PER_HEX; step++) {
             const backDist = (STEPS_PER_HEX - step) * STEP_SPACING
             const side = -footprintSideRef.current
@@ -1293,7 +1357,11 @@ const UnitMarker = memo(function UnitMarker({
             stampDeformation(
               immediateTarget.x - ux * backDist + Math.cos(perpAngle) * side * 0.09 * HEX_SIZE,
               immediateTarget.z - uz * backDist + Math.sin(perpAngle) * side * 0.09 * HEX_SIZE,
-              1.2, FOOTPRINT_DEPTH,
+              savedFootprint ? savedFootprint.halfWidth * MODEL_SCALE * mechScale : 1.2,
+              FOOTPRINT_DEPTH,
+              savedFootprint ? savedFootprint.halfDepth * MODEL_SCALE * mechScale : undefined,
+              savedFootprint ? travelAngle : undefined,
+              savedFootprint?.mask,
             )
           }
         }
@@ -1334,6 +1402,16 @@ const UnitMarker = memo(function UnitMarker({
   const groupRef = useRef<THREE.Group>(null)
   useProfiledFrame('unidades (movim.)', (_state, delta) => {
     stepToward(delta)
+    // Sign of angleDelta picks which of the two symmetric idle-turn clips
+    // reads as the right direction — not independently verified against a
+    // real render yet, flip this ternary if Left/Right come out backwards.
+    const remainingTurn = angleDelta(animatedRot.current, facingRotationY)
+    const turningNow: 'left' | 'right' | null =
+      !isMoving && Math.abs(remainingTurn) > TURN_IDLE_EPSILON ? (remainingTurn > 0 ? 'left' : 'right') : null
+    if (turningNow !== turningRef.current) {
+      turningRef.current = turningNow
+      setTurning(turningNow)
+    }
     const [x, z] = animatedPos.current
     const y = animatedY.current
     const rot = animatedRot.current
@@ -1368,6 +1446,50 @@ const UnitMarker = memo(function UnitMarker({
   // scale keeps every part of it proportionate to the model, instead of
   // rescaling each piece's constants independently.
   const mechScale = boardgameScale ? BOARDGAME_MECH_SCALE : 1
+  // Real user request: "ataque a distancia" — this unit's own Mech3D
+  // attackSignal, only non-null while it's the ATTACKER of the currently
+  // playing activeAttack. `twist` (see attackSignal's own doc comment on
+  // Mech3D) compares this unit's static facingRotationY against the real
+  // bearing toward the target hex, same atan2(dx,dz) convention every
+  // other heading calc in this file already uses (see stepToward's own
+  // `heading`/`headingTarget` above) — a target roughly ahead already
+  // (within TORSO_TWIST_EPSILON) needs no twist at all.
+  const attackSignal = useMemo(() => {
+    if (!activeAttack || activeAttack.attackerUnitId !== unit.id) return null
+    const [ax, az] = hexToWorld(unit.q, unit.r)
+    const [tx, tz] = hexToWorld(activeAttack.targetQ, activeAttack.targetR)
+    const dx = tx - ax
+    const dz = tz - az
+    let twist: 'left' | 'right' | null = null
+    if (Math.hypot(dx, dz) > 1e-6) {
+      const offset = angleDelta(facingRotationY, Math.atan2(dx, dz))
+      if (Math.abs(offset) > TORSO_TWIST_EPSILON) twist = offset > 0 ? 'left' : 'right'
+    }
+    return { id: activeAttack.id, location: activeAttack.weaponLocation, twist }
+  }, [activeAttack, unit.q, unit.r, unit.id, facingRotationY])
+
+  // Same idea, for the moment a shot actually LANDS on this unit instead
+  // of the moment it's fired — a miss (activeAttack.hit === false) plays
+  // no flinch at all, only a real hit does. `direction` compares THIS
+  // unit's own facing against the bearing back toward the attacker (same
+  // atan2(dx,dz)/angleDelta convention as attackSignal's own `twist`
+  // above, just the other way round — where the shot CAME FROM relative
+  // to the target's front, not where the target needs to turn to).
+  const hitSignal = useMemo(() => {
+    if (!activeAttack || activeAttack.targetUnitId !== unit.id || !activeAttack.hit) return null
+    const [tx, tz] = hexToWorld(unit.q, unit.r)
+    const [ax, az] = hexToWorld(activeAttack.attackerQ, activeAttack.attackerR)
+    const dx = ax - tx
+    const dz = az - tz
+    let direction: 'fwd' | 'bwd' | 'left' | 'right' = 'fwd'
+    if (Math.hypot(dx, dz) > 1e-6) {
+      const relative = angleDelta(facingRotationY, Math.atan2(dx, dz))
+      const abs = Math.abs(relative)
+      direction = abs <= Math.PI / 4 ? 'fwd' : abs >= (3 * Math.PI) / 4 ? 'bwd' : relative > 0 ? 'left' : 'right'
+    }
+    return { id: activeAttack.id, severity: weaponHitSeverity(activeAttack.weaponName), direction }
+  }, [activeAttack, unit.q, unit.r, unit.id, facingRotationY])
+
   const mechOrMarker = (
     <group scale={mechScale}>
       <Select enabled={!!outlined}>
@@ -1388,7 +1510,10 @@ const UnitMarker = memo(function UnitMarker({
               color={color} chassis={unit.mech_chassis} model={unit.mech_model}
               isMoving={isMoving} movementType={movementType === 'run' ? 'run' : 'walk'}
               jumpPhase={jumpPhase} fallen={tiltProne} dead={destroyedReason != null}
+              shutdown={shutdown} turning={turning}
               severedLocations={severedLocations}
+              damagedLocations={damagedLocations}
+              attackSignal={attackSignal} hitSignal={hitSignal}
               onLimbSevered={onLimbSevered}
               emissive={glowEmissive} emissiveIntensity={glowEmissiveIntensity}
               tintStrength={tintStrength}
@@ -2539,6 +2664,7 @@ export function HexMap({
   proneUnitIds, shutdownUnitIds,
   destroyedReasonByUnitId,
   severedLocationsByUnitId,
+  damagedLocationsByUnitId,
   teamVisibleHexes, fogSubtle, physics, cullRegions, activeAttack, onAttackEffectDone, onAttackImpact, onUnitWalkDone, onUnitWalkStep,
   onUnitClick, onTileClick, onUnitDragEnd, onDraggingChange, boardgameScale, unfilteredOverlays,
 }: {
@@ -2655,6 +2781,13 @@ export function HexMap({
    * built with separate limb meshes stop drawing those; the rest ignore it.
    * Built by the view, same shape as every other per-unit map here. */
   severedLocationsByUnitId?: Map<number, Set<string>>
+  /** Per unit, the location codes whose armor has reached 0 but structure
+   * hasn't yet (see severedLocationsByUnitId above for once it does). A raw
+   * game-extracted placeholder model (Mech3D's own guessMeshLocation/
+   * damageTierOfMesh) swaps that location's sub-parts to their own `_dmg`
+   * variant where one exists; everything else ignores it. Built by the
+   * view, same shape/pattern as every other per-unit map here. */
+  damagedLocationsByUnitId?: Map<number, Set<string>>
   /** Real fog of war — "q,r" keys of every hex the CALLER considers
    * currently known (TableView: the whole player team's union, via
    * app/units.py's _team_visible_hexes; FirstPersonView: just this one
@@ -2925,10 +3058,21 @@ export function HexMap({
     const { q, r } = worldToHex(worldPos[0], worldPos[2])
     const key = `${q},${r}`
     if (!FOOTPRINT_TERRAINS.has(terrainAt.get(key) ?? '')) return
+    // Real user request: "quiero que ademas se use ya como forma real de
+    // la pisada" — a saved Huella capture shapes this real per-bone
+    // footstep too, not just UnitMarker's own geometric fallback above;
+    // the mask's own halfWidth/halfDepth (already MODEL_SCALE-multiplied
+    // by the caller here, same convention as footHalfWidth/footHalfDepth
+    // themselves) replace the plain bounding-box size when one exists.
+    const unit = units.find((u) => u.id === unitId)
+    const savedFootprint = unit ? getSavedFootprintMask(unit.mech_chassis, unit.mech_model) : null
     stampDeformation(
       worldPos[0], worldPos[2],
-      Math.max(footHalfWidth, MIN_FOOTPRINT_HALF_SIZE), FOOTPRINT_DEPTH,
-      Math.max(footHalfDepth, MIN_FOOTPRINT_HALF_SIZE), rotationY,
+      savedFootprint ? savedFootprint.halfWidth * MODEL_SCALE : Math.max(footHalfWidth, MIN_FOOTPRINT_HALF_SIZE),
+      FOOTPRINT_DEPTH,
+      savedFootprint ? savedFootprint.halfDepth * MODEL_SCALE : Math.max(footHalfDepth, MIN_FOOTPRINT_HALF_SIZE),
+      rotationY,
+      savedFootprint?.mask,
     )
   }
   // Scorch marks for missed shots — real user request: "los disparos
@@ -3166,6 +3310,48 @@ export function HexMap({
     add(targetableHexes, '#e35d5d', 0.45)
   }
 
+  // Memoized on activeAttack.id alone (not the whole activeAttack object,
+  // and deliberately not recomputed on every render) so AttackEffect
+  // receives a referentially stable `data` for the entire lifetime of one
+  // attack. AttackEffect's own miss-scatter useMemo depends on `data` by
+  // reference; before this was hoisted out, a fresh object literal was
+  // built inline in JSX on every HexMap re-render (any other unit's WS
+  // update, a hover, a drag — anything, mid-flight), which busted that
+  // memo and re-rolled the miss's landing point while the shot was still
+  // in the air.
+  const activeAttackData = useMemo(() => {
+    if (!activeAttack) return null
+    // Real user request: "no es muy largo hacer que las armas disparen
+    // de esas zonas y los impactos se hagan en esos puntos?" — when
+    // MechLab has a real weapon/hit annotation for this specific mech,
+    // use its own rotated-by-facing offset instead of the generic
+    // MODEL_CHEST_FRACTION guess; falls back to the old behavior per
+    // side whenever that mech (or this exact weapon/location) isn't
+    // annotated yet.
+    const [ahx, ahz] = hexToWorld(activeAttack.attackerQ, activeAttack.attackerR)
+    const [thx, thz] = hexToWorld(activeAttack.targetQ, activeAttack.targetR)
+    const attackerPos: [number, number] = activeAttack.attackerOffset
+      ? [ahx + activeAttack.attackerOffset.x, ahz + activeAttack.attackerOffset.z]
+      : [ahx, ahz]
+    const targetPos: [number, number] = activeAttack.targetOffset
+      ? [thx + activeAttack.targetOffset.x, thz + activeAttack.targetOffset.z]
+      : [thx, thz]
+    const attackerY = groundYAt(activeAttack.attackerQ, activeAttack.attackerR)
+      + (activeAttack.attackerOffset ? activeAttack.attackerOffset.y : MODEL_SCALE * MODEL_CHEST_FRACTION)
+    const targetY = groundYAt(activeAttack.targetQ, activeAttack.targetR)
+      + (activeAttack.targetOffset ? activeAttack.targetOffset.y : MODEL_SCALE * MODEL_CHEST_FRACTION)
+    return {
+      attackerPos,
+      targetPos,
+      attackerY,
+      targetY,
+      groundY: groundYAt(activeAttack.targetQ, activeAttack.targetR),
+      weaponName: activeAttack.weaponName,
+      hit: activeAttack.hit,
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAttack?.id])
+
   return (
     <group position={[-centerX, 0, -centerZ]}>
       {/* Every highlight the GM relies on, redrawn as DOM so the night
@@ -3262,6 +3448,8 @@ export function HexMap({
           shutdown={shutdownUnitIds?.has(unit.id) ?? false}
           destroyedReason={destroyedReasonByUnitId?.get(unit.id) ?? null}
           severedLocations={severedLocationsByUnitId?.get(unit.id)}
+          damagedLocations={damagedLocationsByUnitId?.get(unit.id)}
+          activeAttack={activeAttack}
           onLimbSevered={(info) => recordDroppedLimb(unit.id, info)}
           boardgameScale={boardgameScale}
           onWalkDone={() => onUnitWalkDone?.(unit.id)}
@@ -3276,38 +3464,10 @@ export function HexMap({
           onPointerUp={(e) => resolveAt(unit.q, unit.r, e)}
         />
       ))}
-      {activeAttack && (() => {
-        // Real user request: "no es muy largo hacer que las armas disparen
-        // de esas zonas y los impactos se hagan en esos puntos?" — when
-        // MechLab has a real weapon/hit annotation for this specific mech,
-        // use its own rotated-by-facing offset instead of the generic
-        // MODEL_CHEST_FRACTION guess; falls back to the old behavior per
-        // side whenever that mech (or this exact weapon/location) isn't
-        // annotated yet.
-        const [ahx, ahz] = hexToWorld(activeAttack.attackerQ, activeAttack.attackerR)
-        const [thx, thz] = hexToWorld(activeAttack.targetQ, activeAttack.targetR)
-        const attackerPos: [number, number] = activeAttack.attackerOffset
-          ? [ahx + activeAttack.attackerOffset.x, ahz + activeAttack.attackerOffset.z]
-          : [ahx, ahz]
-        const targetPos: [number, number] = activeAttack.targetOffset
-          ? [thx + activeAttack.targetOffset.x, thz + activeAttack.targetOffset.z]
-          : [thx, thz]
-        const attackerY = groundYAt(activeAttack.attackerQ, activeAttack.attackerR)
-          + (activeAttack.attackerOffset ? activeAttack.attackerOffset.y : MODEL_SCALE * MODEL_CHEST_FRACTION)
-        const targetY = groundYAt(activeAttack.targetQ, activeAttack.targetR)
-          + (activeAttack.targetOffset ? activeAttack.targetOffset.y : MODEL_SCALE * MODEL_CHEST_FRACTION)
-        return (
+      {activeAttack && activeAttackData && (
         <AttackEffect
           key={activeAttack.id}
-          data={{
-            attackerPos,
-            targetPos,
-            attackerY,
-            targetY,
-            groundY: groundYAt(activeAttack.targetQ, activeAttack.targetR),
-            weaponName: activeAttack.weaponName,
-            hit: activeAttack.hit,
-          }}
+          data={activeAttackData}
           onDone={() => onAttackEffectDone?.()}
           onImpact={() => onAttackImpact?.(activeAttack)}
           groundYAt={(x, z) => {
@@ -3316,8 +3476,7 @@ export function HexMap({
           }}
           onMissGround={addImpactMark}
         />
-        )
-      })()}
+      )}
       {/* Mounted once with the board and never unmounted, because what
           costs frames is not a light's brightness but the scene's light
           COUNT changing — see LightPool.tsx for the measurements that

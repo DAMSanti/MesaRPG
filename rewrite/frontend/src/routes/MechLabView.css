@@ -238,6 +238,19 @@
   font-size: 12px;
 }
 
+/* Real user request: "los marcadores... deberian estar en el chasis
+ * ahora, no en los modelos" — one set of 5 track icons next to the
+ * ChassisSelect combobox, replacing the per-model-option markers the
+ * <select> used to carry (native <option> can't style itself beyond text
+ * anyway; this is the same plain-emoji approach that used). */
+.mechlab-chassis-review-icons {
+  display: flex;
+  align-items: center;
+  font-size: 14px;
+  letter-spacing: 1px;
+  padding: 0 4px;
+}
+
 .mechlab-review-done {
   border-color: #c9a227;
 }

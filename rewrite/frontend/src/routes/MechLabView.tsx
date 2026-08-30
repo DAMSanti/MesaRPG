@@ -8,11 +8,13 @@ import type RAPIER from '@dimforge/rapier3d-compat'
 import type { Collider, RigidBody as RapierRigidBody, World } from '@dimforge/rapier3d-compat'
 import * as THREE from 'three'
 import {
-  getMechImport, listMechAnnotations, listMechAnnotationReview, listMechChassis, listMechModels,
-  listMechPbrSettings, saveMechAnnotations, saveMechPbrSettings, setMechAnnotationReview,
+  getMechImport, listMechAnnotations, listMechAnnotationReview, listMechChassis, listMechFootprintMasks,
+  listMechModels, listMechPbrSettings, saveMechAnnotations, saveMechFootprintMask, saveMechPbrSettings,
+  setMechAnnotationReview,
   LIMB_LOCATIONS, MECH_LOCATIONS,
   type MechAnnotation, type MechAnnotationPoint, type MechAnnotationReview, type MechAnnotationReviewStatus,
-  type MechAnnotationTrack, type MechChassisResult, type MechModelResult, type MechPbrSettingsRecord,
+  type MechAnnotationTrack, type MechChassisResult, type MechFootprintMaskRecord, type MechModelResult,
+  type MechPbrSettingsRecord,
 } from '../api'
 import { invalidateMechAnnotations } from '../mechAnnotations'
 import {
@@ -20,8 +22,8 @@ import {
 } from '../bakedPiece'
 import { ChassisSelect } from '../components/ChassisSelect'
 import {
-  DEAD_MECH_CHAR_COLOR, Mech3D, MECH_PBR_DEFAULTS, MODEL_SCALE, normalizeMechInstance, useMechPbr,
-  type MechPbrSettings,
+  applyMechCombatVisibility, computeWeaponMuzzlePoints, DEAD_MECH_CHAR_COLOR, Mech3D, MECH_PBR_DEFAULTS, MODEL_SCALE,
+  normalizeMechInstance, useMechPbr, type MechPbrSettings,
 } from '../components/Mech3D'
 import { MECH_CHASSIS_ASSETS, resolveMechModelUrl } from '../mechAssets'
 import './MechLabView.css'
@@ -261,19 +263,23 @@ const REVIEW_STATUS_ICON: Record<MechAnnotationReviewStatus, string> = {
 const REVIEW_STATUS_LABEL: Record<MechAnnotationReviewStatus, string> = {
   not_started: 'Sin empezar', done: 'Hecho', accepted: 'Aceptado',
 }
-const REVIEW_TRACK_ORDER: MechAnnotationTrack[] = ['weapons', 'limbs', 'rig', 'texture']
+// Real user request: "los marcadores... deberian estar en el chasis ahora,
+// no en los modelos" — keyed by chassis name (was modelUrl), plus a 5th
+// track, 'footprint' (previously untracked — Huella had no review badge
+// at all). See api.ts's own MechAnnotationTrack doc comment.
+const REVIEW_TRACK_ORDER: MechAnnotationTrack[] = ['weapons', 'limbs', 'rig', 'texture', 'footprint']
 
-function reviewKey(modelUrl: string, track: MechAnnotationTrack) {
-  return `${modelUrl}::${track}`
+function reviewKey(chassis: string, track: MechAnnotationTrack) {
+  return `${chassis}::${track}`
 }
 
 function reviewStatusFor(
   reviewByKey: Map<string, MechAnnotationReviewStatus>,
-  modelUrl: string | null,
+  chassis: string | null,
   track: MechAnnotationTrack,
 ): MechAnnotationReviewStatus {
-  if (!modelUrl) return 'not_started'
-  return reviewByKey.get(reviewKey(modelUrl, track)) ?? 'not_started'
+  if (!chassis) return 'not_started'
+  return reviewByKey.get(reviewKey(chassis, track)) ?? 'not_started'
 }
 
 /** Small status badge + "Aceptar" button for whichever track the sidebar
@@ -598,10 +604,18 @@ function isLegMeshName(name: string): boolean {
  * separate glTF node) falls the same way on its own object transform — see
  * fallStateRef and the useFrame gravity step below. */
 function LimbPainter({
-  chassis, model, selectedMeshNames, selectedBoneNames, previewBreak, onToggleMesh, onBonesChange, onMeshNamesChange,
+  chassis, model, weapons, selectedMeshNames, selectedBoneNames, previewBreak, onToggleMesh, onBonesChange,
+  onMeshNamesChange,
 }: {
   chassis: string
   model: string | null
+  /** Real user report: "en extremidades ahora mismo aparece el modelo con
+   * TODAS las armas... quiero que solo aparezca con las armas del modelo
+   * seleccionado" — this model's own real loadout (MechLabView's
+   * templateWeaponsForMech3D), applied via applyMechCombatVisibility so
+   * only the actually-equipped weapon mounts show, same as 'annotate'
+   * mode already does through Mech3D itself. */
+  weapons: { location: string; weaponName: string }[]
   selectedMeshNames: Set<string>
   selectedBoneNames: Set<string>
   previewBreak: boolean
@@ -619,7 +633,28 @@ function LimbPainter({
   const url = resolveMechModelUrl(chassis, model)
   const { scene } = useGLTF(url)
   const instance = useMemo(() => normalizeMechInstance(scene), [scene])
-  useMechPbr(instance)
+  // applyColorBoost: false — real user report: "en extremidades... ver rig,
+  // textura y huella lo veo blanco" — MECH_COLOR_BOOST (1.7x) was measured
+  // against the Jenner's own unusually dark (~19% brightness) camo texture;
+  // applied to a lighter-painted chassis (the Warhammer) it pushes most
+  // texels past 1.0 and clips toward flat white, worse the more directly a
+  // panel faces the light (RigViewer's typical close top-down framing
+  // showed it hardest, but the same overexposed material was already
+  // there here too, just less obvious from this component's usual camera
+  // angle). This tab is about picking real mesh/bone parts, not judging
+  // paint brightness — showing the texture's own true, unboosted color is
+  // both more useful here and incidentally fixes the whiteout.
+  useMechPbr(instance, { applyColorBoost: false })
+  // Real user report: "quiero que solo aparezca con las armas del modelo
+  // seleccionado, y con el modelo bien, ni dañado ni destruido" — severed/
+  // damaged both undefined forces the always-normal condition (this tab
+  // has no real battle state to preview damage against anyway, unlike
+  // 'annotate' mode's own dedicated damage-preview toggle).
+  const limbWeaponsKey = weapons.map((w) => `${w.location}:${w.weaponName}`).join(',')
+  useEffect(() => {
+    applyMechCombatVisibility(instance, weapons, undefined, undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance, limbWeaponsKey])
   const skinnedMesh = useMemo(() => findSkinnedMesh(instance), [instance])
   const linerRef = useRef<THREE.SkinnedMesh | null>(null)
   // Real bug found this session (via live browser inspection — matrixWorld
@@ -1234,6 +1269,19 @@ interface FootprintCaptureHandle {
   capture: () => void
 }
 
+/** `halfWidth`/`halfDepth` are the gizmo box's own half-extents at capture
+ * time, in the SAME normalized (pre-MODEL_SCALE) units as Mech3D.tsx's own
+ * FootShape — see saveMechFootprintMask's own doc comment for why: a real
+ * caller (Mech3D.tsx's footstep stamping) multiplies by MODEL_SCALE
+ * itself, exactly like it already does for the geometric-fallback foot
+ * size, so this needs to travel with the image rather than being
+ * re-derived later from a box that no longer exists by then. */
+interface FootprintCaptureResult {
+  dataUrl: string
+  halfWidth: number
+  halfDepth: number
+}
+
 const FOOTPRINT_CAPTURE_RESOLUTION = 256
 const FOOTPRINT_BOX_DEFAULT_POSITION: [number, number, number] = [0.12, 0.08, 0.06]
 const FOOTPRINT_BOX_DEFAULT_SCALE: [number, number, number] = [0.15, 0.12, 0.22]
@@ -1241,14 +1289,26 @@ const FOOTPRINT_BOX_DEFAULT_SCALE: [number, number, number] = [0.15, 0.12, 0.22]
 const FootprintCapture = forwardRef<FootprintCaptureHandle, {
   chassis: string
   model: string | null
+  /** See LimbPainter's own doc comment on the identical prop. */
+  weapons: { location: string; weaponName: string }[]
   transformMode: 'translate' | 'rotate' | 'scale'
   onDraggingChange: (dragging: boolean) => void
-  onCapture: (dataUrl: string) => void
-}>(function FootprintCapture({ chassis, model, transformMode, onDraggingChange, onCapture }, ref) {
+  onCapture: (result: FootprintCaptureResult) => void
+}>(function FootprintCapture({ chassis, model, weapons, transformMode, onDraggingChange, onCapture }, ref) {
   const url = resolveMechModelUrl(chassis, model)
   const { scene } = useGLTF(url)
   const instance = useMemo(() => normalizeMechInstance(scene), [scene])
-  useMechPbr(instance)
+  // applyColorBoost: false — see LimbPainter's own doc comment on its
+  // identical useMechPbr call for why (real user report: "en... huella lo
+  // veo blanco").
+  useMechPbr(instance, { applyColorBoost: false })
+  // See LimbPainter's own identical effect for why weapons/undefined/
+  // undefined (real loadout, always-normal condition).
+  const footprintWeaponsKey = weapons.map((w) => `${w.location}:${w.weaponName}`).join(',')
+  useEffect(() => {
+    applyMechCombatVisibility(instance, weapons, undefined, undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance, footprintWeaponsKey])
   const { gl } = useThree()
   const modelGroupRef = useRef<THREE.Group>(null)
   // Real bug found live (user report: "da igual donde haga el cuadro,
@@ -1342,7 +1402,7 @@ const FootprintCapture = forwardRef<FootprintCaptureHandle, {
         imageData.data.set(pixels.subarray(srcRow * n * 4, (srcRow + 1) * n * 4), row * n * 4)
       }
       ctx.putImageData(imageData, 0, 0)
-      onCapture(outCanvas.toDataURL('image/png'))
+      onCapture({ dataUrl: outCanvas.toDataURL('image/png'), halfWidth, halfDepth })
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [gl, box])
@@ -1374,11 +1434,13 @@ const FootprintCapture = forwardRef<FootprintCaptureHandle, {
 })
 
 function RigViewer({
-  chassis, model, activeClip, playing, scrub, selectedBone,
+  chassis, model, weapons, activeClip, playing, scrub, selectedBone,
   onClipsChange, onBonesChange, onScrubChange, onInfluencePercentChange, onBoneDragChange,
 }: {
   chassis: string
   model: string | null
+  /** See LimbPainter's own doc comment on the identical prop. */
+  weapons: { location: string; weaponName: string }[]
   activeClip: string | null
   playing: boolean
   /** 0..1 — authoritative only while `playing` is false (the user is
@@ -1402,7 +1464,17 @@ function RigViewer({
   const { scene, animations } = useGLTF(url)
   const groupRef = useRef<THREE.Group>(null)
   const instance = useMemo(() => normalizeMechInstance(scene), [scene])
-  useMechPbr(instance)
+  // applyColorBoost: false — see LimbPainter's own doc comment on its
+  // identical useMechPbr call for why (real user report: "en ver rig...
+  // lo veo blanco").
+  useMechPbr(instance, { applyColorBoost: false })
+  // See LimbPainter's own identical effect for why weapons/undefined/
+  // undefined (real loadout, always-normal condition).
+  const rigWeaponsKey = weapons.map((w) => `${w.location}:${w.weaponName}`).join(',')
+  useEffect(() => {
+    applyMechCombatVisibility(instance, weapons, undefined, undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance, rigWeaponsKey])
   const { actions } = useAnimations(animations, groupRef)
   const boneMarkerRefs = useRef<Map<string, THREE.Object3D>>(new Map())
   const segmentRefs = useRef<Map<string, THREE.Object3D>>(new Map())
@@ -1604,16 +1676,27 @@ function RigViewer({
  * nothing persisted; MechLabView's own `pbrSettings` state resets to
  * MECH_PBR_DEFAULTS on every mode/model switch. */
 function TextureTuner({
-  chassis, model, settings,
+  chassis, model, weapons, settings,
 }: {
   chassis: string
   model: string | null
+  /** See LimbPainter's own doc comment on the identical prop. */
+  weapons: { location: string; weaponName: string }[]
   settings: MechPbrSettings
 }) {
   const url = resolveMechModelUrl(chassis, model)
   const { scene } = useGLTF(url)
   const instance = useMemo(() => normalizeMechInstance(scene), [scene])
   useMechPbr(instance, { settings })
+  // See LimbPainter's own identical effect for why weapons/undefined/
+  // undefined (real loadout, always-normal condition) — applyColorBoost
+  // stays at its default (true) here on purpose, unlike the other three
+  // viewers: this tab's whole point IS previewing that boost.
+  const textureWeaponsKey = weapons.map((w) => `${w.location}:${w.weaponName}`).join(',')
+  useEffect(() => {
+    applyMechCombatVisibility(instance, weapons, undefined, undefined)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instance, textureWeaponsKey])
   return <primitive object={instance} scale={MODEL_SCALE} />
 }
 
@@ -1624,6 +1707,16 @@ export function MechLabView() {
   const [selectedModelFile, setSelectedModelFile] = useState('')
 
   const [mode, setMode] = useState<Mode>('annotate')
+  // Real user request: "quiero tener la opcion de rotar entre mech normal,
+  // dañado, explotado en el mechlab, para ver que todo cuadre" — MechLab
+  // has no real unit/mech record with actual armor damage to drive
+  // Mech3D's own severedLocations/damagedLocations props, so this is a pure
+  // preview toggle: forces EVERY location into the same tier at once,
+  // purely for eyeballing that a raw extraction's own _dmg/_explode
+  // sub-parts (Mech3D's damage-tier effect) line up correctly, independent
+  // of any real battle state.
+  const [damagePreview, setDamagePreview] = useState<'normal' | 'damaged' | 'destroyed'>('normal')
+  const damagePreviewLocations = useMemo(() => new Set<string>(MECH_LOCATIONS), [])
   // Textura tab's own live tuning state — see TextureTuner's own doc
   // comment. Real user follow-up: "quiero poder guardarlo desde el
   // mechlab y como lo demas, 3 estados y un marcador en el desplegable" —
@@ -1637,6 +1730,12 @@ export function MechLabView() {
   const [allAnnotations, setAllAnnotations] = useState<MechAnnotation[]>([])
   const [points, setPoints] = useState<MechAnnotationPoint[]>([])
   const [activeSlot, setActiveSlot] = useState<ActiveSlot | null>(null)
+  // Real user request: "con el cambio de modelos... tienes como sacar el
+  // punto desde donde disparan? o te lo tengo que dar yo" — see
+  // computeWeaponMuzzlePoints's own doc comment. Populated by Mech3D's own
+  // instanceRef prop (the 'annotate' mode <Mech3D> call below) with the
+  // SAME live, already-MODEL_SCALE-rendered instance it draws with.
+  const annotateInstanceRef = useRef<THREE.Object3D | null>(null)
   const [fpvPreview, setFpvPreview] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -1652,9 +1751,15 @@ export function MechLabView() {
   // "boneDragging" pattern the Ver rig tab's own gizmo already uses to
   // disable OrbitControls just for that.
   const footprintCaptureRef = useRef<FootprintCaptureHandle>(null)
-  const [footprintCaptureUrl, setFootprintCaptureUrl] = useState<string | null>(null)
+  const [footprintCapture, setFootprintCapture] = useState<FootprintCaptureResult | null>(null)
   const [footprintDragging, setFootprintDragging] = useState(false)
   const [footprintTransformMode, setFootprintTransformMode] = useState<'translate' | 'rotate' | 'scale'>('translate')
+  // Real user request: "quiero un boton de guardar, para cuando capture
+  // una, que se use esa siempre" — same "seed from server on modelUrl
+  // change" pattern as allPbrSettings/allAnnotations, so switching back to
+  // a chassis that already has a saved mask shows it immediately instead
+  // of looking empty until a fresh capture.
+  const [allFootprintMasks, setAllFootprintMasks] = useState<MechFootprintMaskRecord[]>([])
 
   // Real bug hunt this session: a real crash earlier (reparenting a mesh
   // from inside instance.traverse(), now fixed) took the WHOLE WebGL
@@ -1675,10 +1780,29 @@ export function MechLabView() {
   // mech-creation forms already read via getMechImport, just displayed
   // instead of turned into a real mech record.
   const [templateWeapons, setTemplateWeapons] = useState<{ weapon_name: string; location: string }[]>([])
+  // Mech3D's own `weapons` prop shape (camelCase weaponName) — same data,
+  // just renamed to match what its weapon-mount-visual assignment expects.
+  const templateWeaponsForMech3D = useMemo(
+    () => templateWeapons.map((w) => ({ location: w.location, weaponName: w.weapon_name })),
+    [templateWeapons],
+  )
 
   const [rigClipNames, setRigClipNames] = useState<string[]>([])
   const [rigActiveClip, setRigActiveClip] = useState<string | null>(null)
-  const [rigPlaying, setRigPlaying] = useState(true)
+  // Real user report: "en ver rig, los brazos estan mal colocados... y el
+  // cristal de la cabina tambien" — RigViewer used to auto-select AND
+  // auto-play the first clip in the list (alphabetically, an attack pose
+  // for the Warhammer) the instant its clip names loaded. That was a
+  // harmless no-op before this session's Blender NLA-bake fix (every clip
+  // was frozen on a single static pose anyway), but now that clips
+  // actually animate, this tab silently opened mid-attack-pose instead of
+  // the same neutral bind pose every OTHER MechLab tab shows by default —
+  // reading as "the rig is wrong" when it's really just showing a
+  // perfectly real animated pose nobody asked to see yet. Starting
+  // unselected/paused (see rigActiveClip's own effect below, now removed)
+  // leaves the model on its plain bind pose until the user actually picks
+  // a clip, matching annotate/limbs/textura/huella.
+  const [rigPlaying, setRigPlaying] = useState(false)
   const [rigScrub, setRigScrub] = useState(0)
   const [rigBoneNames, setRigBoneNames] = useState<string[]>([])
   const [selectedBone, setSelectedBone] = useState<string | null>(null)
@@ -1692,7 +1816,7 @@ export function MechLabView() {
   const [reviewByKey, setReviewByKey] = useState<Map<string, MechAnnotationReviewStatus>>(new Map())
 
   const applyReviewRow = (row: MechAnnotationReview) => {
-    setReviewByKey((prev) => new Map(prev).set(reviewKey(row.model_url, row.track), row.status))
+    setReviewByKey((prev) => new Map(prev).set(reviewKey(row.chassis, row.track), row.status))
   }
 
   // Real user constraint: "Solo yo puedo aceptar cada parte" — 'accepted'
@@ -1700,13 +1824,13 @@ export function MechLabView() {
   // Never downgrades an already-'accepted' track back to 'done' — once the
   // user has accepted a track it stays accepted until they explicitly
   // unmark it, even if the underlying points get edited/resaved again.
-  const bumpReviewToDone = (modelUrl: string, track: MechAnnotationTrack) => {
-    if (reviewStatusFor(reviewByKey, modelUrl, track) !== 'not_started') return
-    setMechAnnotationReview(modelUrl, track, 'done').then(applyReviewRow).catch(() => {})
+  const bumpReviewToDone = (chassis: string, track: MechAnnotationTrack) => {
+    if (reviewStatusFor(reviewByKey, chassis, track) !== 'not_started') return
+    setMechAnnotationReview(chassis, track, 'done').then(applyReviewRow).catch(() => {})
   }
 
-  const setReviewStatus = (modelUrl: string, track: MechAnnotationTrack, status: MechAnnotationReviewStatus) => {
-    setMechAnnotationReview(modelUrl, track, status).then(applyReviewRow).catch(() => {})
+  const setReviewStatus = (chassis: string, track: MechAnnotationTrack, status: MechAnnotationReviewStatus) => {
+    setMechAnnotationReview(chassis, track, status).then(applyReviewRow).catch(() => {})
   }
 
   useEffect(() => {
@@ -1719,9 +1843,10 @@ export function MechLabView() {
       .catch(() => {})
     listMechAnnotations().then(setAllAnnotations).catch(() => {})
     listMechAnnotationReview()
-      .then((rows) => setReviewByKey(new Map(rows.map((r) => [reviewKey(r.model_url, r.track), r.status]))))
+      .then((rows) => setReviewByKey(new Map(rows.map((r) => [reviewKey(r.chassis, r.track), r.status]))))
       .catch(() => {})
     listMechPbrSettings().then(setAllPbrSettings).catch(() => {})
+    listMechFootprintMasks().then(setAllFootprintMasks).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -1765,13 +1890,19 @@ export function MechLabView() {
   const selectedModel = modelOptions.find((m) => m.file === selectedModelFile)?.model ?? null
   const modelUrl = selectedChassis ? resolveMechModelUrl(selectedChassis, selectedModel) : null
   const currentTrack: MechAnnotationTrack =
-    mode === 'annotate' ? 'weapons' : mode === 'limbs' ? 'limbs' : mode === 'texture' ? 'texture' : 'rig'
+    mode === 'annotate' ? 'weapons'
+      : mode === 'limbs' ? 'limbs'
+      : mode === 'texture' ? 'texture'
+      : mode === 'footprint' ? 'footprint'
+      : 'rig'
   // Real user request: "cuando acepto el estado de una parte, se vuelve
   // NO EDITABLE... si quiero editarlo tengo que volver a dar el botón
   // para devolverlo a Hecho" — a safeguard against accidentally messing
   // up something already reviewed. Only weapons/limbs actually have
   // save-able edits to lock; Rig has nothing destructive to guard.
-  const isTrackLocked = modelUrl != null && reviewStatusFor(reviewByKey, modelUrl, currentTrack) === 'accepted'
+  // Real user request (later): "los marcadores... deberian estar en el
+  // chasis ahora" — keyed by selectedChassis (was modelUrl).
+  const isTrackLocked = selectedChassis !== '' && reviewStatusFor(reviewByKey, selectedChassis, currentTrack) === 'accepted'
 
   // Seed the editable point set from whatever's already saved for this
   // model_url the moment it changes — re-picking an already-annotated
@@ -1795,6 +1926,12 @@ export function MechLabView() {
           }
         : MECH_PBR_DEFAULTS,
     )
+    const savedFootprint = allFootprintMasks.find((r) => r.model_url === modelUrl)
+    setFootprintCapture(
+      savedFootprint
+        ? { dataUrl: savedFootprint.image_data_url, halfWidth: savedFootprint.half_width, halfDepth: savedFootprint.half_depth }
+        : null,
+    )
     setActiveSlot(null)
     setActiveLimb(null)
     setPreviewBreak(false)
@@ -1802,31 +1939,41 @@ export function MechLabView() {
     setSavedFlash(false)
     setMode('annotate')
     setRigActiveClip(null)
-    setRigPlaying(true)
+    setRigPlaying(false)
     setRigScrub(0)
     setSelectedBone(null)
-    // allAnnotations/allPbrSettings intentionally excluded — only a real
-    // modelUrl change should reseed from the server; a local save's own
-    // optimistic merge
+    // allAnnotations/allPbrSettings/allFootprintMasks intentionally
+    // excluded — only a real modelUrl change should reseed from the
+    // server; a local save's own optimistic merge
     // below already keeps `points` in sync without needing this to re-run.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelUrl])
 
-  // The rig's own clip list only becomes known once RigViewer mounts and
-  // reports back — default to the first clip ("Idle", by mechAssets.ts's
-  // own rigging convention) the first time it arrives for this mech.
-  useEffect(() => {
-    if (rigClipNames.length > 0 && rigActiveClip == null) setRigActiveClip(rigClipNames[0])
-  }, [rigClipNames, rigActiveClip])
+  // Real user report: "en ver rig, los brazos estan mal colocados... y el
+  // cristal de la cabina tambien" — this used to auto-select AND auto-play
+  // `rigClipNames[0]` the instant clips loaded (a hand-rigged chassis's
+  // own convention always ships "Idle" first, so this happened to look
+  // like the neutral standing pose there — but a raw game-extracted
+  // chassis's clips just come in export order, alphabetically, landing on
+  // "attackFireBothMed" for the Warhammer). Auto-selecting even the real
+  // Idle clip instead still doesn't help: ANY selected clip, including
+  // Idle, poses the rig into ITS OWN real standing stance (arms held
+  // forward, weapons ready — apparently the actual authored idle pose for
+  // this chassis), which will always look different from the plain BIND
+  // pose annotate/limbs/textura/huella all show with no animation applied
+  // at all. Leaving this unselected keeps RigViewer on that exact same
+  // bind pose by default too — genuinely consistent with every other tab
+  // — until the user deliberately clicks a clip to preview it.
+
 
   // Real user request: 'rig' has no explicit save button (there's nothing
   // to persist besides the annotation points) — its own review status is
   // set to 'done' automatically the moment the tab is opened for a model
   // that actually has clips to look at.
   useEffect(() => {
-    if (mode === 'rig' && modelUrl && rigClipNames.length > 0) bumpReviewToDone(modelUrl, 'rig')
+    if (mode === 'rig' && selectedChassis && rigClipNames.length > 0) bumpReviewToDone(selectedChassis, 'rig')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, modelUrl, rigClipNames])
+  }, [mode, selectedChassis, rigClipNames])
 
   const cockpitPoint = points.find((p) => p.kind === 'cockpit')
   const hitPointFor = (loc: MechLocationCode) => points.find((p) => p.kind === 'hit' && p.location === loc)
@@ -1892,6 +2039,49 @@ export function MechLabView() {
     setSavedFlash(false)
   }
 
+  // Real user request: "tienes como sacar el punto desde donde disparan?
+  // o te lo tengo que dar yo" — fills every weapon slot for the CURRENT
+  // model at once from the real mesh geometry (computeWeaponMuzzlePoints),
+  // same "Nth real weapon at a location -> arma N" slot convention
+  // onModelClick's own weapon branch already uses, just computed instead
+  // of clicked. Left as a reviewable prefill, not an auto-save: still
+  // needs the normal "Guardar"/"Aceptar" step afterward, same as a
+  // manually-clicked point.
+  //
+  // Real bug found live: a weapon with no detected mesh (an unmapped
+  // WEAPON_VISUAL_BUCKETS entry — "Streak SRM 6" had none at the time)
+  // used to just be skipped, silently shifting every LATER same-location
+  // weapon's point one slot too early — wrong points, not just a missing
+  // one, since these slots are purely positional with no per-point weapon
+  // identity to keep them aligned on their own. Stopping at the first
+  // miss per location instead (same gap-free invariant onModelClick's own
+  // `Math.min(index, sameLocation.length)` clamp already enforces for a
+  // manual click) means a real gap just leaves that location visibly
+  // short (its later slots simply don't get filled) instead of silently
+  // wrong.
+  const onAutoDetectWeaponPoints = () => {
+    if (!annotateInstanceRef.current || isTrackLocked) return
+    const detected = computeWeaponMuzzlePoints(annotateInstanceRef.current, templateWeaponsForMech3D)
+    const byLocation = new Map<string, MechAnnotationPoint[]>()
+    const stoppedLocations = new Set<string>()
+    for (const d of detected) {
+      if (stoppedLocations.has(d.location)) continue
+      if (!d.point) { stoppedLocations.add(d.location); continue }
+      const list = byLocation.get(d.location) ?? []
+      list.push({
+        kind: 'weapon', location: d.location as MechLocationCode,
+        x: d.point[0], y: d.point[1], z: d.point[2], mesh_names: null,
+      })
+      byLocation.set(d.location, list)
+    }
+    if (byLocation.size === 0) return
+    setPoints((prev) => {
+      const untouched = prev.filter((p) => !(p.kind === 'weapon' && p.location != null && byLocation.has(p.location)))
+      return [...untouched, ...[...byLocation.values()].flat()]
+    })
+    setSavedFlash(false)
+  }
+
   const onToggleLimbMesh = (meshName: string) => {
     if (!activeLimb || isTrackLocked) return
     // A bone toggle also drags in every descendant bone (see
@@ -1953,11 +2143,11 @@ export function MechLabView() {
       // to the map would show the data as it was when the tab opened.
       invalidateMechAnnotations()
       setSavedFlash(true)
-      if (mode === 'annotate' && saved.some((p) => p.kind === 'weapon' || p.kind === 'cockpit' || p.kind === 'hit')) {
-        bumpReviewToDone(modelUrl, 'weapons')
+      if (mode === 'annotate' && saved.some((p) => p.kind === 'weapon' || p.kind === 'cockpit' || p.kind === 'hit') && selectedChassis) {
+        bumpReviewToDone(selectedChassis, 'weapons')
       }
-      if (mode === 'limbs' && saved.some((p) => p.kind === 'limb' && (p.mesh_names?.length ?? 0) > 0)) {
-        bumpReviewToDone(modelUrl, 'limbs')
+      if (mode === 'limbs' && saved.some((p) => p.kind === 'limb' && (p.mesh_names?.length ?? 0) > 0) && selectedChassis) {
+        bumpReviewToDone(selectedChassis, 'limbs')
       }
     } catch {
       setSaveError('No se pudo guardar.')
@@ -1983,7 +2173,37 @@ export function MechLabView() {
       })
       setAllPbrSettings((prev) => [...prev.filter((r) => r.model_url !== modelUrl), saved])
       setSavedFlash(true)
-      bumpReviewToDone(modelUrl, 'texture')
+      if (selectedChassis) bumpReviewToDone(selectedChassis, 'texture')
+    } catch {
+      setSaveError('No se pudo guardar.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  // Real user request: "en la seccion de huella, quiero un boton de
+  // guardar, para cuando capture una, que se use esa siempre, ahora mismo
+  // el descargar png me lo descarga en downloads y no quiero que sea así"
+  // — same shape as onSavePbr above.
+  // Real user request (later): "necesitamos 5, armas/extremidades/rig/
+  // texturas y huella" — 'footprint' is now a real track (REVIEW_TRACK_ORDER),
+  // so this gets the same isTrackLocked guard and bumpReviewToDone call
+  // onSave/onSavePbr already have, instead of the "no review track" case
+  // this comment used to describe.
+  const onSaveFootprint = async () => {
+    if (!modelUrl || !footprintCapture || isTrackLocked) return
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const saved = await saveMechFootprintMask({
+        model_url: modelUrl,
+        image_data_url: footprintCapture.dataUrl,
+        half_width: footprintCapture.halfWidth,
+        half_depth: footprintCapture.halfDepth,
+      })
+      setAllFootprintMasks((prev) => [...prev.filter((r) => r.model_url !== modelUrl), saved])
+      setSavedFlash(true)
+      if (selectedChassis) bumpReviewToDone(selectedChassis, 'footprint')
     } catch {
       setSaveError('No se pudo guardar.')
     } finally {
@@ -1993,17 +2213,17 @@ export function MechLabView() {
 
   // Real user request: "en el desplegable de mechs, pinta el fondo de cada
   // opcion en amarillo si tiene algun modelo aceptado y en verde si tiene
-  // todos los modelos aceptados" — a model counts as "aceptado" here only
-  // when ALL THREE of its tracks are 'accepted' (the strongest state this
-  // editor has), not just one.
+  // todos los modelos aceptados".
+  // Real user request (later): "los marcadores... deberian estar en el
+  // chasis ahora, no en los modelos" — review status is tracked per
+  // chassis directly now (not per model_url), so this no longer needs to
+  // enumerate every catalog variant's own URL: "fully accepted" is simply
+  // every one of the 5 REVIEW_TRACK_ORDER tracks being 'accepted' for the
+  // chassis itself, "partially accepted" is at least one.
   const chassisOptionClassName = (chassis: string): string | undefined => {
-    const dedicated = MECH_CHASSIS_ASSETS[chassis]?.models ?? {}
-    const urls = Object.keys(dedicated).map((model) => resolveMechModelUrl(chassis, model))
-    if (urls.length === 0) return undefined
-    const acceptedCount = urls.filter((url) =>
-      REVIEW_TRACK_ORDER.every((t) => reviewStatusFor(reviewByKey, url, t) === 'accepted'),
-    ).length
-    if (acceptedCount === urls.length) return 'mechlab-chassis-fully-accepted'
+    if (!(chassis in MECH_CHASSIS_ASSETS)) return undefined
+    const acceptedCount = REVIEW_TRACK_ORDER.filter((t) => reviewStatusFor(reviewByKey, chassis, t) === 'accepted').length
+    if (acceptedCount === REVIEW_TRACK_ORDER.length) return 'mechlab-chassis-fully-accepted'
     if (acceptedCount > 0) return 'mechlab-chassis-partially-accepted'
     return undefined
   }
@@ -2023,6 +2243,15 @@ export function MechLabView() {
             value={selectedChassis} onChange={setSelectedChassis} options={chassisOptions}
             getOptionClassName={chassisOptionClassName}
           />
+          {/* Real user request: "los marcadores... deberian estar en el
+            * chasis ahora, no en los modelos" — one set of 5 icons for the
+            * whole chassis (its curated asset is shared across every
+            * catalog variant), not one per model option any more. */}
+          {selectedChassis && (
+            <span className="mechlab-chassis-review-icons" title="Progreso de revisión de este chasis">
+              {REVIEW_TRACK_ORDER.map((t) => REVIEW_STATUS_ICON[reviewStatusFor(reviewByKey, selectedChassis, t)]).join('')}
+            </span>
+          )}
           <select
             className="mechlab-model-select"
             value={selectedModelFile}
@@ -2030,20 +2259,14 @@ export function MechLabView() {
             disabled={modelOptions.length === 0}
           >
             <option value="">modelo…</option>
-            {modelOptions.map((m) => {
-              const url = resolveMechModelUrl(selectedChassis, m.model)
-              const icons = REVIEW_TRACK_ORDER.map((t) => REVIEW_STATUS_ICON[reviewStatusFor(reviewByKey, url, t)]).join('')
-              return (
-                <option key={m.file} value={m.file}>
-                  {icons} {m.model}
-                </option>
-              )
-            })}
+            {modelOptions.map((m) => (
+              <option key={m.file} value={m.file}>{m.model}</option>
+            ))}
           </select>
         </div>
         <p className="mechlab-hint">
           {REVIEW_STATUS_ICON.not_started} sin empezar · {REVIEW_STATUS_ICON.done} hecho · {REVIEW_STATUS_ICON.accepted}{' '}
-          aceptado — orden: armas · extremidades · rig · textura
+          aceptado — orden: armas · extremidades · rig · textura · huella
         </p>
 
         {modelUrl && (
@@ -2066,12 +2289,26 @@ export function MechLabView() {
               </button>
             </div>
 
-            {mode !== 'footprint' && (
+            {mode === 'annotate' && (
+              <div className="mechlab-mode-tabs">
+                <button type="button" className={damagePreview === 'normal' ? 'active' : ''} onClick={() => setDamagePreview('normal')}>
+                  Normal
+                </button>
+                <button type="button" className={damagePreview === 'damaged' ? 'active' : ''} onClick={() => setDamagePreview('damaged')}>
+                  Dañado
+                </button>
+                <button type="button" className={damagePreview === 'destroyed' ? 'active' : ''} onClick={() => setDamagePreview('destroyed')}>
+                  Explotado
+                </button>
+              </div>
+            )}
+
+            {selectedChassis && (
               <>
                 <ReviewBadge
-                  status={reviewStatusFor(reviewByKey, modelUrl, currentTrack)}
-                  onAccept={() => setReviewStatus(modelUrl, currentTrack, 'accepted')}
-                  onUnaccept={() => setReviewStatus(modelUrl, currentTrack, 'done')}
+                  status={reviewStatusFor(reviewByKey, selectedChassis, currentTrack)}
+                  onAccept={() => setReviewStatus(selectedChassis, currentTrack, 'accepted')}
+                  onUnaccept={() => setReviewStatus(selectedChassis, currentTrack, 'done')}
                 />
                 {isTrackLocked && (
                   <p className="mechlab-hint">
@@ -2084,6 +2321,18 @@ export function MechLabView() {
             {mode === 'annotate' && (
               <>
                 <h2>¿Qué estás marcando?</h2>
+                <div className="row">
+                  <button
+                    type="button" className="mechlab-save-btn"
+                    onClick={onAutoDetectWeaponPoints} disabled={isTrackLocked}
+                  >
+                    🎯 Detectar automáticamente
+                  </button>
+                </div>
+                <p className="mechlab-hint">
+                  Calcula el punto de disparo de cada arma directamente desde la malla real (solo chasis con el
+                  pipeline nuevo de AssetStudio) — revisa el resultado y guarda igual que si lo hubieras marcado a mano.
+                </p>
                 <div className="mechlab-slots">
                   {MECH_LOCATIONS.filter((loc) => (weaponsByLocation[loc]?.length ?? 0) > 0).map((loc) => {
                     const weapons = weaponsByLocation[loc] ?? []
@@ -2466,20 +2715,18 @@ export function MechLabView() {
                     📸 Capturar
                   </button>
                 </div>
-                {footprintCaptureUrl ? (
+                {footprintCapture ? (
                   <>
                     <img
-                      src={footprintCaptureUrl} alt="Captura de huella"
+                      src={footprintCapture.dataUrl} alt="Captura de huella"
                       style={{ width: '100%', background: '#1c2624', border: '1px solid var(--border)' }}
                     />
                     <div className="row">
-                      <a
-                        className="mechlab-save-btn"
-                        href={footprintCaptureUrl}
-                        download={`huella-${selectedChassis}-${selectedModel ?? 'default'}.png`}
-                      >
-                        ⬇ Descargar PNG
-                      </a>
+                      <button type="button" className="mechlab-save-btn" onClick={onSaveFootprint} disabled={saving}>
+                        {saving ? 'Guardando…' : '💾 Guardar'}
+                      </button>
+                      {savedFlash && <span className="mechlab-saved">✓ guardado — esta es la huella real que usará el juego</span>}
+                      {saveError && <span className="mechlab-error">{saveError}</span>}
                     </div>
                   </>
                 ) : (
@@ -2540,12 +2787,16 @@ export function MechLabView() {
                   <Mech3D
                     color="#9aa4a2" chassis={selectedChassis} model={selectedModel}
                     onSurfaceClick={onModelClick}
+                    instanceRef={annotateInstanceRef}
                     playAnimation={false}
+                    weapons={templateWeaponsForMech3D}
+                    damagedLocations={damagePreview === 'damaged' ? damagePreviewLocations : undefined}
+                    severedLocations={damagePreview === 'destroyed' ? damagePreviewLocations : undefined}
                   />
                 )}
                 {mode === 'limbs' && (
                   <LimbPainter
-                    chassis={selectedChassis} model={selectedModel}
+                    chassis={selectedChassis} model={selectedModel} weapons={templateWeaponsForMech3D}
                     selectedMeshNames={activeLimbMeshNames} selectedBoneNames={activeLimbBoneNames}
                     previewBreak={previewBreak}
                     onToggleMesh={onToggleLimbMesh} onBonesChange={setLimbBoneInfo}
@@ -2554,22 +2805,25 @@ export function MechLabView() {
                 )}
                 {mode === 'rig' && (
                   <RigViewer
-                    chassis={selectedChassis} model={selectedModel}
+                    chassis={selectedChassis} model={selectedModel} weapons={templateWeaponsForMech3D}
                     activeClip={rigActiveClip} playing={rigPlaying} scrub={rigScrub} selectedBone={selectedBone}
                     onClipsChange={setRigClipNames} onBonesChange={setRigBoneNames} onScrubChange={setRigScrub}
                     onInfluencePercentChange={setRigInfluencePercent} onBoneDragChange={setBoneDragging}
                   />
                 )}
                 {mode === 'texture' && (
-                  <TextureTuner chassis={selectedChassis} model={selectedModel} settings={pbrSettings} />
+                  <TextureTuner
+                    chassis={selectedChassis} model={selectedModel} weapons={templateWeaponsForMech3D}
+                    settings={pbrSettings}
+                  />
                 )}
                 {mode === 'footprint' && (
                   <FootprintCapture
                     ref={footprintCaptureRef}
-                    chassis={selectedChassis} model={selectedModel}
+                    chassis={selectedChassis} model={selectedModel} weapons={templateWeaponsForMech3D}
                     transformMode={footprintTransformMode}
                     onDraggingChange={setFootprintDragging}
-                    onCapture={setFootprintCaptureUrl}
+                    onCapture={(result) => { setFootprintCapture(result); setSavedFlash(false) }}
                   />
                 )}
               </Suspense>

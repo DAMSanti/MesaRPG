@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ' *)",
+      "WebFetch(domain:battletech.fandom.com)",
+      "WebFetch(domain:www.sarna.net)",
+      "Bash(python -m pytest tests/test_combat.py::test_resolve_attack_overkill_spills_into_structure -q)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(sorted\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(git mv *)",
+      "Bash(python -m pytest tests/test_turns.py -q)",
+      "Bash(python -m pytest -q --ignore=tests/test_turns.py)"
+    ]
+  }
+}

@@ -28,174 +28,171 @@ export interface ChassisAssets {
 const MECHS_DIR = '/models/mechs'
 
 export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
+  // Placeholder tier, same pipeline as Warhammer below (AssetStudio ->
+  // Blender: body+skeleton extracted straight from the real game, weapons
+  // parented to the shared skeleton's bones, animations pushed to muted NLA
+  // tracks). Every catalog variant shares this one exported body/skeleton.
+  Annihilator: {
+    placeholder: `${MECHS_DIR}/Annihilator.glb`,
+    models: Object.fromEntries([
+      'ANH-1A', 'ANH-1E', 'ANH-1G', 'ANH-1X', 'ANH-2A', 'ANH-2AX', 'ANH-3A',
+      'ANH-4A', 'ANH-5W', 'C', "C 'Gausszilla'", 'C 2',
+    ].map((model) => [model, `${MECHS_DIR}/Annihilator.glb`])),
+  },
+  Assassin: {
+    placeholder: `${MECHS_DIR}/Assassin.glb`,
+    models: Object.fromEntries([
+      "'Servitor'", 'ASN-101', 'ASN-109', 'ASN-21', 'ASN-23', 'ASN-30',
+      'ASN-30 (Alice)', 'ASN-99',
+    ].map((model) => [model, `${MECHS_DIR}/Assassin.glb`])),
+  },
+  Archer: {
+    placeholder: `${MECHS_DIR}/Archer.glb`,
+    models: Object.fromEntries([
+      '(Wolf)', 'ARC-1A', 'ARC-2K', 'ARC-2R', 'ARC-2Rb', 'ARC-2S', 'ARC-2W',
+      'ARC-4M', 'ARC-4M2', 'ARC-5CS', 'ARC-5R', 'ARC-5S', 'ARC-5W', 'ARC-6S',
+      'ARC-6W', 'ARC-7C', 'ARC-7L', 'ARC-7S', 'ARC-8M', 'ARC-9K', 'ARC-9KC',
+      'ARC-9M', 'ARC-9R', 'ARC-9W', 'C', 'C 2',
+    ].map((model) => [model, `${MECHS_DIR}/Archer.glb`])),
+  },
+  // Replaces the old hand-authored atlas-as7-d/atlas-as7-wgs pair (moved to
+  // public/models/mechs/legacy/, kept on disk but unreferenced) with the
+  // same placeholder-tier pipeline as Warhammer/Annihilator/Archer/Assassin.
   Atlas: {
-    placeholder: `${MECHS_DIR}/atlas-as7-d.glb`,
-    models: {
-      'AS7-D': `${MECHS_DIR}/atlas-as7-d.glb`,
-      'AS7-WGS (Samsonov)': `${MECHS_DIR}/atlas-as7-wgs.glb`,
-    },
+    placeholder: `${MECHS_DIR}/Atlas.glb`,
+    models: Object.fromEntries([
+      'AS7-00 (Jurn)', 'AS7-A', 'AS7-C', 'AS7-CM', 'AS7-D', 'AS7-D (Danielle)',
+      'AS7-D(C)', 'AS7-D-DC', 'AS7-Dr', 'AS7-K', 'AS7-K-DC', 'AS7-K2',
+      'AS7-K2 (Jedra)', 'AS7-K3', 'AS7-K4', 'AS7-RS', 'AS7-S', 'AS7-S2',
+      'AS7-S3', 'AS7-S3-DC', 'AS7-S4', 'AS7-WGS (Samsonov)', 'AS8-D', 'AS8-K',
+      'AS8-S', 'C', 'C 2', 'C 3',
+    ].map((model) => [model, `${MECHS_DIR}/Atlas.glb`])),
   },
+  // Replaces the old hand-authored awesome-aws-8q/awesome-aws-pb pair (moved
+  // to legacy/ — 'AWS-PB' was never a real catalog code, see the Commando
+  // fix above for the same class of mistake).
   Awesome: {
-    placeholder: `${MECHS_DIR}/awesome-aws-8q.glb`,
-    models: {
-      'AWS-8Q': `${MECHS_DIR}/awesome-aws-8q.glb`,
-      'AWS-PB': `${MECHS_DIR}/awesome-aws-pb.glb`, // "Pretty Baby"
-    },
+    placeholder: `${MECHS_DIR}/Awesome.glb`,
+    models: Object.fromEntries([
+      'AWS-10KM', 'AWS-11H', 'AWS-11M', 'AWS-11R', 'AWS-11V', 'AWS-8Q',
+      'AWS-8Q (Buck)', 'AWS-8R', 'AWS-8T', 'AWS-8V', 'AWS-9M', 'AWS-9Ma',
+      'AWS-9Q', 'AWS-9Q (Klatt)',
+    ].map((model) => [model, `${MECHS_DIR}/Awesome.glb`])),
   },
+  // Replaces the old hand-authored battlemaster-blr-1g/1ghe pair (moved to
+  // legacy/) with the placeholder-tier pipeline.
   BattleMaster: {
-    placeholder: `${MECHS_DIR}/battlemaster-blr-1g.glb`,
-    models: {
-      'BLR-1G': `${MECHS_DIR}/battlemaster-blr-1g.glb`,
-      "BLR-1GHE 'HellSinger'": `${MECHS_DIR}/battlemaster-blr-1ghe.glb`,
-    },
+    placeholder: `${MECHS_DIR}/Battlemaster.glb`,
+    models: Object.fromEntries([
+      'BLR-10S', 'BLR-10S2', 'BLR-1D', 'BLR-1G', 'BLR-1G (Red Corsair)',
+      'BLR-1G-DC', "BLR-1GHE 'HellSinger'", 'BLR-1Gb', 'BLR-1Gbc', 'BLR-1Gc',
+      'BLR-1Gd', 'BLR-1S', 'BLR-2C', 'BLR-3M', 'BLR-3M (Rogers)', 'BLR-3M-DC',
+      'BLR-3S', 'BLR-4L', 'BLR-4S', 'BLR-4S (Calvin II)', 'BLR-4S (Calvin)',
+      'BLR-5M', 'BLR-6C', 'BLR-6G', 'BLR-6M', 'BLR-6R', 'BLR-6X', 'BLR-CM',
+      'BLR-K3', 'BLR-K4', 'BLR-M3', 'C', 'C 2', 'C 3',
+    ].map((model) => [model, `${MECHS_DIR}/Battlemaster.glb`])),
   },
+  // Replaces the old hand-authored banshee-bnc-3m (moved to legacy/) with
+  // the placeholder-tier pipeline.
   Banshee: {
-    placeholder: `${MECHS_DIR}/banshee-bnc-3m.glb`,
-    models: { 'BNC-3M': `${MECHS_DIR}/banshee-bnc-3m.glb` },
+    placeholder: `${MECHS_DIR}/Banshee.glb`,
+    models: Object.fromEntries([
+      'BNC-11X', 'BNC-12S', 'BNC-1E', 'BNC-3E', 'BNC-3M', 'BNC-3MC', 'BNC-3Mr',
+      'BNC-3Q', 'BNC-3S', 'BNC-3S (Reinesblatt)', 'BNC-5S', 'BNC-5S (Sawyer)',
+      'BNC-5S (Vandergriff)', 'BNC-6S', 'BNC-7S', 'BNC-8S', 'BNC-9S', 'BNC-9S2',
+    ].map((model) => [model, `${MECHS_DIR}/Banshee.glb`])),
   },
+  // Replaces the old hand-authored blackjack-bj-1/bj-a pair (moved to
+  // legacy/ — "BJ-A"/"Arrow" was never a real catalog code either, same
+  // class of mistake as the old Commando/Awesome entries) with the
+  // placeholder-tier pipeline.
   Blackjack: {
-    placeholder: `${MECHS_DIR}/blackjack-bj-1.glb`,
-    models: {
-      'BJ-1': `${MECHS_DIR}/blackjack-bj-1.glb`,
-      // "Arrow" — not in the current catalog under this exact code, but
-      // the user confirmed the chassis; registered anyway per
-      // resolveMechModelUrl's fallback design (harmless if unmatched).
-      'BJ-A': `${MECHS_DIR}/blackjack-bj-a.glb`,
-    },
+    placeholder: `${MECHS_DIR}/Blackjack.glb`,
+    models: Object.fromEntries([
+      'BJ-1', 'BJ-1DB', 'BJ-1DC', 'BJ-1X', 'BJ-2', 'BJ-2r', 'BJ-3', 'BJ-4', 'BJ-5', 'C',
+    ].map((model) => [model, `${MECHS_DIR}/Blackjack.glb`])),
   },
+  // Real catalog chassis name is "Black Knight" (with a space) — file/asset
+  // naming uses "Blackknight" (no space), same one-word convention as every
+  // other placeholder-tier .glb.
+  'Black Knight': {
+    placeholder: `${MECHS_DIR}/Blackknight.glb`,
+    models: Object.fromEntries([
+      'BL-10-KNT (Ross)', 'BL-12-KNT', 'BL-18-KNT', 'BL-6-KNT', 'BL-6-KNT (Ian)', 'BL-6-RR',
+      'BL-6b-KNT', 'BL-7-KNT', 'BL-7-KNT-L', 'BL-9-KNT', "BL-X-KNT 'Red Reaper'",
+      'BLK-NT-2Y', 'BLK-NT-3A', 'BLK-NT-3B', 'BLK-NT-4D', 'BLK-NT-5H',
+    ].map((model) => [model, `${MECHS_DIR}/Blackknight.glb`])),
+  },
+  // Replaces the old hand-authored catapult-cplt-{k2,c1,c1d} trio (moved to
+  // legacy/) with the placeholder-tier pipeline.
   Catapult: {
-    placeholder: `${MECHS_DIR}/catapult-cplt-k2.glb`,
-    models: {
-      'CPLT-K2': `${MECHS_DIR}/catapult-cplt-k2.glb`,
-      'CPLT-C1D': `${MECHS_DIR}/catapult-cplt-c1d.glb`,
-      'CPLT-C1': `${MECHS_DIR}/catapult-cplt-c1.glb`,
-    },
+    placeholder: `${MECHS_DIR}/Catapult.glb`,
+    models: Object.fromEntries([
+      'CPLT-6K', 'CPLT-A1', 'CPLT-C1', "CPLT-C1 (Jenny) 'Butterbee'", 'CPLT-C1b', 'CPLT-C2',
+      'CPLT-C3', 'CPLT-C4', 'CPLT-C4C', 'CPLT-C5', 'CPLT-C5A', 'CPLT-C6', 'CPLT-H2', 'CPLT-K2',
+      'CPLT-K2K', 'CPLT-K3', 'CPLT-K4', 'CPLT-K5', 'CPLT-K6',
+    ].map((model) => [model, `${MECHS_DIR}/Catapult.glb`])),
   },
+  // Replaces the old hand-authored centurion-cn9-{a,ylw} pair (moved to
+  // legacy/) with the placeholder-tier pipeline.
   Centurion: {
-    placeholder: `${MECHS_DIR}/centurion-cn9-a.glb`,
-    models: {
-      'CN9-A': `${MECHS_DIR}/centurion-cn9-a.glb`,
-      "CN9-YLW 'Yen Lo Wang'": `${MECHS_DIR}/centurion-cn9-ylw.glb`,
-    },
+    placeholder: `${MECHS_DIR}/Centurion.glb`,
+    models: Object.fromEntries([
+      'CN10-B', 'CN10-J', 'CN10-W', 'CN9-A', 'CN9-AH', 'CN9-AL', 'CN9-Ar', 'CN9-D', 'CN9-D3',
+      'CN9-D3D', 'CN9-D4D', 'CN9-D5', 'CN9-D9', 'CN9-Da', 'CN9-H', "CN9-YLW 'Yen Lo Wang'",
+      "CN9-YLW2 'Yen Lo Wang'", "CN9-YLW3 'Yen Lo Wang'",
+    ].map((model) => [model, `${MECHS_DIR}/Centurion.glb`])),
   },
-  Commando: {
-    placeholder: `${MECHS_DIR}/commando-com-tdk.glb`,
-    // Real user finding (MechLab): "COM-tDK" ("The Death") was never a
-    // real catalog variant code (see the old comment this replaces) —
-    // harmless before (MechLab's own model dropdown now requires an
-    // EXACT match, so this silently emptied Commando's model list
-    // instead of just falling back). Anchored to the catalog's actual
-    // baseline variant instead — same .glb, just a code that really
-    // exists.
-    models: { 'COM-1A': `${MECHS_DIR}/commando-com-tdk.glb` },
+  // Brand new chassis, no prior hand-authored asset.
+  Cataphract: {
+    placeholder: `${MECHS_DIR}/Cataphract.glb`,
+    models: Object.fromEntries([
+      'CTF-0X', 'CTF-1X', 'CTF-2X', 'CTF-2X (George)', 'CTF-3D', 'CTF-3L', 'CTF-3LL',
+      'CTF-3X (Sara)', 'CTF-4L', 'CTF-4X', 'CTF-5D', 'CTF-5L', 'CTF-5LL', 'CTF-5MOC (Naomi)',
+    ].map((model) => [model, `${MECHS_DIR}/Cataphract.glb`])),
   },
-  Crockett: {
-    placeholder: `${MECHS_DIR}/crockett-crk-5003-0.glb`,
-    models: { 'CRK-5003-0': `${MECHS_DIR}/crockett-crk-5003-0.glb` },
+  Cicada: {
+    placeholder: `${MECHS_DIR}/Cicada.glb`,
+    models: Object.fromEntries([
+      'CDA-2A', 'CDA-2B', 'CDA-3C', 'CDA-3F', 'CDA-3G', 'CDA-3M', 'CDA-3MA', 'CDA-3P', 'CDA-4A',
+    ].map((model) => [model, `${MECHS_DIR}/Cicada.glb`])),
   },
-  // Clan chassis, not in the current mech_templates catalog at all —
-  // registered so it's ready the moment that chassis gets added; until
-  // then this entry simply never matches anything (harmless).
-  Executioner: {
-    placeholder: `${MECHS_DIR}/executioner-prime.glb`,
-    models: { Prime: `${MECHS_DIR}/executioner-prime.glb` },
-  },
-  'Hatamoto-Chi': {
-    placeholder: `${MECHS_DIR}/hatamotochi-htm-27t.glb`,
-    models: { 'HTM-27T': `${MECHS_DIR}/hatamotochi-htm-27t.glb` },
-  },
-  Highlander: {
-    placeholder: `${MECHS_DIR}/highlander-hgn-732.glb`,
-    models: { 'HGN-732': `${MECHS_DIR}/highlander-hgn-732.glb` },
-  },
-  JagerMech: {
-    placeholder: `${MECHS_DIR}/jagermech-jm6-fb.glb`,
-    // Real user finding (MechLab): "JM6-FB" ("Firebrand") was never a
-    // real catalog variant code either — same issue/fix as Commando
-    // above, anchored to the real baseline variant instead.
-    models: { 'JM6-A': `${MECHS_DIR}/jagermech-jm6-fb.glb` },
-  },
-  Jenner: {
-    placeholder: `${MECHS_DIR}/jenner-jr7-f.glb`,
-    models: { 'JR7-F': `${MECHS_DIR}/jenner-jr7-f.glb` },
-  },
-  Kintaro: {
-    placeholder: `${MECHS_DIR}/kintaro-kto-18.glb`,
-    models: { 'KTO-18': `${MECHS_DIR}/kintaro-kto-18.glb` },
-  },
-  Locust: {
-    placeholder: `${MECHS_DIR}/locust-lct-1v.glb`,
-    models: { 'LCT-1V': `${MECHS_DIR}/locust-lct-1v.glb` },
-  },
-  // Clan chassis, IS reporting name "Grendel" — not in the current
-  // catalog at all (same "ready when the chassis is added" reasoning
-  // as Executioner above).
-  Mongrel: {
-    placeholder: `${MECHS_DIR}/mongrel-prime.glb`,
-    // Real user finding (MechLab): "Prime" doesn't exist in this
-    // catalog's own Mongrel entries (MGL-T1/MGL-T2) — the chassis itself
-    // WAS eventually added to the catalog (this comment used to say the
-    // whole chassis was missing), just under different variant codes.
-    // Anchored to the catalog's actual baseline variant instead.
-    models: { 'MGL-T1': `${MECHS_DIR}/mongrel-prime.glb` },
-  },
-  // Real user finding (MechLab): an empty `models` here meant NO model
-  // ever showed up for this chassis once MechLab started requiring an
-  // exact match (its own model dropdown used to just fall back to the
-  // placeholder silently) — anchored to the catalog's "(Standard)"
-  // baseline variant instead of leaving it unmatched.
-  'Rifleman IIC': {
-    placeholder: `${MECHS_DIR}/rifleman-iic-1.glb`,
-    models: { '(Standard)': `${MECHS_DIR}/rifleman-iic-1.glb` },
-  },
-  'Shadow Hawk': {
-    placeholder: `${MECHS_DIR}/shadowhawk-shd-2h.glb`,
-    models: { 'SHD-2H': `${MECHS_DIR}/shadowhawk-shd-2h.glb` },
-  },
-  Thanatos: {
-    placeholder: `${MECHS_DIR}/thanatos-tns-4s.glb`,
-    models: { 'TNS-4S (Felix)': `${MECHS_DIR}/thanatos-tns-4s.glb` },
-  },
-  Thug: {
-    placeholder: `${MECHS_DIR}/thug-thg-11eb.glb`,
-    models: { 'THG-11Eb': `${MECHS_DIR}/thug-thg-11eb.glb` },
-  },
-  Thunderbolt: {
-    placeholder: `${MECHS_DIR}/thunderbolt-tdr-5se.glb`,
-    models: {
-      'TDR-5SE': `${MECHS_DIR}/thunderbolt-tdr-5se.glb`,
-      'TDR-5S-T (Tallman)': `${MECHS_DIR}/thunderbolt-tdr-5s-t.glb`,
-    },
-  },
-  // Clan chassis (Timber Wolf / "Mad Cat") — the current catalog only
-  // has later Mad Cat Mk II/III/IV variants, not the base chassis this
-  // model represents; same "ready when added" reasoning as above.
-  'Timber Wolf': {
-    placeholder: `${MECHS_DIR}/timberwolf-prime.glb`,
-    models: { Prime: `${MECHS_DIR}/timberwolf-prime.glb` },
-  },
-  Trebuchet: {
-    placeholder: `${MECHS_DIR}/trebuchet-tbt-5n.glb`,
-    models: { 'TBT-5N': `${MECHS_DIR}/trebuchet-tbt-5n.glb` },
-  },
-  UrbanMech: {
-    placeholder: `${MECHS_DIR}/urbanmech-um-r60.glb`,
-    models: { 'UM-R60': `${MECHS_DIR}/urbanmech-um-r60.glb` },
-  },
-  Uziel: {
-    placeholder: `${MECHS_DIR}/uziel-uzl-2s.glb`,
-    models: { 'UZL-2S': `${MECHS_DIR}/uziel-uzl-2s.glb` },
-  },
-  Viking: {
-    placeholder: `${MECHS_DIR}/viking-vkg-2f.glb`,
-    models: { 'VKG-2F': `${MECHS_DIR}/viking-vkg-2f.glb` },
-  },
-  Vulcan: {
-    placeholder: `${MECHS_DIR}/vulcan-vl-2t.glb`,
-    models: {
-      'VL-2T': `${MECHS_DIR}/vulcan-vl-2t.glb`,
-      'VL-5T': `${MECHS_DIR}/vulcan-vl-5t.glb`,
-    },
+  // Real user request: "mueve todos los modelos antiguos [a legacy], no
+  // solo los que reemplazamos" — every hand-authored chassis below without
+  // a placeholder-tier replacement yet had its .glb moved to legacy/ too,
+  // so its entry is removed rather than left pointing at a missing file
+  // (resolveMechModelUrl's own 3-tier fallback means these chassis just
+  // land on GENERIC_MECH_PLACEHOLDER until each gets its own new asset —
+  // exactly the same "no asset for this chassis at all" case the fallback
+  // was already designed for, not a new failure mode). Commando, Crockett,
+  // Executioner, Hatamoto-Chi, Highlander, JagerMech, Jenner, Kintaro,
+  // Locust, Mongrel, Rifleman IIC, Shadow Hawk, Thanatos, Thug,
+  // Thunderbolt, Timber Wolf, Trebuchet, UrbanMech, Uziel, Viking, Vulcan.
+  // NOTE — Jenner specifically: LIMB_MESH_NAMES/the real footstep-IK path
+  // in Mech3D.tsx and HexMap.tsx were written against ITS specific mesh/
+  // bone names (foot bones `PieD`/`PieI`); losing this entry doesn't break
+  // either — both already treat "chassis without them" as the expected
+  // default case (HexMap falls back to its geometric footprint
+  // approximation) — but re-add Jenner's own placeholder-tier entry first
+  // if a nicer look, not just a safe fallback, is wanted back sooner.
+  // Placeholder tier: extracted straight from the real BattleTech game via
+  // AssetStudio (real skin/skeleton/animation, un-annotated in MechLab) —
+  // not hand-authored like the chassis above. See Mech3D.tsx's own
+  // GAME_CLIP_SUFFIXES for how its unmodified HBS-named animation clips
+  // (e.g. "warhammer_moveCoreIdle") still resolve without renaming.
+  // All 29 real catalog variants share this one exported body/skeleton —
+  // only their weapon loadout differs, which Mech3D's own `weapons` prop
+  // already resolves per-unit from the real ficha at render time (see
+  // weaponMountOfMesh/weaponVisualBucket), so every variant just points at
+  // the same .glb rather than needing its own model file.
+  Warhammer: {
+    placeholder: `${MECHS_DIR}/Warhammer.glb`,
+    models: Object.fromEntries([
+      'C', 'C 2', 'C 3', 'WHD-10CT', 'WHM-10K', 'WHM-10T', 'WHM-11T', 'WHM-4L', 'WHM-5L',
+      'WHM-6D', 'WHM-6K', 'WHM-6L', 'WHM-6R', 'WHM-6Rb', 'WHM-6Rk', 'WHM-7A', 'WHM-7CS',
+      'WHM-7K', 'WHM-7M', 'WHM-7M-DC', 'WHM-7S', 'WHM-8D', 'WHM-8D2', 'WHM-8K', 'WHM-8M',
+      'WHM-8R', 'WHM-9D', 'WHM-9K', 'WHM-9S', "WHM-X7 'The Lich'",
+    ].map((model) => [model, `${MECHS_DIR}/Warhammer.glb`])),
   },
 }
 

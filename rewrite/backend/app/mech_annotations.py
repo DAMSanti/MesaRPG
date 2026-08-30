@@ -110,7 +110,7 @@ def save_annotations(model_url: str, points: list[dict]) -> list[dict]:
         return [_row_to_dict(r) for r in rows]
 
 
-TRACKS = {"weapons", "limbs", "rig", "texture"}
+TRACKS = {"weapons", "limbs", "rig", "texture", "footprint"}
 STATUSES = {"not_started", "done", "accepted"}
 
 
@@ -121,12 +121,12 @@ class InvalidReview(ValueError):
 def list_review() -> list[dict]:
     with db.connect() as conn:
         rows = conn.execute(
-            "SELECT model_url, track, status, updated_at FROM mech_model_review ORDER BY model_url, track"
+            "SELECT chassis, track, status, updated_at FROM mech_model_review ORDER BY chassis, track"
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def set_review_status(model_url: str, track: str, status: str) -> dict:
+def set_review_status(chassis: str, track: str, status: str) -> dict:
     """Real user request: "necesito... poder ver a simple vista en que
     estado se encuentra el anotar armas, extremidades y rig... Solo yo
     puedo aceptar cada parte". The frontend decides WHEN to call this
@@ -134,7 +134,12 @@ def set_review_status(model_url: str, track: str, status: str) -> dict:
     first opening the 'rig' tab for a model) — this just persists
     whatever status it's told, no inference happens server-side.
     'accepted' is only ever reached by an explicit user action in the
-    frontend, never set automatically."""
+    frontend, never set automatically.
+
+    Real user request (later): "los marcadores... deberian estar en el
+    chasis ahora, no en los modelos" — keyed by chassis name, not the
+    specific model_url, since a chassis's tracks describe its one shared
+    curated asset (mechAssets.ts), not any single catalog variant."""
     if track not in TRACKS:
         raise InvalidReview(f"Unknown track {track!r}, expected one of {sorted(TRACKS)}")
     if status not in STATUSES:
@@ -142,15 +147,15 @@ def set_review_status(model_url: str, track: str, status: str) -> dict:
     with db.connect() as conn:
         conn.execute(
             """
-            INSERT INTO mech_model_review (model_url, track, status, updated_at)
+            INSERT INTO mech_model_review (chassis, track, status, updated_at)
             VALUES (?, ?, ?, datetime('now'))
-            ON CONFLICT(model_url, track) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at
+            ON CONFLICT(chassis, track) DO UPDATE SET status = excluded.status, updated_at = excluded.updated_at
             """,
-            (model_url, track, status),
+            (chassis, track, status),
         )
         row = conn.execute(
-            "SELECT model_url, track, status, updated_at FROM mech_model_review WHERE model_url = ? AND track = ?",
-            (model_url, track),
+            "SELECT chassis, track, status, updated_at FROM mech_model_review WHERE chassis = ? AND track = ?",
+            (chassis, track),
         ).fetchone()
         return dict(row)
 
@@ -203,3 +208,46 @@ def save_pbr_settings(model_url: str, settings: dict) -> dict:
             (model_url,),
         ).fetchone()
         return _pbr_row_to_dict(row)
+
+
+# Real user request: "en la seccion de huella, quiero un boton de guardar...
+# quiero que ademas se use ya como forma real de la pisada" — see
+# db.py's own mech_footprint_masks doc comment for the shape/units.
+class InvalidFootprintMask(ValueError):
+    pass
+
+
+def list_footprint_masks() -> list[dict]:
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT model_url, image_data_url, half_width, half_depth, updated_at "
+            "FROM mech_footprint_masks ORDER BY model_url"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def save_footprint_mask(model_url: str, image_data_url: str, half_width: float, half_depth: float) -> dict:
+    if not isinstance(image_data_url, str) or not image_data_url.startswith("data:image/"):
+        raise InvalidFootprintMask("image_data_url must be a data:image/... URL")
+    for name, value in (("half_width", half_width), ("half_depth", half_depth)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+            raise InvalidFootprintMask(f"{name} must be a positive number, got {value!r}")
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO mech_footprint_masks (model_url, image_data_url, half_width, half_depth, updated_at)
+            VALUES (?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(model_url) DO UPDATE SET
+                image_data_url = excluded.image_data_url,
+                half_width = excluded.half_width,
+                half_depth = excluded.half_depth,
+                updated_at = excluded.updated_at
+            """,
+            (model_url, image_data_url, float(half_width), float(half_depth)),
+        )
+        row = conn.execute(
+            "SELECT model_url, image_data_url, half_width, half_depth, updated_at "
+            "FROM mech_footprint_masks WHERE model_url = ?",
+            (model_url,),
+        ).fetchone()
+        return dict(row)
