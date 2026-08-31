@@ -1853,8 +1853,12 @@ export function MechLabView() {
     // modelo 3d... los otros no tiene sentido que los editemos ahora" —
     // a chassis with no curated asset falls back to the generic unbranded
     // placeholder, not worth annotating specifically.
+    // Real user request: "quita todos los chasis del desplegable de
+    // mechlab menos bushwacker" — narrows THIS dropdown only, not the
+    // shared MECH_CHASSIS_ASSETS registry itself (that one also drives
+    // TableView/GMView mech spawning, which still needs every chassis).
     listMechChassis()
-      .then((all) => setChassisOptions(all.filter((c) => c.chassis in MECH_CHASSIS_ASSETS)))
+      .then((all) => setChassisOptions(all.filter((c) => c.chassis === 'Bushwacker')))
       .catch(() => {})
     listMechAnnotations().then(setAllAnnotations).catch(() => {})
     listMechAnnotationReview()

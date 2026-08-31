@@ -456,6 +456,12 @@ el sistema de visibilidad oculta TODAS las armas por defecto (contrato:
 9. Cabina: revisar cuántos slots de material trae realmente (Bushwacker
    tenía 5: dashboard propio + 4 compartidos de `_common/Cockpit/` que
    casi nadie mira) — no dar por hecho que el dashboard es el único.
+9b. Cristal de la cabina (`_CockpitGlass`): comprobar en Blender que el
+    objeto usa `Armature` deform (no `parent_type: 'BONE'`) ANTES de
+    exportar, o saldrá mal orientado en el glTF pase lo que pase en el
+    editor — ver sección 13 completa (material real, qué es la textura
+    `_Window_MSK`, y el fix de re-parenting) antes de darlo por perdido
+    y ocultarlo sin más como Bushwacker.
 10. Exportar `.glb`, decodificar el JSON del glTF resultante y verificar
     a mano que cada material tiene `baseColorTexture`/
     `metallicRoughnessTexture`/`normalTexture` reales y no un fallback
@@ -466,6 +472,9 @@ el sistema de visibilidad oculta TODAS las armas por defecto (contrato:
     chasis, y confirmar que HexMap/FirstPersonView reciben `mechs`.
 13. Si el chasis trae animaciones propias, revisar la sección 12
     (Animaciones) antes de darlas por conectadas.
+14. **Minificar el `.glb` antes de darlo por terminado** (sección 14) —
+    el export en crudo de Blender ronda 90MB+, inservible para el juego
+    tal cual. Guardar backup del `.blend`/`.glb` sin comprimir primero.
 
 ## 12. Animaciones — convención de nombres y cómo se conectan
 
@@ -520,3 +529,230 @@ asumir que "ya funciona":**
   `Yaw` — comprobar qué zonas/ejes trae realmente el chasis nuevo antes de
   asumir que cubre las mismas combinaciones que Bushwacker (Bushwacker no
   tiene reacción de impacto para brazos, por ejemplo).
+
+## 13. Cristal de la cabina (`_CockpitGlass`) — por qué NO se renderiza y qué hacer con el siguiente chasis
+
+Bushwacker fue el primer chasis con su propio mesh de cristal de cabina
+(`<Prefijo>_Cockpitglass_STM`). Tras una sesión entera intentando que se
+viera bien, la decisión final fue **ocultarlo por completo**
+(`obj.visible = false` en `normalizeMechInstance`, `Mech3D.tsx`, genérico
+por nombre de material `/glass/i` — no hace falta tocar nada por chasis,
+cualquier `_CockpitGlass` futuro se oculta solo). Documentado aquí para
+no volver a perder horas con el mismo problema.
+
+### El material real no es transparente — es un visor metálico opaco
+
+Decodificando el material compartido real de MW5 (FModel, no algo que se
+pueda adivinar por el nombre de archivo):
+`Output/.../Objects/Mechs/_common/Material/Cockpit_Window_TP_MTI.json` es
+el `MaterialInstanceConstant` PADRE que usa el `_CockpitGlass` de
+CUALQUIER chasis. Sus parámetros reales:
+
+- `BlendMode: BLEND_Masked` (corte opaco/invisible por píxel — **nunca
+  transparencia real**, ni de lejos lo que sugiere "ventana de cristal").
+- `Metalluc Window: 1.0` — completamente metálico.
+- `window_roughness: 0.1` — casi espejo.
+- `window_albedo` ≈ melocotón cálido (`#FFC5A5`), `window frame albedo` ≈
+  gris oscuro (`#5B5B5B`) — dos colores planos, no una textura.
+
+Es decir: el diseño real es un visor tintado y reflectante (como un
+casco de soldador), no una ventana transparente. Con `metalness=1` y sin
+`scene.environment` en NINGUNO de los visores de esta app (ver sección
+8), un material así se ve NEGRO PLANO salvo en el ángulo exacto donde
+pega un highlight especular directo — se lee como "desaparece al mirarlo
+perpendicular", que es justo el reporte real que motivó investigar esto.
+
+### La textura `_Window_MSK` del chasis no es el color — es la máscara cristal/marco
+
+El único parámetro de textura que el material padre expone para
+sobreescribir por chasis es `"WindowNormal+Mask"` (emparejado con el
+`_Window_NRM` del chasis) — la propia `_Window_MSK` (textura DXT1, con
+forma de islas UV con centro brillante y borde oscuro) casi seguro es esa
+máscara: mezcla entre `window frame albedo` (marco) y `window_albedo`
+(cristal) por píxel, NO una textura de color base. El export ingenuo de
+Blender (`_Window_MSK` conectado directo a Base Color) es lo que produce
+el look de manchas rojo/naranja brillante si se intenta usar tal cual.
+Confirmado en vivo aislando cada lado con colores planos: los blobs
+brillantes de la máscara caen sobre los LISTONES del marco, el fondo
+negro cae sobre el HUECO de cristal — justo al revés de lo que parece a
+simple vista.
+
+### Bug real de exportación: el mesh del cristal sale con la rotación mal, aunque en Blender esté bien
+
+Confirmado con un script de Blender headless
+(`bpy`, ver `matrix_basis`/`matrix_world` del objeto): en Blender,
+`<Prefijo>_Cockpitglass_STM` tiene **transformación local CERO** — está
+parentado directamente al HUESO `Cockpit` (`parent_type: 'BONE'`, NO
+skinning/deform), y toda su orientación viene del rest-pose de ese hueso.
+El mesh interior de la cabina (que sí se ve bien) usa el mecanismo
+correcto (`Armature` deform con vertex groups, igual que todo lo demás
+del chasis). El exportador glTF oficial de Blender **no traduce bien**
+un objeto parented-a-hueso (a diferencia del deform propiamente dicho):
+lo exportado terminó con una rotación de 90° espuria en el nodo del
+cristal más otra de 90° en su nodo padre "Cockpit" — ninguna de las dos
+coincide con la orientación real del hueso. Por eso ajustar el ángulo a
+mano en three.js nunca convergía (no era un desalineamiento de un ángulo
+fijo, era una jerarquía de nodos completamente distinta a la que Blender
+muestra).
+
+**Fix verificado que SÍ funciona** (si el siguiente chasis necesita
+mostrar su cristal de verdad): en Blender, re-parentar el objeto de
+cristal de "Object → Bone" a un modifier `Armature` + vertex group con
+el nombre EXACTO del hueso (`Cockpit` en este caso) al 100% de peso,
+preservando `matrix_world` antes/después del cambio para no mover la
+malla. Reexportado así, el nodo del cristal sale con transformación local
+IDÉNTICA A CERO y `skin` real (`JOINTS_0`/`WEIGHTS_0`) — mismo mecanismo
+que el resto del chasis, sin rotación espuria. Ver
+`models/Bushwacker_glassfix.blend` como referencia del resultado
+(archivo de trabajo, no el `.blend` de producción).
+
+### Qué hacer con el siguiente chasis
+
+1. Antes de exportar, comprobar en Blender el `parent_type` del objeto
+   `_CockpitGlass`: si es `'BONE'` (no `'ARMATURE'` + modifier), aplicar
+   el fix de re-parenting de arriba PRIMERO, o el cristal saldrá mal
+   orientado en el glTF aunque en Blender se vea perfecto.
+2. Si se decide intentar mostrarlo (en vez de ocultarlo como Bushwacker):
+   usar los valores reales de `Cockpit_Window_TP_MTI` (metalness 1.0,
+   roughness 0.1, `window_albedo`/`window frame albedo` como color plano
+   mezclado por la máscara — NO como textura de color base) en vez de
+   confiar en lo que exporta Blender directamente, y considerar añadir
+   un `scene.environment` ligero a los visores de esta app si de verdad
+   hace falta que un metal así se vea bien sin depender de un único
+   ángulo de luz directa.
+3. Si no compensa el esfuerzo (fue el caso de Bushwacker), simplemente
+   ocultarlo — ya está resuelto de forma genérica por nombre de material,
+   no hace falta ni tocar código para el siguiente chasis.
+
+## 14. Minificar el `.glb` final — obligatorio antes de dar un chasis por terminado
+
+El `.glb` que exporta Blender es **inservible tal cual para el juego**:
+Bushwacker salió a 94MB. Casi todo ese peso (~74MB, >80%) son las
+texturas — PNG sin comprimir a 4096×4096/2048×2048, varias por material
+(baseColor + normal + ORM, ×9 materiales). La geometría/animaciones son
+solo ~16MB del total. **Minificar SIEMPRE por texturas primero** — es
+donde está el peso real, y donde el margen de mejora es mayor.
+
+### Qué SÍ se puede tocar sin miedo (y qué NO)
+
+La app carga cada mech con `useGLTF` de `@react-three/drei`
+(`node_modules/@react-three/drei/core/Gltf.js`), que activa **Draco Y
+Meshopt por defecto en TODAS las llamadas** (`useDraco`/`useMeshopt`
+son `true` si no se pasan explícitamente, y ningún sitio de esta app los
+pasa) — comprimir geometría/animación con `EXT_meshopt_compression` es
+seguro sin tocar ni una línea del loader.
+
+Lo que **NO** se puede tocar porque el sistema de visibilidad de armas
+(`assignWeaponMountMeshes`, `WEAPON_VISUAL_BUCKETS`), la detección de
+boca de cañón (`computeWeaponMuzzlePoints`), y la clasificación de zona
+PBR (`mechPbrZoneOfMaterial`) dependen de nombres reales de mesh/material
+sobreviviendo intactos:
+
+- **NO fusionar mallas** (`--join`/`--flatten` en `gltf-transform
+  optimize`) — cada arma es su propio mesh nombrado, mostrado/ocultado
+  por nombre según el loadout. Fusionar mallas rompe ese sistema entero.
+- **NO crear paletas de materiales** (`--palette`) — la clasificación de
+  zona PBR y la máscara cristal/marco leen `mat.name` literal.
+  Fusionar materiales en un atlas destruye esos nombres.
+- **NO simplificar geometría** (`--simplify`) — el detector de boca de
+  cañón necesita las posiciones de vértice reales, no una aproximación.
+- **Instancing** (`--instance`) tampoco hace falta — ninguna malla de un
+  mech se repite lo bastante (mínimo 5 instancias idénticas) para que
+  aplique.
+
+### Receta que SÍ funcionó (Bushwacker: 94MB → 12.4MB, verificado en vivo)
+
+**`gltf-transform optimize` con `--texture-compress webp` falla** en
+este equipo — bug real de compatibilidad entre `@gltf-transform/
+functions` y `sharp@0.34.5` (`colourspace: parameter space not set`,
+reproducible incluso sin redimensionar). En vez de perseguir ese bug,
+mejor procesar las texturas a mano con `@gltf-transform/core` + `sharp`
+directamente (ambos funcionan bien por separado, confirmado) y dejar
+solo la compresión de geometría/animación al `meshopt()` de
+`@gltf-transform/functions`:
+
+```js
+import { NodeIO } from '@gltf-transform/core'
+import { ALL_EXTENSIONS } from '@gltf-transform/extensions'
+import { dedup, weld, resample, prune, meshopt } from '@gltf-transform/functions'
+import { MeshoptEncoder, MeshoptDecoder } from 'meshoptimizer'
+import sharp from 'sharp'
+
+await MeshoptEncoder.ready
+await MeshoptDecoder.ready
+
+const io = new NodeIO()
+  .registerExtensions(ALL_EXTENSIONS)
+  // Sin esto, escribir el .glb revienta con "Cannot read properties of
+  // undefined (reading 'encodeFilterExp')" — el encoder de meshopt hay
+  // que registrarlo como dependencia del propio IO, no solo pasarlo al
+  // transform.
+  .registerDependencies({ 'meshopt.decoder': MeshoptDecoder, 'meshopt.encoder': MeshoptEncoder })
+
+const doc = await io.read(inPath)
+await doc.transform(dedup(), weld(), resample(), prune(), meshopt({ encoder: MeshoptEncoder }))
+
+// Texturas a mano, PNG/JPEG -> WebP, redimensionando solo lo que exceda maxSize.
+for (const tex of doc.getRoot().listTextures()) {
+  const image = tex.getImage()
+  const mime = tex.getMimeType()
+  if (!image || (mime !== 'image/png' && mime !== 'image/jpeg')) continue
+  let pipeline = sharp(Buffer.from(image))
+  const meta = await pipeline.metadata()
+  if (meta.width > maxSize || meta.height > maxSize) {
+    pipeline = pipeline.resize(maxSize, maxSize, { fit: 'inside', withoutEnlargement: true })
+  }
+  const outBuf = await pipeline.webp({ quality: 82, effort: 4 }).toBuffer()
+  tex.setImage(outBuf)
+  tex.setMimeType('image/webp')
+}
+
+await io.write(outPath, doc)
+```
+
+`maxSize = 2048` fue suficiente (ninguna textura de origen pasaba de
+4096, así que ya es como mínimo un recorte a la mitad de resolución en
+las más grandes). Con Bushwacker esto dio: texturas 71MB → 4.1MB,
+total del `.glb` 94.4MB → 12.4MB (×7.6), sin ningún error de consola ni
+regresión visible tras verificar en vivo (Playwright): render normal,
+detección de boca de cañón funcionando (lee vértices reales, prueba de
+que la geometría cuantizada sigue siendo fiel), y la pestaña "Ver rig"
+mostrando el esqueleto/85 clips de animación con normalidad.
+
+**Nota real sobre el log de `prune`**: durante `meshopt()` apareció
+`prune: Removed types... Skin (100), Accessor (515)` — sonaba a que
+había roto el esqueleto de 100 mallas de arma, pero era una
+DEDUPLICACIÓN segura (muchas armas en distintos mounts comparten
+exactamente los mismos joints/inverseBindMatrices, así que `dedup()`
+las fusiona en un único `Skin` compartido) — confirmado leyendo el
+`.glb` resultante: cada mesh sigue teniendo sus propios `JOINTS_0`/
+`WEIGHTS_0` intactos. Si este log aparece con un número MUY distinto al
+número de mallas de arma del chasis, mirar dos veces antes de asumir
+que es inofensivo.
+
+### Instalación de las dependencias (no van en el `package.json` del proyecto)
+
+Este script es una herramienta de pipeline, no una dependencia del
+juego — instalar en un directorio de trabajo aparte (scratch), no en
+`rewrite/frontend`:
+
+```bash
+npm install sharp @gltf-transform/core @gltf-transform/functions @gltf-transform/extensions meshoptimizer --no-save
+```
+
+Instalar TODO junto en un solo comando — instalar en pasos separados con
+`--no-save` hace que npm pode como "extraneous" lo instalado en el paso
+anterior (bug real encontrado esta sesión, perdió tiempo real).
+
+### Antes de dar un chasis por terminado
+
+1. Correr el script de arriba sobre el `.glb` recién exportado.
+2. Guardar backup del `.blend` + `.glb` original SIN comprimir en
+   `backups/<Chasis>_pre_optimization_<fecha>/` antes de sobrescribir
+   el `.glb` que sirve la app — la compresión es la última puerta antes
+   de dar el chasis por listo, y si algo sale mal más adelante hay que
+   poder volver al original sin re-exportar desde Blender.
+3. Verificar en vivo (Playwright o a mano): render normal, "Detectar
+   todos los cañones" sigue encontrando puntos razonables, pestaña "Ver
+   rig" carga el esqueleto y la lista de animaciones sin errores de
+   consola.

@@ -1342,6 +1342,25 @@ export function normalizeMechInstance(scene: THREE.Object3D): THREE.Group {
       const mat = obj.material as THREE.MeshStandardMaterial
       mat.side = THREE.DoubleSide
       obj.frustumCulled = false
+      // Real user report chain: tried getting the cockpit glass to render
+      // correctly (transmission needs an environment map none of our
+      // viewers set up; the real MW5 material turned out to be a fully
+      // metallic, opaque tinted visor built from a shared master material
+      // this export never captured; its per-chassis mesh transform also
+      // came out of Blender's own glTF exporter wrong — confirmed live in
+      // Blender the object itself has zero local rotation, parented
+      // directly to the Cockpit BONE rather than properly skinned, a
+      // known Blender exporter limitation for that specific parenting
+      // type). Re-parenting it to armature-deform in Blender (see
+      // models/Bushwacker_glassfix.blend) fixed the geometry, but between
+      // that and the material never quite landing right, the user's call:
+      // "quita el cristal, no somos capaces de arreglarlo, no quiero que
+      // se vea en el juego" — just hide it. Generic on material name
+      // (every future chassis's own `_CockpitGlass` hits the same MW5
+      // authoring pattern), not hardcoded to Bushwacker.
+      if (/glass/i.test(mat.name)) {
+        obj.visible = false
+      }
       // Real bug found live (MechLabView's Ver rig/Extremidades/Textura/
       // Huella tabs, none of which render through Mech3D itself): every
       // one of the Warhammer's 148 meshes came out of the AssetStudio ->

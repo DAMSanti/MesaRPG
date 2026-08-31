@@ -87,3 +87,8 @@ rewrite/*BattleTech*.txt
 /FModel.exe
 /Output/
 /modelsmw5/
+
+# Backups locales pre-minificacion (.blend + texturas fuente + .glb sin
+# comprimir + volcados de la base de datos) — red de seguridad local,
+# nunca al repo.
+/backups/

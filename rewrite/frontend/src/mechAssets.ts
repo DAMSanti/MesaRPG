@@ -134,14 +134,9 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
   // order every other placeholder-tier chassis went through.
   Bushwacker: {
     placeholder: `${MECHS_DIR}/Bushwacker.glb`,
-    models: {
-      ...Object.fromEntries([
-        'BSW-L1', 'BSW-S2', 'BSW-S2r', 'BSW-X1', 'BSW-X2', 'BSW-X4',
-      ].map((model) => [model, `${MECHS_DIR}/Bushwacker.glb`])),
-      // Temporary test entry for the Hero skin swap (real color-recipe
-      // scrape from Bushwacker_Hero_SKN.json) - remove once verified.
-      'BSW-HR (Hero test)': `${MECHS_DIR}/Bushwacker_Hero_test.glb`,
-    },
+    models: Object.fromEntries([
+      'BSW-L1', 'BSW-S2', 'BSW-S2r', 'BSW-X1', 'BSW-X2', 'BSW-X4',
+    ].map((model) => [model, `${MECHS_DIR}/Bushwacker.glb`])),
   },
   // Replaces the old hand-authored catapult-cplt-{k2,c1,c1d} trio (moved to
   // legacy/) with the placeholder-tier pipeline.
