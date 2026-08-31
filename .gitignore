@@ -81,3 +81,9 @@ rewrite/*BattleTech*.txt
 /assets.xml
 /mech/
 /models/
+
+# Herramienta de extraccion (FModel) y sus volcados brutos — mismo motivo
+# que el bloque de AssetStudio de arriba, no se versionan.
+/FModel.exe
+/Output/
+/modelsmw5/

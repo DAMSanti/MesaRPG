@@ -82,8 +82,16 @@ export const WALK_SPEED = 0.5 * HEX_SIZE
 // actual travel distance. `oneHexSeconds` = real time to cross one hex
 // at WALK_SPEED; `timeScale` = how much faster than authored the clip
 // needs to play so ITS OWN 2s duration matches that real duration.
-const ONE_HEX_DISTANCE = HEX_SIZE * SQRT3
-const ONE_HEX_SECONDS = ONE_HEX_DISTANCE / WALK_SPEED
+// Exported (were file-local) so HexMap.tsx's own stepToward can drive a
+// real per-leg clock instead of pure distance-based stepping — see its
+// own use of these two next to Mech3D.tsx's getWalkGaitProgress, the fix
+// for the mech's feet visibly skating against the ground while walking:
+// constant WALK_SPEED translation has zero relation to which foot is
+// actually planted at a given instant in the Walk clip, so during the
+// stance phase (foot should be glued to the ground, body pivoting over
+// it) the body kept sliding at the same constant rate as during swing.
+export const ONE_HEX_DISTANCE = HEX_SIZE * SQRT3
+export const ONE_HEX_SECONDS = ONE_HEX_DISTANCE / WALK_SPEED
 const WALK_CLIP_AUTHORED_SECONDS = 2
 export const WALK_CYCLE_TIME_SCALE = WALK_CLIP_AUTHORED_SECONDS / ONE_HEX_SECONDS
 

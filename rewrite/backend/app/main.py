@@ -758,11 +758,29 @@ def set_mech_annotation_review(body: MechAnnotationReviewIn) -> dict:
 class MechPbrSettingsIn(BaseModel):
     model_url: str
     repeat: float
-    normal_scale: float
-    roughness: float
-    metalness: float
-    color_boost: float
-    ao_intensity: float
+    body_normal_scale: float
+    body_roughness: float
+    body_metalness: float
+    body_color_boost: float
+    body_ao_intensity: float
+    body_metal_roughness: float
+    body_metal_metalness: float
+    body_metal_normal_scale: float
+    body_metal_color_boost: float
+    weapons_normal_scale: float
+    weapons_roughness: float
+    weapons_metalness: float
+    weapons_color_boost: float
+    weapons_ao_intensity: float
+    weapons_metal_roughness: float
+    weapons_metal_metalness: float
+    weapons_metal_normal_scale: float
+    weapons_metal_color_boost: float
+    cockpit_normal_scale: float
+    cockpit_roughness: float
+    cockpit_metalness: float
+    cockpit_color_boost: float
+    cockpit_ao_intensity: float
 
 
 @app.get("/api/mech-pbr-settings")
@@ -800,6 +818,37 @@ def save_mech_footprint_mask(body: MechFootprintMaskIn) -> dict:
             body.model_url, body.image_data_url, body.half_width, body.half_depth
         )
     except mech_annotations.InvalidFootprintMask as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
+# Real user report: the per-mech muzzle auto-detect "no funciona muy
+# bien" — real user request instead: browse each weapon's own model,
+# click its firing point once, apply it to that exact mount. Real
+# follow-up correction: "los mechs pueden tener varias armas de un
+# tipo... el autodetectar solo esta detectando 1" — see db.py's own
+# weapon_muzzle_points doc comment for why this is keyed by
+# (model_url, mount_key, visual), not visual_bucket alone.
+class WeaponMuzzlePointIn(BaseModel):
+    model_url: str
+    mount_key: str
+    visual: str
+    x: float
+    y: float
+    z: float
+
+
+@app.get("/api/weapon-muzzle-points")
+def list_weapon_muzzle_points() -> list[dict]:
+    return mech_annotations.list_weapon_muzzle_points()
+
+
+@app.put("/api/weapon-muzzle-points")
+def save_weapon_muzzle_point(body: WeaponMuzzlePointIn) -> dict:
+    try:
+        return mech_annotations.save_weapon_muzzle_point(
+            body.model_url, body.mount_key, body.visual, body.x, body.y, body.z
+        )
+    except mech_annotations.InvalidWeaponMuzzlePoint as exc:
         raise HTTPException(422, str(exc)) from exc
 
 

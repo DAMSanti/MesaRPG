@@ -4,8 +4,8 @@ import {useThree} from '@react-three/fiber'
 import * as THREE from 'three'
 import { SkeletonUtils } from 'three-stdlib'
 import {
-  LIMB_LOCATIONS, listMechFootprintMasks, listMechPbrSettings,
-  type MechFootprintMaskRecord, type MechPbrSettingsRecord,
+  LIMB_LOCATIONS, listMechFootprintMasks, listMechPbrSettings, listWeaponMuzzlePoints,
+  type MechFootprintMaskRecord, type MechPbrSettingsRecord, type WeaponMuzzlePointRecord,
 } from '../api'
 import { WALK_CYCLE_TIME_SCALE } from '../hexMath'
 import type { StampMask } from '../terrainRelief'
@@ -308,8 +308,33 @@ interface Mech3DProps {
    * front-facing one when the target isn't roughly ahead already. Same
    * `resolveAs` substitution mechanism as cojera/reposo herido elsewhere in
    * this file — the bookkeeping name (AttackLeftArm/RightArm/Torso) is
-   * unaffected either way. */
-  attackSignal?: { id: string; location?: string | null; twist?: 'left' | 'right' | null } | null
+   * unaffected either way.
+   * `twistAngle` is the real |offset| in radians behind that left/right
+   * verdict (HexMap computes both from the same angleDelta call) — see
+   * measureBakedTwistAngle's own doc comment for why this exists: without
+   * it the twist overlay has no way to know a 40°-off target should turn
+   * less than an 89°-off one, and always played its whole baked swing
+   * regardless. Omitted/null plays the full baked swing (the old
+   * behavior) — a caller that hasn't been updated changes nothing.
+   * `aimVertical`/`aimVerticalAngle` (real user request: "apuntado
+   * direccional por brazo") — same epsilon-cone convention as twist/
+   * twistAngle, just the VERTICAL half of target bearing (HexMap's own
+   * heightAt(target) vs heightAt(attacker) over the horizontal distance).
+   * Combined with twist's own left/right verdict at this prop's own use
+   * site to pick one of the MW5 pipeline's 8 directional arm-aim clips
+   * (ArmLeft/RightAim{Up,Down,Left,Right,UpLeft,UpRight,DownLeft,
+   * DownRight}) for a LA/RA shot — a torso-mounted weapon still only ever
+   * uses twist (no per-torso aim clip exists on that pipeline). Omitted/
+   * null (every caller before this existed) plays the plain centered pose,
+   * unchanged. */
+  attackSignal?: {
+    id: string
+    location?: string | null
+    twist?: 'left' | 'right' | null
+    twistAngle?: number | null
+    aimVertical?: 'up' | 'down' | null
+    aimVerticalAngle?: number | null
+  } | null
   /** Same shape/semantics as attackSignal, for the moment a shot actually
    * LANDS on this mech (HexMap's own activeAttack.hit, matched to whichever
    * unit is the target) — `severity` picks the heavier or lighter flinch
@@ -318,8 +343,22 @@ interface Mech3DProps {
    * "reacciones a impacto por dirección" — `direction` (the target's own
    * facing vs. bearing back toward the attacker, HexMap owns that
    * geometry same as attackSignal's own `twist`) picks which of the
-   * fwd/bwd/left/right flinch variants plays; omitted defaults to 'fwd'. */
-  hitSignal?: { id: string; severity?: 'light' | 'heavy'; direction?: 'fwd' | 'bwd' | 'left' | 'right' } | null
+   * fwd/bwd/left/right flinch variants plays; omitted defaults to 'fwd'.
+   * `location` (real user request: "reacciones a impacto por zona+eje") is
+   * the struck BT location (HD/CT/LT/RT/LA/RA/LL/RL, straight off
+   * AttackResult.location) — tried FIRST against the MW5 pipeline's own
+   * per-zone/per-axis hit clips (see the HitZone* resolution at this
+   * prop's own use site), falling back to the plain severity/direction
+   * clip above whenever that pipeline has no match (an arm hit — no
+   * per-arm hit clip exists at all — or a location this chassis isn't on
+   * that pipeline for). Omitted/null just skips straight to the fallback,
+   * unchanged from before this existed. */
+  hitSignal?: {
+    id: string
+    severity?: 'light' | 'heavy'
+    direction?: 'fwd' | 'bwd' | 'left' | 'right'
+    location?: string | null
+  } | null
 }
 
 const GENERIC_MODEL_URL = '/models/mech-placeholder.glb'
@@ -556,6 +595,18 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // app/systems/battletech/weapons.py for the exact catalog names.
   'Rotary AC/2': 'rac2', 'Rotary AC/5': 'rac5',
   'Rocket Launcher 10': 'rl10', 'Rocket Launcher 15': 'rl15', 'Rocket Launcher 20': 'rl20',
+  // Bushwacker's real stock loadouts (BSW-S2r, BSW-X4, synced from the
+  // MegaMek catalog) carry Plasma Rifle and MML 5 — neither exists as a
+  // distinct mesh anywhere in the MW5 source data (checked directly:
+  // Bushwacker's own weapon set only ever modeled AC/Gauss/Laser/PPC/
+  // Missile/MG/Narc/AMS/Flamer variants, no plasma or multi-missile
+  // launcher at all). Same "shares the physical launcher, stat-only
+  // difference" reasoning as Streak SRM above: Plasma Rifle is a single
+  // big-barrel energy weapon like a PPC, MML 5 is a 5-tube launcher like
+  // LRM 5 — reusing those buckets means the mount shows a real, present
+  // mesh instead of silently staying empty for these two variants.
+  'Plasma Rifle': 'ppc',
+  'MML 5': 'missile5',
 }
 for (const laser of [
   'Small Laser', 'Medium Laser', 'Large Laser', 'ER Small Laser', 'ER Medium Laser', 'ER Large Laser', 'ER Micro Laser',
@@ -568,7 +619,7 @@ for (const laser of [
 /** `null` for a weapon this chassis's game art never modeled a distinct
  * visual for — callers treat that exactly like an unfilled mount (falls
  * back to its own "blank" cover mesh). */
-function weaponVisualBucket(weaponName: string): string | null {
+export function weaponVisualBucket(weaponName: string): string | null {
   return WEAPON_VISUAL_BUCKETS[weaponName] ?? null
 }
 
@@ -598,7 +649,7 @@ export function weaponHitSeverity(weaponName: string): 'light' | 'heavy' {
  * bucket name plus "blank" is checked as a literal underscore-delimited
  * token, never a bare substring, so a chassis nickname or location word
  * can never be mistaken for a weapon token. */
-function weaponMountOfMesh(meshName: string): { location: string; mountKey: string; visual: string } | null {
+export function weaponMountOfMesh(meshName: string): { location: string; mountKey: string; visual: string } | null {
   const name = meshName.trim().toLowerCase()
   const location = guessMeshLocation(name)
   if (!location) return null
@@ -674,7 +725,13 @@ export function applyMechCombatVisibility(
   const { assignedVisualByMountKey, mounts } = assignWeaponMountMeshes(instance, weapons)
   for (const [mountKey, byVisual] of mounts) {
     const showVisual = assignedVisualByMountKey.get(mountKey) ?? 'blank'
-    for (const [visual, mesh] of byVisual) mesh.visible = visual === showVisual
+    // Toggling `.visible` on whatever object actually carries the name
+    // (a real mesh, or — see assignWeaponMountMeshes' own
+    // firstMeshDescendant doc comment — an empty wrapper node for a
+    // weapon Blender's glTF export split in two) is enough either way:
+    // three.js visibility cascades to children, so hiding the wrapper
+    // hides its real-mesh children with it.
+    for (const [visual, object] of byVisual) object.visible = visual === showVisual
   }
 }
 
@@ -692,31 +749,22 @@ export function applyMechCombatVisibility(
  * identity instead of mountKey — a weapon whose bucket has no match on
  * this chassis (a raw model missing that visual, or weaponVisualBucket
  * returning null) is simply absent from this map. */
-function assignWeaponMountMeshes(
-  instance: THREE.Object3D,
-  weapons: readonly { location: string; weaponName: string }[] | undefined,
-): {
-  mounts: Map<string, Map<string, THREE.Mesh>>
-  assignedVisualByMountKey: Map<string, string>
-  meshByWeapon: Map<{ location: string; weaponName: string }, THREE.Mesh>
-} {
-  const mounts = new Map<string, Map<string, THREE.Mesh>>()
-  instance.traverse((object) => {
-    const mesh = object as THREE.Mesh
-    if (!mesh.isMesh) return
-    const info = weaponMountOfMesh(mesh.name)
-    if (!info) return
-    let byVisual = mounts.get(info.mountKey)
-    if (!byVisual) {
-      byVisual = new Map()
-      mounts.set(info.mountKey, byVisual)
-    }
-    byVisual.set(info.visual, mesh)
-  })
-
-  const assignedVisualByMountKey = new Map<string, string>()
-  const meshByWeapon = new Map<{ location: string; weaponName: string }, THREE.Mesh>()
-  if (mounts.size === 0) return { mounts, assignedVisualByMountKey, meshByWeapon } // no weapon-mount sub-parts on this model at all
+/** The actual pairing rule behind assignWeaponMountMeshes below — "the Nth
+ * real weapon at a location claims the Nth still-unclaimed mount that
+ * actually has its own visual" — pulled out as a pure, MESH-FREE function
+ * so it can run identically against either a live instance's own mount
+ * map (assignWeaponMountMeshes, for visibility) or a cached, mesh-free
+ * TOPOLOGY captured once per chassis (getWeaponMuzzleWorldPoint below,
+ * for muzzle points — see its own doc comment on why that one can't
+ * touch a live instance). Generic over the map's own value type so both
+ * `Map<mountKey, Map<visual, THREE.Mesh>>` and `Map<mountKey, Map<visual,
+ * THREE.Matrix4>>` work unchanged — only `.has(bucket)` ever matters
+ * here, never what's actually stored. */
+function assignMountKeysToWeapons<W extends { location: string; weaponName: string }>(
+  mounts: Map<string, Map<string, unknown>>, weapons: readonly W[] | undefined,
+): Map<W, string> {
+  const assignment = new Map<W, string>()
+  if (mounts.size === 0 || !weapons) return assignment
 
   const mountsByLocation = new Map<string, string[]>()
   for (const key of mounts.keys()) {
@@ -729,7 +777,7 @@ function assignWeaponMountMeshes(
 
   const claimedMounts = new Set<string>()
   for (const location of mountsByLocation.keys()) {
-    const weaponsHere = (weapons ?? []).filter((w) => w.location === location)
+    const weaponsHere = weapons.filter((w) => w.location === location)
     for (const w of weaponsHere) {
       const bucket = weaponVisualBucket(w.weaponName)
       if (!bucket) continue
@@ -738,11 +786,112 @@ function assignWeaponMountMeshes(
       )
       if (!mountKey) continue // every mount for this visual already taken, or none exists
       claimedMounts.add(mountKey)
-      assignedVisualByMountKey.set(mountKey, bucket)
-      meshByWeapon.set(w, mounts.get(mountKey)!.get(bucket)!)
+      assignment.set(w, mountKey)
     }
   }
+  return assignment
+}
+
+/** First descendant (including `object` itself) that's a real Mesh with
+ * actual vertex data — needed because of a real Blender/glTF-export bug
+ * found live on Bushwacker (MW5-sourced weapons): a mesh with faces
+ * spread across 2+ material slots sometimes gets silently split on
+ * export into an EMPTY parent node carrying the correctly-named
+ * "chrMdlWeap_..." string, with the real geometry pushed into un-renamed
+ * child SkinnedMesh nodes underneath it. Muzzle-point computation
+ * (computeWeaponMuzzlePoint) needs real `.geometry`, so it can't use the
+ * empty wrapper directly — this finds the actual mesh data one level
+ * down instead. */
+function firstMeshDescendant(object: THREE.Object3D): THREE.Mesh | null {
+  if ((object as THREE.Mesh).isMesh) return object as THREE.Mesh
+  for (const child of object.children) {
+    const found = firstMeshDescendant(child)
+    if (found) return found
+  }
+  return null
+}
+
+function assignWeaponMountMeshes(
+  instance: THREE.Object3D,
+  weapons: readonly { location: string; weaponName: string }[] | undefined,
+): {
+  mounts: Map<string, Map<string, THREE.Object3D>>
+  assignedVisualByMountKey: Map<string, string>
+  meshByWeapon: Map<{ location: string; weaponName: string }, THREE.Mesh>
+} {
+  const mounts = new Map<string, Map<string, THREE.Object3D>>()
+  instance.traverse((object) => {
+    const info = weaponMountOfMesh(object.name)
+    if (!info) return
+    let byVisual = mounts.get(info.mountKey)
+    if (!byVisual) {
+      byVisual = new Map()
+      mounts.set(info.mountKey, byVisual)
+    }
+    // The correctly-named object wins the slot even when it's an empty
+    // wrapper (see firstMeshDescendant's own doc comment) - toggling
+    // `.visible` on it still hides its real-mesh children, since
+    // three.js visibility cascades down the hierarchy. Only fall back to
+    // a same-key mesh already found (shouldn't normally happen - one
+    // name per mount+visual) rather than let an unnamed geometry replace
+    // a correctly-named wrapper.
+    if (!byVisual.has(info.visual)) byVisual.set(info.visual, object)
+  })
+
+  const assignedVisualByMountKey = new Map<string, string>()
+  const meshByWeapon = new Map<{ location: string; weaponName: string }, THREE.Mesh>()
+  const assignment = assignMountKeysToWeapons(mounts, weapons)
+  for (const [w, mountKey] of assignment) {
+    const bucket = weaponVisualBucket(w.weaponName)!
+    assignedVisualByMountKey.set(mountKey, bucket)
+    const matched = mounts.get(mountKey)!.get(bucket)!
+    const mesh = firstMeshDescendant(matched)
+    if (mesh) meshByWeapon.set(w, mesh)
+  }
   return { mounts, assignedVisualByMountKey, meshByWeapon }
+}
+
+/** Real bug found live: a THREE.SkinnedMesh's own `.matrixWorld` is
+ * mostly irrelevant to where it actually renders — the GPU places each
+ * vertex through a completely separate chain (bind pose × bone
+ * matrixWorld × bone inverse), so using `.matrixWorld` to convert a
+ * point between this mesh's "local" space and world space silently
+ * produces a point many mech-heights away from the real geometry (this
+ * is what was causing MechLab's own muzzle markers to float off to the
+ * side of the model, AND — same root cause — the actual game's
+ * getWeaponMuzzleWorldPoint, which is why every weapon fired "desde el
+ * pecho": computeWeaponMountData was caching `mesh.matrixWorld` per
+ * mount, and different weapons' own object-level transforms turned out
+ * to cluster near a similar irrelevant point regardless of where they
+ * actually render).
+ *
+ * Every MW5 weapon mesh collapses to single-bone skinning (this
+ * session's own fix for the material-slot export-split bug), so there's
+ * always exactly one influencing bone per mesh — this reconstructs the
+ * one true affine transform that actually places its vertices
+ * (`bone.matrixWorld × boneInverse × bindMatrix`, read directly off
+ * three.js's own SkinnedMesh.applyBoneTransform formula) and returns it
+ * in place of `.matrixWorld` for any local↔world conversion involving
+ * this mesh. Falls back to `mesh.matrixWorld` for a genuinely
+ * non-skinned/rigid mesh (the old AssetStudio pipeline this file
+ * originally targeted) — unchanged there. `null` only if the mesh
+ * claims to be skinned but has no skin data at all (shouldn't happen in
+ * practice, defensive only). */
+export function weaponMeshEffectiveMatrix(mesh: THREE.Mesh): THREE.Matrix4 | null {
+  const skinned = (mesh as THREE.SkinnedMesh).isSkinnedMesh ? (mesh as THREE.SkinnedMesh) : null
+  if (!skinned) {
+    mesh.updateWorldMatrix(true, false)
+    return mesh.matrixWorld
+  }
+  const skinIndexAttr = skinned.geometry.attributes.skinIndex as THREE.BufferAttribute | undefined
+  if (!skinIndexAttr || skinIndexAttr.count === 0) return null
+  skinned.skeleton.update()
+  const boneIndex = skinIndexAttr.getX(0)
+  const bone = skinned.skeleton.bones[boneIndex]
+  const boneInverse = skinned.skeleton.boneInverses[boneIndex]
+  if (!bone || !boneInverse) return null
+  bone.updateWorldMatrix(true, false)
+  return new THREE.Matrix4().multiplyMatrices(bone.matrixWorld, boneInverse).multiply(skinned.bindMatrix)
 }
 
 /** Real user request: "con el cambio de modelos... tienes como sacar el
@@ -761,16 +910,49 @@ function assignWeaponMountMeshes(
  * with no geometry or (defensively) no vertices to measure — never thrown,
  * same "changes nothing, don't crash the caller" spirit as this file's
  * other optional-detection helpers (getFootShape, weaponVisualBucket). */
-function computeWeaponMuzzlePoint(mesh: THREE.Mesh): THREE.Vector3 | null {
+/** Real user correction: "SIEMPRE el cañón está por delante" — picking
+ * the muzzle end by "farther from the mounting bone" (the old rule)
+ * assumes the bone sits at the barrel's own base, which isn't true for
+ * every weapon shape (a bulky receiver/breech behind the mount point can
+ * easily be the FARTHER end, not the muzzle). The physically reliable
+ * fact is the mech's own facing direction — a mounted weapon never
+ * points backward — so this uses THAT to break the tie instead: given a
+ * known chassis forward vector, whichever end of the weapon's own
+ * longest axis projects further along it wins, regardless of which one
+ * is geometrically farther from the bone.
+ *
+ * `forward` is null for a chassis detectChassisForward couldn't read (no
+ * Cockpit bone — the old HBS-pipeline chassis, which this function has
+ * served correctly for a long time already) — falls back to the
+ * original distance-from-bone rule unchanged, zero regression there. */
+export function computeWeaponMuzzlePoint(mesh: THREE.Mesh, forward: THREE.Vector3 | null = null): THREE.Vector3 | null {
   const position = mesh.geometry.attributes.position as THREE.BufferAttribute | undefined
   if (!position || position.count === 0) return null
-  mesh.updateWorldMatrix(true, false)
 
-  let boneAncestor: THREE.Object3D | null = mesh.parent
-  while (boneAncestor && !(boneAncestor as THREE.Bone).isBone) boneAncestor = boneAncestor.parent
-  const boneWorldPos = new THREE.Vector3()
-  if (boneAncestor) boneAncestor.getWorldPosition(boneWorldPos)
-  else mesh.getWorldPosition(boneWorldPos) // no bone ancestor found — falls back to the mesh's own origin
+  // Real bug found live (Bushwacker BSW-X1, the two Machine Gun mounts):
+  // per-vertex `SkinnedMesh.applyBoneTransform` honors EVERY bone each
+  // vertex is actually weighted to (up to 4, blended) — real, correct
+  // skinning, but it means a single bad weight on even one vertex (a
+  // stray influence toward some unrelated, wrongly-posed bone — the
+  // Right Torso Machine Gun's own vertices came out with a whole ~2-unit
+  // NEGATIVE-Y offset relative to every sibling weapon, including its own
+  // mirror twin on the left) drags the computed bounding box wherever
+  // that bad weight points, nowhere near the real weapon. The user
+  // confirmed this exact mesh positioned correctly under the OLD
+  // "Cañones" tab (now-removed WeaponMuzzleEditor), which never called
+  // applyBoneTransform at all — it built ONE effective matrix from the
+  // FIRST vertex's own bone only (weaponMeshEffectiveMatrix, below) and
+  // applied that SAME matrix to every vertex uniformly, so a bad weight
+  // on any vertex past the first was simply never consulted. Matching
+  // that already-proven approach here (instead of the technically-more-
+  // correct-but-data-fragile per-vertex blend) is the actual fix — not a
+  // Blender/export problem to chase, since the working tab never touched
+  // this mesh's per-vertex weights either.
+  const skinned = (mesh as THREE.SkinnedMesh).isSkinnedMesh ? (mesh as THREE.SkinnedMesh) : null
+  const effectiveMatrix = skinned ? weaponMeshEffectiveMatrix(mesh) : null
+  if (!effectiveMatrix) mesh.updateWorldMatrix(true, false) // only reached for a genuinely non-skinned mesh
+  const worldMatrix = effectiveMatrix ?? mesh.matrixWorld
+  const boneWorldPos = new THREE.Vector3().setFromMatrixPosition(worldMatrix)
 
   const vertex = new THREE.Vector3()
   const min = new THREE.Vector3(Infinity, Infinity, Infinity)
@@ -780,7 +962,7 @@ function computeWeaponMuzzlePoint(mesh: THREE.Mesh): THREE.Vector3 | null {
   // walking all of them is cheap and exact.
   for (let i = 0; i < position.count; i++) {
     vertex.fromBufferAttribute(position, i)
-    vertex.applyMatrix4(mesh.matrixWorld)
+    vertex.applyMatrix4(worldMatrix)
     min.min(vertex)
     max.max(vertex)
   }
@@ -788,9 +970,47 @@ function computeWeaponMuzzlePoint(mesh: THREE.Mesh): THREE.Vector3 | null {
   const size = new THREE.Vector3().subVectors(max, min)
   const axis: 'x' | 'y' | 'z' = size.x >= size.y && size.x >= size.z ? 'x' : size.y >= size.z ? 'y' : 'z'
   const muzzle = new THREE.Vector3().addVectors(min, max).multiplyScalar(0.5)
-  const farIsFarther = Math.abs(max[axis] - boneWorldPos[axis]) >= Math.abs(min[axis] - boneWorldPos[axis])
+  let farIsFarther: boolean
+  if (forward) {
+    // Project both candidate tips onto the chassis's own forward vector
+    // (relative to the mount, so a weapon mounted well forward/aft of
+    // the torso's own origin doesn't skew the comparison) — whichever
+    // sits further along "outward" is the muzzle, full stop.
+    const maxTip = new THREE.Vector3(max.x, max.y, max.z)
+    const minTip = new THREE.Vector3(min.x, min.y, min.z)
+    const maxProj = maxTip.sub(boneWorldPos).dot(forward)
+    const minProj = minTip.sub(boneWorldPos).dot(forward)
+    farIsFarther = maxProj >= minProj
+  } else {
+    farIsFarther = Math.abs(max[axis] - boneWorldPos[axis]) >= Math.abs(min[axis] - boneWorldPos[axis])
+  }
   muzzle[axis] = farIsFarther ? max[axis] : min[axis]
   return muzzle
+}
+
+/** See computeWeaponMuzzlePoint's own doc comment for why this exists.
+ * The Cockpit bone sits forward of the torso's own root by design (the
+ * pilot has to see forward) on every MW5-sourced chassis checked so far
+ * — a real, physical fact, not a per-chassis authoring convention that
+ * could vary (unlike a fixed local axis, which this file's own
+ * computeWalkGaitCurve doc comment already found DOES vary chassis to
+ * chassis: "veo literalmente las partes de atras alante"). Returns null
+ * for a chassis with no Cockpit bone at all (the old HBS pipeline),
+ * which callers treat as "keep the old behavior", not an error. */
+export function detectChassisForward(instance: THREE.Object3D): THREE.Vector3 | null {
+  const cockpit = findBoneByName(instance, ['Cockpit'])
+  const root = findBoneByName(instance, ['Torso_Pitch', 'Torso_Animation', 'Torso_Twist', 'Pelvis', 'Root'])
+  if (!cockpit || !root) return null
+  const cockpitPos = new THREE.Vector3()
+  const rootPos = new THREE.Vector3()
+  cockpit.updateWorldMatrix(true, false)
+  root.updateWorldMatrix(true, false)
+  cockpit.getWorldPosition(cockpitPos)
+  root.getWorldPosition(rootPos)
+  const offset = cockpitPos.sub(rootPos)
+  offset.y = 0 // horizontal-plane forward only — up/down offset isn't "facing"
+  if (offset.lengthSq() < 1e-8) return null // cockpit sits ~on the root — not a usable signal
+  return offset.normalize()
 }
 
 /** High-level entry point for the auto-detect feature above —
@@ -820,15 +1040,36 @@ export function computeWeaponMuzzlePoints(
   weapons: readonly { location: string; weaponName: string }[],
 ): { location: string; weaponName: string; point: [number, number, number] | null }[] {
   const { meshByWeapon } = assignWeaponMountMeshes(instance, weapons)
+  const forward = detectChassisForward(instance)
   return weapons.map((w) => {
     const mesh = meshByWeapon.get(w)
-    const muzzle = mesh ? computeWeaponMuzzlePoint(mesh) : null
+    const muzzle = mesh ? computeWeaponMuzzlePoint(mesh, forward) : null
     return {
       location: w.location,
       weaponName: w.weaponName,
       point: muzzle ? [muzzle.x / MODEL_SCALE, muzzle.y / MODEL_SCALE, muzzle.z / MODEL_SCALE] : null,
     }
   })
+}
+
+/** Real user request: MechLab's "Anotar armas" tab dropping manual
+ * click-to-place entirely in favor of auto-detect-only for both weapons
+ * AND the cockpit point ("ya no hay modo manual... que mostrará con un
+ * punto donde ha detectado los cañones... y la cabina"). Same bone-based
+ * approach as detectChassisForward/LOCATION_BONE_NAMES above — the
+ * Cockpit bone's own world position IS the real pilot-eye reference
+ * point already used to derive "forward" elsewhere in this file, so
+ * reusing it here needs no invented offset. `null` for a chassis with no
+ * Cockpit bone at all (old HBS pipeline) — caller falls back to
+ * whatever's already saved/manual, same "changes nothing" contract as
+ * this file's other optional detectors. */
+export function computeCockpitPoint(instance: THREE.Object3D): [number, number, number] | null {
+  const bone = findBoneByName(instance, ['Cockpit'])
+  if (!bone) return null
+  bone.updateWorldMatrix(true, false)
+  const worldPos = new THREE.Vector3()
+  bone.getWorldPosition(worldPos)
+  return [worldPos.x / MODEL_SCALE, worldPos.y / MODEL_SCALE, worldPos.z / MODEL_SCALE]
 }
 
 /** Every NORMAL-tier, non-weapon-mount mesh on `instance`, grouped by
@@ -879,6 +1120,41 @@ export function computeLimbMeshNames(instance: THREE.Object3D): Partial<Record<s
   return result
 }
 
+/** Real user finding: the MW5-sourced pipeline (Bushwacker onward — "esta
+ * sera la unica forma en el futuro... todos los modelos seran como este")
+ * ships the whole body as ONE fused, single-material mesh, not separate
+ * per-location objects — bodyMeshNamesByLocation finds nothing on these,
+ * same "recognizes nothing, changes nothing" empty-map result as any
+ * other unrecognized-naming chassis. What it DOES always have is a real,
+ * consistently-named skeleton (verified against Bushwacker's own rig,
+ * and this naming reads as MW5's own shared humanoid-mech convention,
+ * not chassis-specific): Torso_Head, Torso_Pitch, Torso_Left_Front,
+ * Torso_Right_Front, Forearm_Left/Right, Calf_Left/Right. A bone's own
+ * world position is a perfectly reasonable stand-in for "the center of
+ * that location" when there's no separate mesh to measure a bounding
+ * box from — first candidate name found wins, tried in the order below,
+ * so a future chassis missing one exact name still has a fallback
+ * before giving up on that location entirely. */
+const LOCATION_BONE_NAMES: Record<string, readonly string[]> = {
+  HD: ['Torso_Head', 'Head'],
+  CT: ['Torso_Pitch', 'Torso_Center_Front', 'Torso_Animation'],
+  LT: ['Torso_Left_Front', 'Torso_Left_Rear'],
+  RT: ['Torso_Right_Front', 'Torso_Right_Rear'],
+  LA: ['Forearm_Left', 'Upperarm_Left', 'Hand_Left'],
+  RA: ['Forearm_Right', 'Upperarm_Right', 'Hand_Right'],
+  LL: ['Calf_Left', 'Thigh_Left'],
+  RL: ['Calf_Right', 'Thigh_Right'],
+}
+
+function findBoneByName(instance: THREE.Object3D, names: readonly string[]): THREE.Bone | null {
+  let found: THREE.Bone | null = null
+  instance.traverse((object) => {
+    if (found || !(object as THREE.Bone).isBone) return
+    if (names.includes(object.name)) found = object as THREE.Bone
+  })
+  return found
+}
+
 /** Real user request, same message as computeLimbMeshNames above: "también
  * podremos localizar los impactos...?" — the "¿Dónde impacta un ataque a
  * esa zona?" hit-point slots (all 8 MECH_LOCATIONS, unlike the 4-limb
@@ -887,7 +1163,10 @@ export function computeLimbMeshNames(instance: THREE.Object3D): Partial<Record<s
  * combined posed bounding box CENTER of that location's own real body
  * meshes, instead of a manual click. Point is already divided back down
  * by MODEL_SCALE, same onSurfaceClick convention every other point in
- * this file's own detectors already follows. */
+ * this file's own detectors already follows. Falls back to
+ * LOCATION_BONE_NAMES (a bone's own world position) for any location a
+ * fused single-mesh chassis has no separate mesh names for — see that
+ * constant's own doc comment. */
 export function computeLocationHitPoints(instance: THREE.Object3D): Partial<Record<string, [number, number, number]>> {
   const byLocation = bodyMeshNamesByLocation(instance)
   const meshByName = new Map<string, THREE.Mesh>()
@@ -912,7 +1191,45 @@ export function computeLocationHitPoints(instance: THREE.Object3D): Partial<Reco
     box.getCenter(center)
     result[location] = [center.x / MODEL_SCALE, center.y / MODEL_SCALE, center.z / MODEL_SCALE]
   }
+
+  const worldPos = new THREE.Vector3()
+  for (const location of Object.keys(LOCATION_BONE_NAMES)) {
+    if (result[location]) continue
+    const bone = findBoneByName(instance, LOCATION_BONE_NAMES[location])
+    if (!bone) continue
+    bone.updateWorldMatrix(true, false)
+    bone.getWorldPosition(worldPos)
+    result[location] = [worldPos.x / MODEL_SCALE, worldPos.y / MODEL_SCALE, worldPos.z / MODEL_SCALE]
+  }
   return result
+}
+
+// Keyed by chassis/model URL — same "compute once per chassis, share
+// across every mounted instance" rationale as footShapeCache/
+// walkGaitCurveCache above. `null` would mean "computed, chassis has no
+// recognizable body-part mesh names at all" (see computeLocationHitPoints'
+// own "changes nothing" contract), but that case is stored as `{}`
+// instead (computeLocationHitPoints never returns null) — getMeshDetected
+// HitPoint below treats a missing per-location entry in either case the
+// same way (falls through to null), so this is never distinguished.
+const meshDetectedHitPointCache = new Map<string, Partial<Record<string, [number, number, number]>>>()
+
+/** Real user request: "el área de recibir el golpe, podemos sustituir el
+ * punto fijo con detección de malla por nombre?" — computeLocationHitPoints
+ * above already does exactly that (built for MechLabView's own auto-detect
+ * button), just never wired into the actual game path, which still read a
+ * manually-clicked-and-saved MechAnnotation. Computed once per chassis URL
+ * ever, off a disposable never-rendered clone (same throwaway-rig pattern
+ * as computeWalkGaitCurve, so this is independent of whatever pose the
+ * REAL mixer happens to be in whenever this fires) — see the population
+ * effect inside Mech3DModel below. `null` while not yet computed (first
+ * frames right after a chassis first loads) or for a location this
+ * chassis's own mesh names don't recognize — HexMap.tsx's own hit-point
+ * lookup falls back to the old saved-annotation path in both cases,
+ * exactly the same "best effort, never a hard requirement" contract every
+ * other optional detector in this file already follows. */
+export function getMeshDetectedHitPoint(url: string, location: string): [number, number, number] | null {
+  return meshDetectedHitPointCache.get(url)?.[location] ?? null
 }
 
 // A destroyed mech's own charred-wreck color (HexMap's own DEAD_CHAR_COLOR
@@ -1120,6 +1437,196 @@ function findFootBones(skinnedMesh: THREE.SkinnedMesh | null): { left: THREE.Bon
   return { left, right }
 }
 
+// Real user report: the walk cycle plays at the right OVERALL pace now
+// (WALK_CYCLE_TIME_SCALE — one full stride per hex crossed), but the feet
+// still visibly skate against the ground mid-stride. Root cause: HexMap's
+// stepToward moves the mech at a flat, constant WALK_SPEED every frame,
+// completely blind to which foot the Walk clip currently has planted —
+// during a real stride the grounded foot should stay glued to one spot
+// while the body pivots forward over it (fast advance during the OTHER
+// foot's swing, near-zero advance right at footfall/toe-off), not slide
+// at one unchanging rate the whole cycle.
+//
+// Fix: measure the REAL required body-advance curve directly from this
+// chassis's own Walk clip — for whichever foot bone (PieI/PieD) is
+// grounded at each sampled instant, its LOCAL position (relative to the
+// mesh root, which never itself translates in an authored loop) still
+// visibly slides backward under a fixed root exactly as far as the body
+// would need to advance in the real world to keep that same foot glued
+// to the ground. Accumulating that backward slide across the whole cycle
+// gives an exact, chassis-specific normalized speed profile — no baked
+// root motion required, and no guessed easing curve either. HexMap's
+// stepToward (see its own use of getWalkGaitProgress) then walks this
+// curve by real elapsed time instead of a flat rate.
+//
+// Sampled on a disposable, never-rendered clone (normalizeMechInstance
+// already gives every mounted instance its own skeleton — reused here
+// purely as a detached rig to scrub through the clip on) so this never
+// glitches a real, currently-visible mech's pose. Cheap (a few dozen
+// samples on a small skeleton) and done once per chassis URL ever, not
+// per mounted instance — see walkGaitCurveCache below.
+const WALK_GAIT_SAMPLES = 48
+// A foot counts as "grounded" for a sample while its own height sits in
+// the bottom fifth of its total swing range for this clip — cheap and
+// scale-independent (works whether a chassis's feet lift 0.3m or 3m),
+// unlike a fixed absolute epsilon.
+const WALK_GAIT_GROUND_FRACTION = 0.2
+
+function computeWalkGaitCurve(scene: THREE.Object3D, walkClip: THREE.AnimationClip): ((phase: number) => number) | null {
+  if (walkClip.duration <= 0) return null
+  const rig = normalizeMechInstance(scene)
+  const skinnedMesh = findSkinnedMeshInGroup(rig)
+  const { left, right } = findFootBones(skinnedMesh)
+  if (!left || !right) return null
+
+  const mixer = new THREE.AnimationMixer(rig)
+  mixer.clipAction(walkClip).play()
+
+  const n = WALK_GAIT_SAMPLES
+  const leftPos: THREE.Vector3[] = []
+  const rightPos: THREE.Vector3[] = []
+  const scratch = new THREE.Vector3()
+  for (let i = 0; i <= n; i++) {
+    mixer.setTime((i / n) * walkClip.duration)
+    rig.updateMatrixWorld(true)
+    left.getWorldPosition(scratch); leftPos.push(scratch.clone())
+    right.getWorldPosition(scratch); rightPos.push(scratch.clone())
+  }
+  mixer.stopAllAction()
+
+  const groundedMask = (positions: THREE.Vector3[]) => {
+    const ys = positions.map((p) => p.y)
+    const minY = Math.min(...ys)
+    const maxY = Math.max(...ys)
+    const threshold = minY + (maxY - minY) * WALK_GAIT_GROUND_FRACTION
+    return ys.map((y) => y <= threshold)
+  }
+  const leftGrounded = groundedMask(leftPos)
+  const rightGrounded = groundedMask(rightPos)
+
+  // Forward axis/sign isn't assumed — different chassis exports have
+  // ended up authored along either local axis (real prior bug in this
+  // same pipeline: "veo literalmente las partes de atras alante"), so
+  // instead of guessing, every axis/sign combination is tried and
+  // whichever produces the largest accumulated grounded-foot slide wins.
+  // A wrong axis/sign only ever nets a near-zero curve (grounded-frame
+  // deltas cancel out or clip to zero), never a WRONG-but-confident one.
+  let best: number[] | null = null
+  let bestTotal = 0
+  for (const axis of ['x', 'z'] as const) {
+    for (const sign of [1, -1] as const) {
+      const raw = [0]
+      for (let i = 1; i <= n; i++) {
+        const contribs: number[] = []
+        if (leftGrounded[i] && leftGrounded[i - 1]) {
+          contribs.push(sign * (leftPos[i - 1][axis] - leftPos[i][axis]))
+        }
+        if (rightGrounded[i] && rightGrounded[i - 1]) {
+          contribs.push(sign * (rightPos[i - 1][axis] - rightPos[i][axis]))
+        }
+        const delta = contribs.length > 0 ? contribs.reduce((a, b) => a + b, 0) / contribs.length : 0
+        raw.push(raw[i - 1] + Math.max(0, delta))
+      }
+      const total = raw[raw.length - 1]
+      if (total > bestTotal) {
+        bestTotal = total
+        best = raw
+      }
+    }
+  }
+  if (!best || bestTotal <= 1e-6) return null
+
+  const normalized = best.map((v) => v / bestTotal)
+  return (phase: number) => {
+    const p = Math.max(0, Math.min(1, phase))
+    const idx = p * n
+    const i0 = Math.floor(idx)
+    const i1 = Math.min(n, i0 + 1)
+    const frac = idx - i0
+    return normalized[i0] + (normalized[i1] - normalized[i0]) * frac
+  }
+}
+
+// Real user request: "mira como podemos implementar estas animaciones en
+// nuestro juego" (BSW_FP_* clips) — FirstPersonView's own cockpit bob was
+// a hand-tuned synthetic sine wave (BOB_AMPLITUDE/BOB_FREQUENCY there,
+// several rounds of retuning per that file's own comments) purely because
+// nothing else was available. This extracts the REAL vertical motion of
+// the Cockpit bone from the chassis's own first-person walk clip instead
+// — same "sample the real animation instead of faking its shape" fix
+// computeWalkGaitCurve already applied to the walk-skating bug, just
+// tracking a bone's Y instead of a foot's grounded XZ slide. Normalized
+// to peak amplitude 1 in both directions (not to MODEL_SCALE world
+// units) so FirstPersonView's own BOB_AMPLITUDE constant keeps its
+// existing meaning — only the WAVE SHAPE changes, never the overall
+// intensity knob. `null` for a chassis with no Cockpit bone, no matching
+// clip, or a clip that doesn't actually move that bone (old HBS-pipeline
+// chassis, or any chassis missing this one clip) — caller falls back to
+// its own synthetic sine, zero regression there.
+export function computeCameraBobCurve(scene: THREE.Object3D, clip: THREE.AnimationClip): ((phase: number) => number) | null {
+  if (clip.duration <= 0) return null
+  const rig = normalizeMechInstance(scene)
+  const cockpit = findBoneByName(rig, ['Cockpit'])
+  if (!cockpit) return null
+
+  const mixer = new THREE.AnimationMixer(rig)
+  mixer.clipAction(clip).play()
+
+  const n = WALK_GAIT_SAMPLES
+  const ys: number[] = []
+  const scratch = new THREE.Vector3()
+  for (let i = 0; i <= n; i++) {
+    mixer.setTime((i / n) * clip.duration)
+    rig.updateMatrixWorld(true)
+    cockpit.getWorldPosition(scratch)
+    ys.push(scratch.y)
+  }
+  mixer.stopAllAction()
+
+  const mean = ys.reduce((a, b) => a + b, 0) / ys.length
+  const centered = ys.map((y) => y - mean)
+  const peak = Math.max(...centered.map(Math.abs))
+  if (peak <= 1e-6) return null
+  const normalized = centered.map((v) => v / peak)
+
+  return (phase: number) => {
+    const p = ((phase % 1) + 1) % 1
+    const idx = p * n
+    const i0 = Math.floor(idx)
+    const i1 = Math.min(n, i0 + 1)
+    const frac = idx - i0
+    return normalized[i0] + (normalized[i1] - normalized[i0]) * frac
+  }
+}
+
+// The MW5 pipeline's own first-person walk clip suffix — see
+// MW5_CLIP_SUFFIXES's own doc comment for the naming convention. Kept
+// separate from that table (not just another entry resolved via
+// resolveClipKey) because resolveClipKeyForSuffix deliberately EXCLUDES
+// every `_FP_` clip from third-person resolution — this is the one place
+// that specifically wants the first-person twin, not its non-FP sibling.
+export const MW5_FP_WALK_SUFFIX = 'FP_WalkForward_Straight_ANI'
+
+// Keyed by chassis/model URL — same "compute once per chassis, share
+// across every mounted instance" rationale as footShapeCache above.
+// `null` means "analyzed, no usable curve" (unrigged chassis, or a clip
+// that failed to yield a real signal) — HexMap.tsx's own
+// getWalkGaitProgress caller falls back to its old flat WALK_SPEED
+// stepping in that case, exactly as it always did before this existed.
+const walkGaitCurveCache = new Map<string, ((phase: number) => number) | null>()
+
+/** `phase` is 0..1 progress through crossing ONE hex at WALK_SPEED (see
+ * hexMath.ts's own ONE_HEX_SECONDS) — returns 0..1 real progress along
+ * that hex, reshaped to match this chassis's own Walk clip footfall
+ * timing instead of a flat ramp. `null` while the curve for this url
+ * hasn't been computed yet (first frames right after a chassis first
+ * loads) or never will be (unrigged model) — caller falls back to plain
+ * linear progress in both cases, so there's no "no data yet" glitch. */
+export function getWalkGaitProgress(url: string, phase: number): number | null {
+  const curve = walkGaitCurveCache.get(url)
+  return curve ? curve(phase) : null
+}
+
 interface FootShape {
   halfWidth: number
   halfDepth: number
@@ -1290,12 +1797,129 @@ export function getSavedFootprintMask(
   return { mask, halfWidth: record.half_width, halfDepth: record.half_depth }
 }
 
+// Real user request: "los mechs pueden tener varias armas de un tipo...
+// el autodetectar solo está detectando 1" — confirmed the fix needed:
+// a saved point is now keyed per INDIVIDUAL mount (model_url + mountKey +
+// visual), not per weapon-visual-bucket alone — two lasers on the same
+// chassis (one per arm) are two separate mounts with two separate mesh
+// instances, and don't necessarily share the exact same local offset.
+// See WeaponMuzzlePointRecord's own doc comment in api.ts. Same "load
+// once, best effort, null until it lands" module-level cache as
+// footprintMaskRecords above.
+let weaponMuzzlePointRecords: WeaponMuzzlePointRecord[] | null = null
+let weaponMuzzlePointRecordsPromise: Promise<void> | null = null
+function ensureWeaponMuzzlePointRecordsLoading(): void {
+  if (weaponMuzzlePointRecords || weaponMuzzlePointRecordsPromise) return
+  weaponMuzzlePointRecordsPromise = listWeaponMuzzlePoints()
+    .then((rows) => { weaponMuzzlePointRecords = rows })
+    .catch(() => { weaponMuzzlePointRecordsPromise = null })
+}
+
+/** `null` means "nothing saved for this exact mount yet, or the list
+ * hasn't loaded" — caller falls back to the old per-chassis manual/auto-
+ * detected muzzle annotation in either case, same best-effort contract
+ * as getSavedFootprintMask above. The point is in the weapon mount
+ * mesh's OWN local space (see WeaponMuzzlePointRecord's own doc comment)
+ * — converting that into a world/mech-relative position is the caller's
+ * job, once it has that specific mount's own world matrix. */
+export function getSavedWeaponMuzzlePoint(
+  url: string, mountKey: string, visual: string,
+): [number, number, number] | null {
+  ensureWeaponMuzzlePointRecordsLoading()
+  const record = weaponMuzzlePointRecords?.find(
+    (r) => r.model_url === url && r.mount_key === mountKey && r.visual === visual,
+  )
+  return record ? [record.x, record.y, record.z] : null
+}
+
+// url -> mountKey -> visual -> that exact mount's own bind-pose world
+// matrix on THIS chassis. Unlike the old per-bucket cache, this keeps
+// EVERY mount separately (two lasers in two different arms stay two
+// distinct entries) — needed now that a saved point is per-mount, not
+// per-bucket. Computed once per chassis URL ever, off a throwaway clone
+// (see getMeshDetectedHitPoint's own doc comment on why its scale is set
+// to MODEL_SCALE explicitly). Also doubles as this chassis's own mount
+// TOPOLOGY (which (mountKey, visual) combinations even exist) for
+// assignMountKeysToWeapons below — same map, no separate structure needed.
+const weaponMountDataCache = new Map<string, Map<string, Map<string, THREE.Matrix4>>>()
+
+function computeWeaponMountData(scene: THREE.Object3D): Map<string, Map<string, THREE.Matrix4>> {
+  const rig = normalizeMechInstance(scene)
+  rig.scale.setScalar(MODEL_SCALE)
+  rig.updateMatrixWorld(true)
+  const result = new Map<string, Map<string, THREE.Matrix4>>()
+  rig.traverse((object) => {
+    const mesh = object as THREE.Mesh
+    if (!mesh.isMesh) return
+    const info = weaponMountOfMesh(mesh.name)
+    if (!info) return
+    let byVisual = result.get(info.mountKey)
+    if (!byVisual) { byVisual = new Map(); result.set(info.mountKey, byVisual) }
+    // See weaponMeshEffectiveMatrix's own doc comment — this cache used
+    // to store the mesh's own (mostly irrelevant, for a skinned MW5
+    // weapon) matrixWorld, which is the confirmed root cause behind
+    // every weapon firing "desde el pecho" in the real game: the actual
+    // consumer, getWeaponMuzzleWorldPoint, converts a saved LOCAL point
+    // back to world through whatever matrix is cached here.
+    const effective = weaponMeshEffectiveMatrix(mesh)
+    if (!byVisual.has(info.visual) && effective) byVisual.set(info.visual, effective.clone())
+  })
+  return result
+}
+
+/** Real user request: "quiero poder ir viendo los modelos de cada arma,
+ * poner su punto de disparo y que eso lo traslades al modelo montado" —
+ * plus the follow-up fix once several-of-the-same-weapon chassis exposed
+ * the gap: "los mechs pueden tener varias armas de un tipo... el
+ * autodetectar solo está detectando 1". Given this attacker's own FULL
+ * weapon loadout (so the exact same "Nth weapon at a location claims the
+ * Nth unclaimed matching mount" pairing applyMechCombatVisibility's own
+ * assignWeaponMountMeshes already uses for VISIBILITY runs here too — the
+ * muzzle point always matches whichever mesh is actually shown, even
+ * when two weapons share a bucket) and which weapon is actually firing
+ * (must be the SAME object reference as one entry in `weapons` — HexMap's
+ * own caller gets both from the same attackerMech.weapons array, so this
+ * holds automatically), finds that weapon's own real mount and combines
+ * the saved LOCAL point with that mount's own bind-pose world matrix.
+ * `null` if nothing's saved for that exact mount yet, this weapon didn't
+ * resolve to any mount at all, or this chassis's own mount data hasn't
+ * been analyzed yet — HexMap.tsx's own caller falls back to the old
+ * per-mech annotation in every case. */
+export function getWeaponMuzzleWorldPoint(
+  url: string,
+  weapons: readonly { location: string; weaponName: string }[] | undefined,
+  firingWeapon: { location: string; weaponName: string },
+): [number, number, number] | null {
+  const mountData = weaponMountDataCache.get(url)
+  if (!mountData) return null
+  const assignment = assignMountKeysToWeapons(mountData, weapons)
+  const mountKey = assignment.get(firingWeapon)
+  if (!mountKey) return null
+  const bucket = weaponVisualBucket(firingWeapon.weaponName)
+  if (!bucket) return null
+  const matrix = mountData.get(mountKey)?.get(bucket)
+  if (!matrix) return null
+  const savedLocal = getSavedWeaponMuzzlePoint(url, mountKey, bucket)
+  if (!savedLocal) return null
+  const point = new THREE.Vector3(savedLocal[0], savedLocal[1], savedLocal[2]).applyMatrix4(matrix)
+  return [point.x / MODEL_SCALE, point.y / MODEL_SCALE, point.z / MODEL_SCALE]
+}
+
 /** Live-tunable knobs for useMechPbr, below — pulled out into their own
  * type so MechLabView's Textura tab can expose them as sliders instead of
- * these being fixed constants only this file can change. */
-export interface MechPbrSettings {
-  /** UV tiling repeat for the detail maps. */
-  repeat: number
+ * these being fixed constants only this file can change.
+ *
+ * Real user request: "los sliders... cambia todo a la vez, cabina/armas y
+ * cuerpo, deberían ser cambios independientes" — confirmed live
+ * (Bushwacker's own materials): Body/Weapons/Cockpit genuinely need
+ * separate calibration, not just separate taste — the Weapons materials
+ * ship with NO real roughness/metallic factor at all (glTF's bare 1.0/1.0
+ * default), which reads as "doesn't respond to the slider" sitting next
+ * to the Body's own already-reasonable baked values under one shared
+ * knob. Each zone gets its own full set now; only `repeat` (tiling
+ * density of the generic placeholder overlay — never a per-material
+ * calibration value to begin with) stays shared. */
+export interface MechPbrZoneSettings {
   /** Multiplies normalMap's own perturbation strength — see the default's
    * own doc comment below for why it's turned down from three.js's own
    * default of 1. */
@@ -1310,6 +1934,56 @@ export interface MechPbrSettings {
    * entirely (no darkening in cavities); 1 is three.js's own full
    * strength. */
   aoIntensity: number
+  /** Real user request: "el cuerpo, las armas... tienen una máscara para
+   * aplicar las texturas. Los sliders solo afectan a la parte de la
+   * máscara. Quiero otro slider que afecte a las partes FUERA de la
+   * mask" — Body/Weapons only (undefined on Cockpit, no split requested
+   * there). The real RGBPaintMask doesn't survive export (baked away —
+   * see MECH_PBR_URLS's own doc comment on what patterns actually
+   * survive) — this is a confirmed-with-the-user APPROXIMATION using the
+   * already-baked metallicRoughness texture's own metalness (blue)
+   * channel as a stand-in mask: it's derived from the same MetalID data,
+   * so a high sample there already means "bare/unpainted metal," a low
+   * one "painted panel" — see applyMechPbrMaskPatch's own doc comment
+   * for the shader-level blend this actually drives. `roughness`/
+   * `metalness` above keep meaning the PAINTED region (unchanged
+   * behavior/defaults) when this is set; these two apply only where that
+   * mask sample reads as bare metal.
+   * Real follow-up: "los generales afectan a TODO a la vez" (Detalle de
+   * relieve / Brillo specifically) — those two didn't get a mask split
+   * in the first version, so they always touched the WHOLE zone
+   * material regardless of the mask. metalNormalScale/metalColorBoost
+   * close that gap, same painted/metal pairing as the two above. */
+  metalRoughness?: number
+  metalMetalness?: number
+  metalNormalScale?: number
+  metalColorBoost?: number
+}
+
+export interface MechPbrSettings {
+  /** UV tiling repeat for the detail maps — shared across zones, see this
+   * type's own doc comment for why. */
+  repeat: number
+  body: MechPbrZoneSettings
+  weapons: MechPbrZoneSettings
+  cockpit: MechPbrZoneSettings
+}
+
+/** Which of the three tunable zones a given material belongs to — pure
+ * name-substring matching against the real material names this pipeline
+ * ships (verified live on Bushwacker: every cockpit-related material,
+ * shared library ones included, contains "cockpit"/"Cockpit"; both
+ * weapon materials contain "Weapon"). Falls back to 'body' for anything
+ * else (the actual Body material, and any small shared prop like
+ * Clan_Greeble_A_MTI that doesn't fit either of the other two) — 'body'
+ * is deliberately the catch-all, not a fourth "unknown" bucket, since a
+ * mis-classified small prop is far less noticeable riding along with the
+ * body's own tuning than left completely uncontrolled. */
+function mechPbrZoneOfMaterial(materialName: string | undefined): 'body' | 'weapons' | 'cockpit' {
+  const name = (materialName ?? '').toLowerCase()
+  if (name.includes('cockpit')) return 'cockpit'
+  if (name.includes('weapon')) return 'weapons'
+  return 'body'
 }
 
 // Same module-level cache/subscriber pattern as mechAnnotations.ts's own
@@ -1358,12 +2032,39 @@ function useMechPbrSettingsCache(): MechPbrSettingsRecord[] {
  * never read them back; this closes that loop for every Mech3D instance
  * (HexMap/FirstPersonView/anywhere else one mounts), not just MechLabView
  * itself. */
-function findSavedPbrSettings(records: MechPbrSettingsRecord[], url: string): MechPbrSettings | undefined {
+export function findSavedPbrSettings(records: MechPbrSettingsRecord[], url: string): MechPbrSettings | undefined {
   const rec = records.find((r) => r.model_url === url)
   if (!rec) return undefined
   return {
-    repeat: rec.repeat, normalScale: rec.normal_scale, roughness: rec.roughness,
-    metalness: rec.metalness, colorBoost: rec.color_boost, aoIntensity: rec.ao_intensity,
+    repeat: rec.repeat,
+    body: {
+      normalScale: rec.body_normal_scale, roughness: rec.body_roughness, metalness: rec.body_metalness,
+      colorBoost: rec.body_color_boost, aoIntensity: rec.body_ao_intensity,
+      metalRoughness: rec.body_metal_roughness ?? rec.body_roughness,
+      metalMetalness: rec.body_metal_metalness ?? rec.body_metalness,
+      metalNormalScale: rec.body_metal_normal_scale ?? rec.body_normal_scale,
+      metalColorBoost: rec.body_metal_color_boost ?? rec.body_color_boost,
+    },
+    // weapons_*/cockpit_* are only ever null on a row saved before these
+    // zones existed — see MechPbrSettingsRecord's own doc comment.
+    weapons: {
+      normalScale: rec.weapons_normal_scale ?? MECH_PBR_DEFAULTS.weapons.normalScale,
+      roughness: rec.weapons_roughness ?? MECH_PBR_DEFAULTS.weapons.roughness,
+      metalness: rec.weapons_metalness ?? MECH_PBR_DEFAULTS.weapons.metalness,
+      colorBoost: rec.weapons_color_boost ?? MECH_PBR_DEFAULTS.weapons.colorBoost,
+      aoIntensity: rec.weapons_ao_intensity ?? MECH_PBR_DEFAULTS.weapons.aoIntensity,
+      metalRoughness: rec.weapons_metal_roughness ?? rec.weapons_roughness ?? MECH_PBR_DEFAULTS.weapons.metalRoughness,
+      metalMetalness: rec.weapons_metal_metalness ?? rec.weapons_metalness ?? MECH_PBR_DEFAULTS.weapons.metalMetalness,
+      metalNormalScale: rec.weapons_metal_normal_scale ?? rec.weapons_normal_scale ?? MECH_PBR_DEFAULTS.weapons.metalNormalScale,
+      metalColorBoost: rec.weapons_metal_color_boost ?? rec.weapons_color_boost ?? MECH_PBR_DEFAULTS.weapons.metalColorBoost,
+    },
+    cockpit: {
+      normalScale: rec.cockpit_normal_scale ?? MECH_PBR_DEFAULTS.cockpit.normalScale,
+      roughness: rec.cockpit_roughness ?? MECH_PBR_DEFAULTS.cockpit.roughness,
+      metalness: rec.cockpit_metalness ?? MECH_PBR_DEFAULTS.cockpit.metalness,
+      colorBoost: rec.cockpit_color_boost ?? MECH_PBR_DEFAULTS.cockpit.colorBoost,
+      aoIntensity: rec.cockpit_ao_intensity ?? MECH_PBR_DEFAULTS.cockpit.aoIntensity,
+    },
   }
 }
 
@@ -1385,13 +2086,43 @@ function findSavedPbrSettings(records: MechPbrSettingsRecord[], url: string): Me
 // variation actually shows (confirmed live: metalness 1 vs 0 changes the
 // WHOLE model dramatically, so somewhere well above 0.06 is required for
 // per-pixel variation to read at all).
-export const MECH_PBR_DEFAULTS: MechPbrSettings = {
-  repeat: MECH_PBR_REPEAT,
+// Same starting numbers for all three zones (matches this app's own
+// pre-split behavior exactly, so an already-saved chassis' DEFAULT look
+// doesn't shift just because the zones became independently tunable) —
+// deliberately NOT re-tuned per zone here. Live testing already showed
+// the Weapons zone's own real baseline (glTF's bare 1.0/1.0 default —
+// see mechPbrZoneOfMaterial's own doc comment) needs a genuinely
+// different target than the Body's own calibrated maps, but picking
+// that number blind, without a live render to check it against, would
+// just trade one unverified guess for another — the whole point of
+// splitting these was to let it be tuned per zone in MechLab with real
+// visual feedback, not to have this file guess it up front.
+const MECH_PBR_ZONE_DEFAULTS: MechPbrZoneSettings = {
   normalScale: 0.6,
   roughness: 0.6,
   metalness: 0.24,
   colorBoost: MECH_COLOR_BOOST,
   aoIntensity: 0.6,
+}
+export const MECH_PBR_DEFAULTS: MechPbrSettings = {
+  repeat: MECH_PBR_REPEAT,
+  // metalRoughness/metalMetalness start EQUAL to their painted-region
+  // sibling (not a separately-guessed number, same reasoning as the doc
+  // comment just above) — the mask-aware blend this drives is then a
+  // pure no-op at default slider positions, only moving either one away
+  // from the other reveals the split. Cockpit gets no mask split at all
+  // (never requested there) — undefined on that zone.
+  body: {
+    ...MECH_PBR_ZONE_DEFAULTS,
+    metalRoughness: MECH_PBR_ZONE_DEFAULTS.roughness, metalMetalness: MECH_PBR_ZONE_DEFAULTS.metalness,
+    metalNormalScale: MECH_PBR_ZONE_DEFAULTS.normalScale, metalColorBoost: MECH_PBR_ZONE_DEFAULTS.colorBoost,
+  },
+  weapons: {
+    ...MECH_PBR_ZONE_DEFAULTS,
+    metalRoughness: MECH_PBR_ZONE_DEFAULTS.roughness, metalMetalness: MECH_PBR_ZONE_DEFAULTS.metalness,
+    metalNormalScale: MECH_PBR_ZONE_DEFAULTS.normalScale, metalColorBoost: MECH_PBR_ZONE_DEFAULTS.colorBoost,
+  },
+  cockpit: { ...MECH_PBR_ZONE_DEFAULTS },
 }
 
 // Real user request: "y el ambient occlusion?" — this texture set only
@@ -1442,6 +2173,163 @@ function getProceduralAoTexture(normalTexture: THREE.Texture): THREE.Texture {
 // selección de armas, no aparece en el resto de sitios"). Generic — every
 // chassis gets this now ("PBR van a tener todos los mechs... esto tiene
 // que ser genérico"), not gated to one chassis name.
+/** Real user request: "el cuerpo, las armas... tienen una máscara para
+ * aplicar las texturas. Los sliders solo afectan a la parte de la
+ * máscara. Quiero otro slider que afecte a las partes FUERA de la mask"
+ * — confirmed with the user this is an APPROXIMATION (the real
+ * RGBPaintMask doesn't survive export, see MechPbrZoneSettings' own doc
+ * comment on metalRoughness/metalMetalness for why), using the ALREADY-
+ * baked metallicRoughness texture's own blue (metalness) channel as the
+ * mask signal — exactly the same texel `metalnessmap_fragment` already
+ * samples for the normal metalness calculation, just also used to blend
+ * toward a SECOND target instead of only multiplying the one scalar.
+ * `mix(paintedValue, metalValue, maskWeight)`: at maskWeight 0 (a fully
+ * painted texel) this is identical to the plain single-target behavior
+ * above; at maskWeight 1 (fully bare metal) it's entirely the new
+ * target. Chunk source verified against this project's own installed
+ * three.js version (node_modules/.../ShaderChunk/roughnessmap_fragment.
+ * glsl.js, metalnessmap_fragment.glsl.js) before writing this — reusing
+ * it wholesale (not just appending to it) is what keeps the existing,
+ * already-correct painted-side math (`roughnessFactor *= texelRoughness.
+ * g`) unchanged for maskWeight 0.
+ *
+ * Real bug found via this exact feature's own live testing: "cuerpo
+ * general modifica toda la malla, y fuera de máscara NO MODIFICA NADA"
+ * — root cause was NOT the shader math (verified correct on paper) but
+ * the update mechanism. Reassigning `material.onBeforeCompile` to a new
+ * closure and setting `material.needsUpdate = true` does NOT make
+ * three.js re-invoke `onBeforeCompile` once a program with matching
+ * source text is already cached — confirmed live (console instrumented):
+ * it fires exactly once per material, at the very first compile, never
+ * again on later slider nudges. Every uniform this patch injects
+ * (mechPbrMetal*) is therefore captured ONCE at whatever the mask
+ * sliders happened to be at mount and frozen forever after, while the
+ * material's own NATIVE uniforms (roughness/metalness/diffuse/
+ * normalScale) keep updating live every frame regardless of
+ * onBeforeCompile — because three.js refreshes those through its own
+ * standard per-frame uniform upload, unrelated to shader recompilation.
+ * That combination is exactly the reported symptom: the general
+ * (painted) sliders visibly move the whole mesh via the native uniform
+ * path, while the mask sliders drive a custom uniform nothing ever
+ * re-reads. Fixed by keeping a stable reference to the injected uniform
+ * objects (in `mat.userData`) and, on every re-run after the first,
+ * mutating `.value` on those SAME objects directly instead of trying to
+ * force a recompile — the standard three.js pattern for a live-tunable
+ * onBeforeCompile uniform. */
+function applyMechPbrMaskPatch(mat: THREE.MeshStandardMaterial, options: {
+  metalRoughness: number
+  metalMetalness: number
+  /** Real user report, right after shipping roughness/metalness-only:
+   * "los generales afectan a TODO a la vez" (Detalle de relieve / Brillo
+   * specifically) — those two never got a mask split at all in the first
+   * version, so moving them always touched the WHOLE zone material
+   * (painted AND bare-metal region together, since they're one texture)
+   * — not a bug, just an incomplete scope that didn't match what was
+   * actually asked for. Both now blend too, via a RATIO against
+   * whatever the plain painted-side JS code already computed (see this
+   * option's own use site below) — cheaper than a second full
+   * uniform, and automatically consistent with the painted value's own
+   * baseline-relative scaling from the caller. */
+  normalScaleRatio: number
+  colorBoostRatio: number
+}) {
+  const { metalRoughness, metalMetalness, normalScaleRatio, colorBoostRatio } = options
+  const userData = mat.userData as { __mechPbrMaskUniforms?: {
+    mechPbrMetalRoughness: { value: number }
+    mechPbrMetalMetalness: { value: number }
+    mechPbrMetalNormalScaleRatio: { value: number }
+    mechPbrMetalColorBoostRatio: { value: number }
+  } }
+  if (userData.__mechPbrMaskUniforms) {
+    const u = userData.__mechPbrMaskUniforms
+    u.mechPbrMetalRoughness.value = metalRoughness
+    u.mechPbrMetalMetalness.value = metalMetalness
+    u.mechPbrMetalNormalScaleRatio.value = normalScaleRatio
+    u.mechPbrMetalColorBoostRatio.value = colorBoostRatio
+    return
+  }
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.mechPbrMetalRoughness = { value: metalRoughness }
+    shader.uniforms.mechPbrMetalMetalness = { value: metalMetalness }
+    shader.uniforms.mechPbrMetalNormalScaleRatio = { value: normalScaleRatio }
+    shader.uniforms.mechPbrMetalColorBoostRatio = { value: colorBoostRatio }
+    userData.__mechPbrMaskUniforms = {
+      mechPbrMetalRoughness: shader.uniforms.mechPbrMetalRoughness,
+      mechPbrMetalMetalness: shader.uniforms.mechPbrMetalMetalness,
+      mechPbrMetalNormalScaleRatio: shader.uniforms.mechPbrMetalNormalScaleRatio,
+      mechPbrMetalColorBoostRatio: shader.uniforms.mechPbrMetalColorBoostRatio,
+    }
+    shader.fragmentShader = shader.fragmentShader
+      .replace(
+        '#include <common>',
+        '#include <common>\nuniform float mechPbrMetalRoughness;\nuniform float mechPbrMetalMetalness;'
+          + '\nuniform float mechPbrMetalNormalScaleRatio;\nuniform float mechPbrMetalColorBoostRatio;',
+      )
+      // Real user request: "otro slider que afecte a las partes FUERA de
+      // la mask" for Brillo too — diffuseColor.rgb is already `texel *
+      // diffuse` at this point (map_fragment ran first in this
+      // pipeline — verified against this project's own installed
+      // three.js ShaderLib/meshphysical.glsl.js include order — and
+      // `diffuse` is the JS side's own PAINTED colorBoost already baked
+      // in, see applyColorBoost's own call site). Rescaling by the
+      // metal/painted RATIO reproduces `texel * metalColorBoost`
+      // without needing a second base-color uniform.
+      .replace(
+        '#include <map_fragment>',
+        `
+        #include <map_fragment>
+        #ifdef USE_METALNESSMAP
+          float mechPbrColorMaskWeight = texture2D( metalnessMap, vMetalnessMapUv ).b;
+          diffuseColor.rgb = mix( diffuseColor.rgb, diffuseColor.rgb * mechPbrMetalColorBoostRatio, mechPbrColorMaskWeight );
+        #endif
+        `,
+      )
+      .replace(
+        '#include <roughnessmap_fragment>',
+        `
+        float roughnessFactor = roughness;
+        #ifdef USE_ROUGHNESSMAP
+          vec4 texelRoughness = texture2D( roughnessMap, vRoughnessMapUv );
+          roughnessFactor *= texelRoughness.g;
+        #endif
+        #ifdef USE_METALNESSMAP
+          float mechPbrMaskWeight = texture2D( metalnessMap, vMetalnessMapUv ).b;
+          roughnessFactor = mix( roughnessFactor, mechPbrMetalRoughness, mechPbrMaskWeight );
+        #endif
+        `,
+      )
+      .replace(
+        '#include <metalnessmap_fragment>',
+        `
+        float metalnessFactor = metalness;
+        #ifdef USE_METALNESSMAP
+          vec4 texelMetalness = texture2D( metalnessMap, vMetalnessMapUv );
+          metalnessFactor *= texelMetalness.b;
+          metalnessFactor = mix( metalnessFactor, mechPbrMetalMetalness, texelMetalness.b );
+        #endif
+        `,
+      )
+      // Real user request: mask split for Detalle de relieve too —
+      // `mapN.xy *= normalScale` is three.js's own built-in line here;
+      // this rescales that SAME built-in `normalScale` uniform (already
+      // the painted value, set JS-side) by the metal/painted ratio
+      // wherever the mask reads as bare metal, same reasoning as the
+      // color rescale above.
+      .replace(
+        'mapN.xy *= normalScale;',
+        `
+        #ifdef USE_METALNESSMAP
+          float mechPbrNormalMaskWeight = texture2D( metalnessMap, vMetalnessMapUv ).b;
+          mapN.xy *= normalScale * mix( 1.0, mechPbrMetalNormalScaleRatio, mechPbrNormalMaskWeight );
+        #else
+          mapN.xy *= normalScale;
+        #endif
+        `,
+      )
+  }
+  mat.needsUpdate = true
+}
+
 export function useMechPbr(
   instance: THREE.Group,
   options?: {
@@ -1462,11 +2350,12 @@ export function useMechPbr(
 ) {
   const applyColorBoost = options?.applyColorBoost ?? true
   const repeat = options?.settings?.repeat ?? MECH_PBR_DEFAULTS.repeat
-  const normalScale = options?.settings?.normalScale ?? MECH_PBR_DEFAULTS.normalScale
-  const roughness = options?.settings?.roughness ?? MECH_PBR_DEFAULTS.roughness
-  const metalness = options?.settings?.metalness ?? MECH_PBR_DEFAULTS.metalness
-  const colorBoost = options?.settings?.colorBoost ?? MECH_PBR_DEFAULTS.colorBoost
-  const aoIntensity = options?.settings?.aoIntensity ?? MECH_PBR_DEFAULTS.aoIntensity
+  // One full set per zone (Body/Weapons/Cockpit — see MechPbrSettings'
+  // own doc comment) instead of one shared set — mechPbrZoneOfMaterial
+  // below picks which of these three a given material actually uses.
+  const zoneBody = options?.settings?.body ?? MECH_PBR_DEFAULTS.body
+  const zoneWeapons = options?.settings?.weapons ?? MECH_PBR_DEFAULTS.weapons
+  const zoneCockpit = options?.settings?.cockpit ?? MECH_PBR_DEFAULTS.cockpit
   // Always loaded (drei's useTexture cache is global/keyed by URL, so
   // every OTHER mech — or any die using this same chrome set — pays for
   // this exactly once) rather than conditionally — hooks can't be called
@@ -1478,30 +2367,90 @@ export function useMechPbr(
     instance.traverse((obj) => {
       if (!(obj instanceof THREE.Mesh)) return
       const mat = obj.material as THREE.MeshStandardMaterial
-      const normalMap = mechPbrTextures.normalMap.clone()
-      const roughnessMap = mechPbrTextures.roughnessMap.clone()
-      const metalnessMap = mechPbrTextures.metalnessMap.clone()
+      const zone = mechPbrZoneOfMaterial(mat.name)
+      const {
+        normalScale, roughness, metalness, colorBoost, aoIntensity,
+        metalRoughness, metalMetalness, metalNormalScale, metalColorBoost,
+      } = zone === 'weapons' ? zoneWeapons : zone === 'cockpit' ? zoneCockpit : zoneBody
       const aoMap = aoSource.clone()
-      for (const tex of [normalMap, roughnessMap, metalnessMap, aoMap]) {
-        tex.wrapS = tex.wrapT = THREE.RepeatWrapping
-        tex.repeat.set(repeat, repeat)
-        // Normal/roughness/metalness/AO are DATA, not color — must never
-        // be sRGB-decoded (that would wash out/skew their actual values).
-        tex.colorSpace = THREE.NoColorSpace
-        tex.needsUpdate = true
-      }
-      mat.normalMap = normalMap
+      aoMap.wrapS = aoMap.wrapT = THREE.RepeatWrapping
+      aoMap.repeat.set(repeat, repeat)
+      aoMap.colorSpace = THREE.NoColorSpace
+      aoMap.needsUpdate = true
       mat.aoMap = aoMap
       mat.aoMapIntensity = aoIntensity
-      // Live-tested (Playwright) at normalScale 1: the tiled detail normal
-      // map, at full strength, faceted the surface into hard dark creases
-      // under a single directional light — read as "the whole model went
-      // blotchy/black", not a subtle scratched-metal detail. Turned way
-      // down so it stays a faint surface-grain hint instead of visibly
-      // reshaping the model's own silhouette shading.
-      mat.normalScale.set(normalScale, normalScale)
-      mat.roughnessMap = roughnessMap
-      mat.metalnessMap = metalnessMap
+      // Real per-chassis PBR maps (Bushwacker onward, MW5-sourced) ship
+      // their own normal/roughness/metalness textures baked from real
+      // game data and land on `mat` straight off the GLTFLoader before
+      // this hook ever runs. This generic tiled overlay exists only to
+      // give placeholder chassis — which ship with NO real maps at all,
+      // see MECH_PBR_URLS's own doc comment — something to look at, and
+      // must never clobber a chassis that already has the real thing.
+      // Tag every texture (and the scalar pairing that came with it) this
+      // hook itself assigns so a later re-run (e.g. a Textura-tab slider
+      // change) can tell "mine, safe to replace" apart from "the model's
+      // own, never touch" — `mat.normalMap` is real on the FIRST run for
+      // Bushwacker, but would look identical to an overlay on later runs
+      // without this tag.
+      const hasRealNormal = !!mat.normalMap && !mat.normalMap.userData?.isMechPbrOverlay
+      const hasRealRoughness = !!mat.roughnessMap && !mat.roughnessMap.userData?.isMechPbrOverlay
+      const hasRealMetalness = !!mat.metalnessMap && !mat.metalnessMap.userData?.isMechPbrOverlay
+
+      if (!hasRealNormal) {
+        const normalMap = mechPbrTextures.normalMap.clone()
+        normalMap.wrapS = normalMap.wrapT = THREE.RepeatWrapping
+        normalMap.repeat.set(repeat, repeat)
+        normalMap.colorSpace = THREE.NoColorSpace
+        normalMap.needsUpdate = true
+        normalMap.userData.isMechPbrOverlay = true
+        mat.normalMap = normalMap
+        // Live-tested (Playwright) at normalScale 1: the tiled detail normal
+        // map, at full strength, faceted the surface into hard dark creases
+        // under a single directional light — read as "the whole model went
+        // blotchy/black", not a subtle scratched-metal detail. Turned way
+        // down so it stays a faint surface-grain hint instead of visibly
+        // reshaping the model's own silhouette shading.
+        mat.normalScale.set(normalScale, normalScale)
+      } else {
+        // Real user report: "los sliders tienen que dejarnos configurar
+        // algunas características de las texturas del mech" — a chassis
+        // WITH its own real normal map (Bushwacker onward) used to just
+        // skip this slider entirely (the map itself was correctly left
+        // alone, but so was normalScale, the one part of it this slider
+        // was always meant to reach — normalScale multiplies whatever the
+        // map already encodes, it never replaces per-texel detail, so
+        // there's no reason to gate it the same way the MAP REPLACEMENT
+        // above needs to be gated). Same snapshot-then-multiply pattern
+        // applyColorBoost already uses for mat.color just below — captured
+        // ONCE (this material's real, GLTFLoader-set baseline) so re-runs
+        // scale FROM that fixed point instead of compounding, and divided
+        // by MECH_PBR_DEFAULTS.normalScale so the slider's OWN default
+        // position reproduces the untouched baseline exactly (only moving
+        // the slider away from default changes anything) — the calibrated
+        // per-chassis detail this chassis already ships never quietly
+        // shifts just because this hook ran again.
+        const userData = mat.userData as { __mechPbrBaseNormalScale?: THREE.Vector2 }
+        if (!userData.__mechPbrBaseNormalScale) userData.__mechPbrBaseNormalScale = mat.normalScale.clone()
+        mat.normalScale.copy(userData.__mechPbrBaseNormalScale).multiplyScalar(normalScale / MECH_PBR_DEFAULTS[zone].normalScale)
+      }
+      if (!hasRealRoughness) {
+        const roughnessMap = mechPbrTextures.roughnessMap.clone()
+        roughnessMap.wrapS = roughnessMap.wrapT = THREE.RepeatWrapping
+        roughnessMap.repeat.set(repeat, repeat)
+        roughnessMap.colorSpace = THREE.NoColorSpace
+        roughnessMap.needsUpdate = true
+        roughnessMap.userData.isMechPbrOverlay = true
+        mat.roughnessMap = roughnessMap
+      }
+      if (!hasRealMetalness) {
+        const metalnessMap = mechPbrTextures.metalnessMap.clone()
+        metalnessMap.wrapS = metalnessMap.wrapT = THREE.RepeatWrapping
+        metalnessMap.repeat.set(repeat, repeat)
+        metalnessMap.colorSpace = THREE.NoColorSpace
+        metalnessMap.needsUpdate = true
+        metalnessMap.userData.isMechPbrOverlay = true
+        mat.metalnessMap = metalnessMap
+      }
       // Real scanned surface detail (fine scratches/wear) layered under
       // the model's own painted base-color texture, not a full chrome
       // finish — a battle mech reads as painted metal, not a mirror.
@@ -1515,8 +2464,56 @@ export function useMechPbr(
       // the average) cut well below the map's own range so the result
       // stays legible under plain ambient/directional light, no
       // environment map required anywhere this renders.
-      mat.roughness = roughness
-      mat.metalness = metalness
+      //
+      // Real user report: "los sliders tienen que dejarnos configurar
+      // algunas características de las texturas del mech" — a chassis
+      // WITH its own real roughness/metalness map used to skip these two
+      // scalars entirely, on the theory that "it already carries the
+      // right scalar factor from its own glTF material." True, but
+      // roughness/metalness are MULTIPLIERS on the map sample in this
+      // material model (finalRoughness = mat.roughness * mapSample), never
+      // a replacement for it — there was never a real reason these
+      // sliders couldn't ALSO scale a real chassis's own calibrated
+      // baseline up/down, same idea as normalScale just above. Same
+      // snapshot-then-multiply-from-default pattern: captured once (the
+      // real, GLTFLoader-set value), divided by MECH_PBR_DEFAULTS' own
+      // roughness/metalness so each slider's OWN default position
+      // reproduces that calibrated baseline exactly untouched, and only
+      // moving a slider away from default scales it.
+      const baseUserData = mat.userData as { __mechPbrBaseRoughness?: number; __mechPbrBaseMetalness?: number }
+      if (hasRealRoughness) {
+        if (baseUserData.__mechPbrBaseRoughness == null) baseUserData.__mechPbrBaseRoughness = mat.roughness
+        mat.roughness = baseUserData.__mechPbrBaseRoughness * (roughness / MECH_PBR_DEFAULTS[zone].roughness)
+      } else {
+        mat.roughness = roughness
+      }
+      if (hasRealMetalness) {
+        if (baseUserData.__mechPbrBaseMetalness == null) baseUserData.__mechPbrBaseMetalness = mat.metalness
+        mat.metalness = baseUserData.__mechPbrBaseMetalness * (metalness / MECH_PBR_DEFAULTS[zone].metalness)
+      } else {
+        mat.metalness = metalness
+      }
+      // See applyMechPbrMaskPatch's own doc comment. Only meaningful with
+      // a real metalnessMap to sample as the mask signal in the first
+      // place (hasRealMetalness) — a chassis/material with no real map at
+      // all (the generic placeholder overlay case) has no per-texel mask
+      // to blend against, same "nothing to split" reasoning as
+      // metalRoughness/metalMetalness being undefined on the Cockpit
+      // zone entirely.
+      if (hasRealMetalness && metalRoughness != null && metalMetalness != null) {
+        const normalScaleRatio = normalScale > 0 && metalNormalScale != null ? metalNormalScale / normalScale : 1
+        const colorBoostRatio = colorBoost > 0 && metalColorBoost != null ? metalColorBoost / colorBoost : 1
+        applyMechPbrMaskPatch(mat, {
+          metalRoughness, metalMetalness,
+          // Ratio, not the raw value — see applyMechPbrMaskPatch's own
+          // doc comment on why (rescales whatever the painted-side JS
+          // code above already computed, no second base uniform needed).
+          // Guards against a somehow-zero painted value (would divide by
+          // zero) by just skipping the metal-side rescale in that
+          // degenerate case — ratio 1 is a no-op mix, same as "no mask".
+          normalScaleRatio, colorBoostRatio,
+        })
+      }
       // Real, separate finding (measured live: the Jenner's own base-color
       // texture averages ~19% brightness — genuinely a dark, near-black
       // camo paint job baked into that .glb) — turning metalness/
@@ -1546,7 +2543,7 @@ export function useMechPbr(
       }
       mat.needsUpdate = true
     })
-  }, [instance, mechPbrTextures, applyColorBoost, repeat, normalScale, roughness, metalness, colorBoost, aoIntensity])
+  }, [instance, mechPbrTextures, applyColorBoost, repeat, zoneBody, zoneWeapons, zoneCockpit])
 }
 
 // Real user question: "como lo hace battletech? no hay un archivo que
@@ -1620,6 +2617,236 @@ const GAME_CLIP_SUFFIXES: Record<string, string> = {
   TorsoTwistRight: 'torsoTwistRight',
 }
 
+const TORSO_TWIST_BONE = 'j_Spine2'
+
+/** Samples a bone's own LOCAL quaternion directly out of a clip's raw
+ * keyframe track at an arbitrary time — no skeleton/mixer needed, since a
+ * bone's OWN rotation track already IS its local-space rotation (unlike a
+ * bone's world POSITION, which needs the whole ancestor chain evaluated —
+ * see computeWalkGaitCurve's own doc comment for why that one DOES need a
+ * throwaway rig). `null` if this clip doesn't animate that bone at all. */
+function sampleBoneQuaternion(clip: THREE.AnimationClip, boneName: string, time: number): THREE.Quaternion | null {
+  const track = clip.tracks.find((t) => t.name === `${boneName}.quaternion`)
+  if (!track) return null
+  const result = track.createInterpolant().evaluate(time)
+  return new THREE.Quaternion(result[0], result[1], result[2], result[3])
+}
+
+/** Real user report: the torso-twist overlay always rotated the exact
+ * same amount (read as a fixed ~90°) no matter how far off the real
+ * target actually was — HexMap only ever decides a DIRECTION (left/
+ * right, see attackSignal's own `twist` doc comment); the overlay used
+ * to always play at full weight regardless of how many degrees were
+ * actually needed. Since the overlay is an ADDITIVE layer (see
+ * twistOverlayActionsRef's own doc comment), its `weight` is exactly the
+ * right knob to scale it down — but that needs to know how many radians
+ * THIS chassis's own twist clip actually bakes in, to turn "the real
+ * target is 40° off" into "40° is what fraction of this clip's own full
+ * swing." Measured once per chassis (same "sample the real clip data
+ * instead of guessing" approach as computeWalkGaitCurve above) straight
+ * off the raw (non-additive) twist clip vs the idle clip's own rest
+ * pose — no live rig needed here, unlike that one, since a single bone's
+ * OWN rotation track doesn't need forward kinematics. `null` if either
+ * clip is missing the bone, or the two poses are identical (a badly-
+ * authored clip that doesn't actually rotate it) — callers fall back to
+ * full weight rather than dividing by zero. */
+function measureBakedTwistAngle(idleClip: THREE.AnimationClip, twistClip: THREE.AnimationClip): number | null {
+  const restQuat = sampleBoneQuaternion(idleClip, TORSO_TWIST_BONE, 0)
+  const twistQuat = sampleBoneQuaternion(twistClip, TORSO_TWIST_BONE, twistClip.duration)
+  if (!restQuat || !twistQuat) return null
+  const angle = restQuat.angleTo(twistQuat)
+  return angle > 1e-3 ? angle : null
+}
+
+// See resolveClipKey's own doc comment on the "brazos separados" bug this
+// guards against — the literal, verified prefix every one of the 15
+// affected placeholder chassis' borrowed clips carry.
+export const KNOWN_BORROWED_CLIP_PREFIX = 'atlas'
+
+/** Marks a clip built by buildRetargetedBorrowedClip below — never a raw
+ * glTF clip name, so resolveClipKey can tell "the corrected version of a
+ * borrowed clip" apart from "the raw borrowed clip itself" just by
+ * string suffix. */
+const RETARGET_SUFFIX = '__retargeted'
+
+/** Atlas.glb's own bind-pose LOCAL rotation per joint, read directly off
+ * its glTF nodes (never sampled from a clip — a clip's own first frame
+ * isn't reliably at rest, e.g. an attack pose). Real user report
+ * (Commando, screenshot): letting a borrowed atlas_ clip play as-is sent
+ * both arms flying up near the head, fully detached at the shoulder,
+ * while the legs stayed attached. Root cause, found by comparing raw
+ * glTF node rotations directly: a borrowed clip's `.quaternion` tracks
+ * are ABSOLUTE local rotations, authored against ATLAS's own bind pose.
+ * j_LClavicle rests at (0,0,-0.827,0.562) in Atlas but (0,0,-0.707,0.707)
+ * in Commando — a real ~30° difference that keeps compounding down the
+ * UpperArm/Forearm chain. Writing Atlas's absolute value straight into
+ * Commando's clavicle doesn't reproduce the intended POSE, it just picks
+ * a different absolute orientation for a joint whose own rest already
+ * points elsewhere. Legs differ far less between the two rigs (a few
+ * degrees), so the same issue is there too, just small enough to read as
+ * "looks fine" — and it's exactly why Warhammer/Assassin/Catapult (same
+ * borrowed-only situation as Commando, just with body proportions closer
+ * to Atlas's own) got away with playing the raw clip for a long time
+ * before anyone noticed, right up until resolveClipKey's own
+ * isBorrowed guard (below) started refusing to play it for ANY of them —
+ * trading "plays looking slightly off" for "doesn't play at all", which
+ * is strictly worse for a chassis where it never looked broken.
+ * buildRetargetedBorrowedClip removes each joint's own
+ * Atlas-vs-this-chassis bind-pose offset before playback, so what plays
+ * is the actual authored MOTION (the delta from Atlas's own rest)
+ * reapplied on top of THIS chassis's own rest — correct for all of them
+ * at once, not a per-chassis judgment call. */
+const ATLAS_REST_QUATS: Record<string, [number, number, number, number]> = {
+  j_Head: [-0.707107, 0.000005, 0.000001, 0.707106],
+  j_LCalf: [-0.175796, 0.000001, 0, 0.984427],
+  j_LClavicle: [-0.000004, -0.000004, -0.827211, 0.561891],
+  j_LFoot: [0.135445, 0.000025, -0.000209, 0.990785],
+  j_LForearm: [0.325986, 0, -0.000001, 0.945375],
+  j_LHip: [0.000022, -0.000022, -0.707361, 0.706853],
+  j_LThigh: [0.02583, -0.025856, -0.70638, 0.706889],
+  j_LToe0: [0.671128, -0.009855, -0.011082, 0.741193],
+  j_LUpperArm: [0.000011, -0.00001, -0.56189, 0.827212],
+  j_Neck: [0.707104, 0, 0, 0.70711],
+  j_Pelvis: [0, 0, 0, 1],
+  j_Pitch: [0.707109, 0, -0.000004, 0.707104],
+  j_RCalf: [-0.175804, 0, 0.000001, 0.984425],
+  j_RClavicle: [0.000002, 0, 0.827214, 0.561887],
+  j_RFoot: [0.135972, 0.00003, -0.00018, 0.990713],
+  j_RForearm: [0.326011, -0.000004, 0.000001, 0.945366],
+  j_RHip: [0, 0, 0.707107, 0.707107],
+  j_Root: [-0.707107, 0, 0, 0.707107],
+  j_RThigh: [0.025844, 0.025842, 0.706635, 0.706634],
+  j_RToe0: [0.671162, -0.008112, -0.00909, 0.74121],
+  j_RUpperArm: [0.004981, 0.003386, 0.561784, 0.827262],
+  j_Spine: [-0.707618, 0.000368, 0.000375, 0.706595],
+  j_Spine1: [0.000724, 0, -0.000526, 1],
+  j_Spine2: [0, 0, 0, 1],
+}
+
+/** Bind-pose LOCAL quaternion of every bone THIS chassis actually has,
+ * for the bones ATLAS_REST_QUATS knows about — read straight off `scene`
+ * (the raw useGLTF result, never itself driven by a mixer, so its bones
+ * are still exactly the file's own bind pose no matter what any rendered
+ * clone's AnimationMixer has done elsewhere). */
+export interface ChassisRestPose {
+  quaternion: THREE.Quaternion
+  /** Real bug found live (Commando's atlas_attackMeleeIdle): j_LClavicle's
+   * OWN `.position` (translation) track in that clip holds (3.077, 4.495,
+   * -1.311) — Atlas's own shoulder-mount offset, nowhere close to
+   * Commando's actual rest translation (1.199, 2.100, -0.339). Every
+   * other arm bone checked earlier (UpperArm, Forearm) happened to hold
+   * its OWN chassis's rest translation constant throughout — which is
+   * what led to the wrong assumption that translation never needs
+   * retargeting. It isn't universal: whichever mount point differs most
+   * between Atlas's and this chassis's proportions (the shoulder anchor,
+   * for a mech a fraction of Atlas's size) carries Atlas's raw number
+   * too. Recorded here so buildRetargetedBorrowedClip can force any
+   * `.position` track back to THIS chassis's own bind-pose translation
+   * whenever it doesn't already match it. */
+  position: THREE.Vector3
+}
+
+export function getChassisRestQuats(scene: THREE.Object3D): Map<string, ChassisRestPose> {
+  const out = new Map<string, ChassisRestPose>()
+  for (const boneName of Object.keys(ATLAS_REST_QUATS)) {
+    const bone = scene.getObjectByName(boneName)
+    if (bone) out.set(boneName, { quaternion: bone.quaternion.clone(), position: bone.position.clone() })
+  }
+  return out
+}
+
+/** Builds a NEW clip — new tracks, new typed arrays — with every
+ * `.quaternion` track re-expressed relative to THIS chassis's own bind
+ * pose instead of Atlas's (see ATLAS_REST_QUATS' own doc comment for
+ * why). Never mutates `clip` or any of its existing tracks: an earlier
+ * attempt at this wrote corrected values directly into the original
+ * track's `.values` array and broke OTHER, previously-correct clips
+ * (Hatchetman's own included) that happened to share that exact
+ * underlying typed array — GLTFLoader can alias the same buffer across
+ * multiple tracks when their keyframe data is byte-identical, which
+ * every one of these borrowed atlas_ clips is by construction. Building
+ * a standalone clip instead means nothing already cached by useGLTF is
+ * ever touched, no matter how its buffers are shared internally.
+ * `.scale` tracks are reused by reference (read-only, sharing is safe) —
+ * every one checked stays at (1,1,1) throughout. `.position` (translation)
+ * tracks get the same "force to this chassis's own rest" treatment as
+ * rotation — see ChassisRestPose's own doc comment for the real bug
+ * (Commando's shoulder mount) this exists to fix. */
+export function buildRetargetedBorrowedClip(clip: THREE.AnimationClip, chassisRestPose: Map<string, ChassisRestPose>): THREE.AnimationClip {
+  const tracks: THREE.KeyframeTrack[] = clip.tracks.map((track) => {
+    if (track.name.endsWith('.position')) {
+      const boneName = track.name.slice(0, -'.position'.length)
+      const rest = chassisRestPose.get(boneName)
+      if (!rest) return track
+      // See ChassisRestPose's own doc comment (j_LClavicle/atlas_attack
+      // MeleeIdle) — a borrowed clip's translation is either already this
+      // chassis's own constant bind-pose offset (the common case) or
+      // Atlas's own mount-point number wholesale. There's no "authored
+      // motion" case to preserve either way — this rig never actually
+      // animates bone length/offset — so any translation keyframe that
+      // doesn't already match this chassis's own rest gets forced to it.
+      let matchesRest = true
+      for (let i = 0; i + 2 < track.values.length; i += 3) {
+        if (
+          Math.abs(track.values[i] - rest.position.x) > 1e-4
+          || Math.abs(track.values[i + 1] - rest.position.y) > 1e-4
+          || Math.abs(track.values[i + 2] - rest.position.z) > 1e-4
+        ) { matchesRest = false; break }
+      }
+      if (matchesRest) return track
+      const values = new Float32Array(track.values.length)
+      for (let i = 0; i + 2 < track.values.length; i += 3) {
+        values[i] = rest.position.x
+        values[i + 1] = rest.position.y
+        values[i + 2] = rest.position.z
+      }
+      return new THREE.VectorKeyframeTrack(track.name, Array.from(track.times), values)
+    }
+
+    if (!track.name.endsWith('.quaternion')) return track
+    const boneName = track.name.slice(0, -'.quaternion'.length)
+    const atlasRest = ATLAS_REST_QUATS[boneName]
+    const chassisRest = chassisRestPose.get(boneName)?.quaternion
+    if (!atlasRest || !chassisRest) return track
+
+    // Real user finding (Commando's atlas_torsoTwistLeft): a bone this
+    // PARTICULAR clip never actually poses holds a CONSTANT value equal
+    // to THIS chassis's own rest — Blender's ordinary behavior for a bone
+    // with no keyframes of its own, not borrowed Atlas data. Only a bone
+    // this clip genuinely moves away from rest carries Atlas's authored
+    // (and therefore Atlas-frame) numbers. Correcting the untouched one
+    // anyway would rotate an already-correct hold AWAY from rest by the
+    // same offset instead of leaving it alone — exactly the regression
+    // that made torsoTwist look right and everything else look wrong
+    // side by side, once spotted. Checked once per track (every
+    // keyframe within ~0.6° of this chassis's own rest), not per
+    // keyframe — a clip that only grazes rest in passing still needs
+    // correcting; one that never leaves it doesn't.
+    let posesAwayFromRest = false
+    const sample = new THREE.Quaternion()
+    for (let i = 0; i + 3 < track.values.length; i += 4) {
+      sample.set(track.values[i], track.values[i + 1], track.values[i + 2], track.values[i + 3])
+      if (sample.angleTo(chassisRest) > 0.01) { posesAwayFromRest = true; break }
+    }
+    if (!posesAwayFromRest) return track
+
+    const correction = chassisRest.clone().multiply(
+      new THREE.Quaternion(atlasRest[0], atlasRest[1], atlasRest[2], atlasRest[3]).invert(),
+    )
+    const values = new Float32Array(track.values.length)
+    const q = new THREE.Quaternion()
+    for (let i = 0; i + 3 < track.values.length; i += 4) {
+      q.set(track.values[i], track.values[i + 1], track.values[i + 2], track.values[i + 3]).premultiply(correction)
+      values[i] = q.x
+      values[i + 1] = q.y
+      values[i + 2] = q.z
+      values[i + 3] = q.w
+    }
+    return new THREE.QuaternionKeyframeTrack(track.name, Array.from(track.times), values)
+  })
+  return new THREE.AnimationClip(`${clip.name}${RETARGET_SUFFIX}`, clip.duration, tracks)
+}
+
 /** This file's own Idle/Walk/Run/Caerse/Levantarse/... vocabulary resolved
  * to whatever key actually exists in `actions`. An exact match always wins
  * first — a hand-authored asset (the Jenner) that already ships a clip
@@ -1630,12 +2857,179 @@ const GAME_CLIP_SUFFIXES: Record<string, string> = {
  * animaciones... tiene que usar las que traiga, sin modificar, todas
  * ellas") still animates without anyone renaming a single clip. `undefined`
  * if neither exists — every caller already treats a missing clip as "skip
- * this step", never a crash, same as a chassis with no animations at all. */
-function resolveClipKey(actions: Record<string, THREE.AnimationAction | null>, appName: string): string | undefined {
+ * this step", never a crash, same as a chassis with no animations at all.
+ *
+ * Real user report + direct file inspection: the Assassin's arms visibly
+ * tore away from its own body the instant ANY animation played — traced
+ * to a genuine content bug, not a rendering one: EVERY one of the 15
+ * newly added placeholder .glb chassis ships the exact same animation
+ * library under a literal `atlas_` prefix (Archer, Assassin, Awesome,
+ * Banshee, Battlemaster, Warhammer, Annihilator, Cicada, Blackjack,
+ * Blackknight, Bullshark, Cataphract, Catapult, Centurion — verified by
+ * reading each .glb's own animation names directly), copied wholesale
+ * from the Atlas's own export instead of each chassis's own game data.
+ * Only Atlas.glb is actually correct (it IS the real source). Applying
+ * the Atlas's own joint rotations — tuned for the Atlas's own skeleton —
+ * onto a differently-proportioned chassis' bones is exactly what tears a
+ * limb away from the body once the clip actually moves it; MechLab's own
+ * preview never plays an animation at all, so it never surfaced this.
+ *
+ * No code fix can reconstruct the animation data that was never actually
+ * exported for these chassis, so this refuses to resolve a clip whose
+ * prefix is the KNOWN-borrowed `atlas_` one on any chassis that isn't
+ * actually the Atlas — every caller already treats "no clip" as "skip
+ * this step, no animation", the same graceful fallback a chassis with
+ * genuinely zero clips gets today, which beats visibly tearing itself
+ * apart.
+ *
+ * Real user report (Hatchetman): the hatchet — a hinge-jointed prop
+ * clearly meant to be POSED by an animation, not to look right sitting in
+ * a raw bind pose — kept floating away from the hand no matter how many
+ * times its bind-pose bone translations got hand-corrected. Root cause,
+ * found by actually listing every clip this file ships: Hatchetman has
+ * BOTH the borrowed `atlas_*` library AND its own real, correctly-named
+ * `hatchetman_*` one (verified: hatchetman_moveCoreIdle, _moveCoreWalkFwd,
+ * every attack/melee/twist clip) — but the OLD version of this function
+ * used `.find()`, which stops at the FIRST `_moveCoreIdle`-suffixed key it
+ * sees. Since the borrowed atlas_ clips happen to appear earlier in the
+ * glTF's own animations array, `.find()` grabbed `atlas_moveCoreIdle`,
+ * saw it was borrowed, and gave up — never even looking far enough to
+ * find `hatchetman_moveCoreIdle` sitting right there. Collecting every
+ * same-suffix candidate first and preferring a non-borrowed one fixes
+ * this for any chassis in the same situation, not just this one — while
+ * a chassis with ONLY the borrowed clip (the other 20 or so from the same
+ * pipeline pass) keeps falling back to "no animation" exactly as before.
+ * Remove the whole borrowed-prefix check once every affected file is
+ * re-exported with its own real per-chassis animation library.
+ *
+ * Commando update: headless-Blender forensics on its raw source FBX
+ * (chrPrfMech_commandoBase-001.fbx) proved this isn't a leftover-session
+ * artifact like the Hatchetman case — the atlas_ library is the ONLY
+ * animation data that file has ever contained, baked in at the
+ * AssetStudio extraction stage itself. Real user report: with this guard
+ * in place, EVERY chassis in that situation — not just Commando, but
+ * Warhammer/Assassin/Catapult/etc., which had been playing the raw
+ * borrowed clip and looking fine for a long time before this guard
+ * existed — went completely still. Freezing was the safe fallback while
+ * the only alternative was "plays with its arms in the wrong place", but
+ * it's strictly worse for a chassis the raw clip never actually broke.
+ * buildRetargetedBorrowedClip (see its own + ATLAS_REST_QUATS' doc
+ * comments) removes the actual root cause instead: each borrowed
+ * keyframe re-expressed as a delta from ATLAS's own rest, reapplied on
+ * top of THIS chassis's own rest — correct for the ones that already
+ * looked fine (the correction is near-identity there) and for Commando
+ * (where it isn't) alike, so this no longer has to choose between "wrong
+ * pose" and "no pose" — it prefers the corrected clip whenever the raw
+ * one would otherwise have been rejected. */
+// Real user request: "investiga bien las animaciones del modelo... mira
+// como podemos implementar estas animaciones en nuestro juego" — the real
+// MW5-extracted-via-FModel/Blender pipeline (Bushwacker being the first
+// chassis on it, see MW5_MECH_TEXTURING_PIPELINE.md) ships its own clips
+// under a completely different naming convention than GAME_CLIP_SUFFIXES
+// above was ever built for: `<CHASSIS_PREFIX>_<Acción>_ANI` (e.g.
+// `BSW_WalkForward_Straight_ANI`), nothing like the AssetStudio-extracted
+// `<chassis>_moveCoreWalkFwd` style. Before this table existed, NONE of a
+// chassis's own 80+ real clips ever matched — resolveClipKey silently
+// found nothing for every bookkeeping name, and the chassis played
+// whatever borrowed/retargeted Atlas clip its fallback path found (or sat
+// in bind pose if it had none). Only the bookkeeping names that actually
+// have a same-purpose clip on this pipeline today are mapped — a name
+// with no entry here just falls through resolveClipKey exactly like it
+// already does for a legacy chassis missing that clip, no regression.
+// TorsoTwistLeft/Right, Levantarse, Despegar/Aterrizar, Shutdown*,
+// Idle2/IdleFlavor2-3, DeathKnockdown/Idle deliberately have no MW5 entry
+// here: Bushwacker has no matching clip for any of them. AttackLeftArm/
+// RightArm/Torso DO now resolve on this pipeline too, but not via a plain
+// 1:1 entry here — see the generated ArmLeft/RightAim* entries just below
+// and their own use site (attackSignal's own doc comment) for why a
+// directional AIM blend-space needed real target-bearing data, not just a
+// name swap.
+const MW5_CLIP_SUFFIXES: Record<string, string> = {
+  Idle: 'Stand_ANI',
+  Walk: 'WalkForward_Straight_ANI',
+  Run: 'RunForward_Straight_ANI',
+  TurnLeft: 'Stand_Turn_Left_ANI',
+  TurnRight: 'Stand_Turn_Right_ANI',
+  WalkLimpLeft: 'WalkForward_LeftLimp_ANI',
+  WalkLimpRight: 'WalkForward_RightLimp_ANI',
+  Caerse: 'Falling_ANI',
+  Saltar: 'Jumpjetting_Neutral_ANI',
+}
+
+// Real user request: "reacciones a impacto por zona+eje" — generated
+// rather than hand-listed, one HitZone<Zone><Axis><Sign> entry per real
+// BSW_Hit<Zone>_<Axis><Sign>_ANI clip naming slot. Not every combination
+// this generates actually exists on Bushwacker (LeftLeg/RightLeg only
+// ship Pitch/Roll, never Yaw — see hitSignal's own use site for why a
+// lateral leg hit falls through to the old system) — resolveClipKeyForSuffix
+// already treats a suffix with no matching clip as "nothing found," the
+// same graceful miss every other optional lookup in this file gets, so a
+// combination that doesn't exist on this (or any future) chassis is
+// simply never reached, not a bug.
+for (const zone of ['Torso', 'Hips', 'LeftLeg', 'RightLeg'] as const) {
+  for (const axis of ['Pitch', 'Roll', 'Yaw'] as const) {
+    for (const sign of ['Positive', 'Negative'] as const) {
+      MW5_CLIP_SUFFIXES[`HitZone${zone}${axis}${sign}`] = `Hit${zone}_${axis}${sign}_ANI`
+    }
+  }
+}
+
+// Real user request: "apuntado direccional por brazo" — generated the
+// same way HitZone* above is, one Arm<Left/Right>Aim<Direction> entry per
+// real BSW_Arm<Left/Right>_Aim<Direction>_ANI clip naming slot. Known gap:
+// the LEFT arm's own AimLeft clip is exported as `BSW_Armleft_AimLeft_ANI`
+// (lowercase "l" in "Armleft", unlike every one of its 7 siblings'
+// "ArmLeft") — a genuine typo in the source .glb, not this table.
+// ArmLeftAimLeft below simply won't resolve because of it (same graceful
+// "no match" fallback as everything else here) until that's fixed at the
+// source — not worth a bespoke case-insensitive path for one known clip.
+for (const arm of ['Left', 'Right'] as const) {
+  for (const dir of ['Up', 'Down', 'Left', 'Right', 'UpLeft', 'UpRight', 'DownLeft', 'DownRight'] as const) {
+    MW5_CLIP_SUFFIXES[`Arm${arm}Aim${dir}`] = `Arm${arm}_Aim${dir}_ANI`
+  }
+}
+// The "roughly centered, no real bearing offset" case doesn't fit the
+// systematic loop above — it's shipped as a differently-worded Montage
+// clip (`BSW_LeftArm_AimNeutral_Montage`/`BSW_RightArm_AimNeutral_
+// Montage`, word order AND suffix both differ from the 8 directional
+// ones), not an `ArmLeft/Right_AimNeutral_ANI` following the same
+// pattern — two explicit entries instead of trying to fold it in.
+MW5_CLIP_SUFFIXES.ArmLeftAimNeutral = 'LeftArm_AimNeutral_Montage'
+MW5_CLIP_SUFFIXES.ArmRightAimNeutral = 'RightArm_AimNeutral_Montage'
+
+function resolveClipKeyForSuffix(
+  actions: Record<string, THREE.AnimationAction | null>, suffix: string, chassis?: string | null,
+): string | undefined {
+  // Real bug found live: several MW5 suffixes above collide with their own
+  // first-person twin — `BSW_WalkForward_Straight_ANI` AND
+  // `BSW_FP_WalkForward_Straight_ANI` both end with
+  // `_WalkForward_Straight_ANI` — without this exclusion, which one wins
+  // depends on `Object.keys` iteration order, not intent: third-person
+  // could silently end up playing the FP-framed clip. `_FP_` clips are
+  // reserved for a dedicated FirstPersonView resolver, never this one.
+  const candidates = Object.keys(actions)
+    .filter((k) => k.endsWith(`_${suffix}`) && !k.endsWith(RETARGET_SUFFIX) && !k.includes('_FP_'))
+  const isBorrowed = (key: string) => {
+    const prefix = key.slice(0, key.length - suffix.length - 1).toLowerCase()
+    return prefix === KNOWN_BORROWED_CLIP_PREFIX && chassis?.toLowerCase() !== KNOWN_BORROWED_CLIP_PREFIX
+  }
+  const nonBorrowed = candidates.find((k) => !isBorrowed(k))
+  if (nonBorrowed) return nonBorrowed
+  const borrowed = candidates.find(isBorrowed)
+  if (!borrowed) return undefined
+  const retargetedKey = `${borrowed}${RETARGET_SUFFIX}`
+  return actions[retargetedKey] ? retargetedKey : undefined
+}
+
+function resolveClipKey(
+  actions: Record<string, THREE.AnimationAction | null>, appName: string, chassis?: string | null,
+): string | undefined {
   if (actions[appName]) return appName
-  const suffix = GAME_CLIP_SUFFIXES[appName]
-  if (!suffix) return undefined
-  return Object.keys(actions).find((key) => key.endsWith(`_${suffix}`))
+  const legacySuffix = GAME_CLIP_SUFFIXES[appName]
+  const legacyMatch = legacySuffix ? resolveClipKeyForSuffix(actions, legacySuffix, chassis) : undefined
+  if (legacyMatch) return legacyMatch
+  const mw5Suffix = MW5_CLIP_SUFFIXES[appName]
+  return mw5Suffix ? resolveClipKeyForSuffix(actions, mw5Suffix, chassis) : undefined
 }
 
 function Mech3DModel({
@@ -1644,7 +3038,22 @@ function Mech3DModel({
   damagedLocations, weapons, shutdown, turning, attackSignal, hitSignal,
 }: Mech3DProps) {
   const url = resolveMechModelUrl(chassis, model)
-  const { scene, animations } = useGLTF(url)
+  const { scene, animations: gltfAnimations } = useGLTF(url)
+  // Adds a corrected copy of every borrowed atlas_ clip (see
+  // buildRetargetedBorrowedClip's own doc comment) alongside the
+  // originals — resolveClipKey reaches for `${name}__retargeted` only
+  // when nothing chassis-specific exists, so a chassis with its own real
+  // library (Hatchetman) is completely unaffected by this running at all.
+  // Atlas itself is skipped: its own bind pose IS ATLAS_REST_QUATS, so
+  // every correction would already be an identity no-op.
+  const animations = useMemo(() => {
+    if (chassis?.toLowerCase() === KNOWN_BORROWED_CLIP_PREFIX) return gltfAnimations
+    const borrowed = gltfAnimations.filter((c) => c.name.toLowerCase().startsWith(`${KNOWN_BORROWED_CLIP_PREFIX}_`))
+    if (borrowed.length === 0) return gltfAnimations
+    const chassisRestQuats = getChassisRestQuats(scene)
+    return [...gltfAnimations, ...borrowed.map((c) => buildRetargetedBorrowedClip(c, chassisRestQuats))]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gltfAnimations, scene])
   const groupRef = useRef<THREE.Group>(null)
 
   // This function body only runs once useGLTF has real data (Suspense
@@ -1801,6 +3210,49 @@ function Mech3DModel({
   // no-op rather than a special case to guard.
   const { actions } = useAnimations(animations, groupRef)
 
+  // See computeWalkGaitCurve's own doc comment (the foot-skating fix) —
+  // analyzed once per chassis URL, ever, then cached; every later mount
+  // of the same chassis (and every later render of this one) just hits
+  // walkGaitCurveCache.has(url) and returns immediately.
+  useEffect(() => {
+    if (walkGaitCurveCache.has(url)) return
+    const walkKey = resolveClipKey(actions, 'Walk', chassis)
+    const walkClip = walkKey ? actions[walkKey]?.getClip() : undefined
+    walkGaitCurveCache.set(url, walkClip ? computeWalkGaitCurve(scene, walkClip) : null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url, actions])
+
+  // See getMeshDetectedHitPoint's own doc comment — same "once per
+  // chassis URL ever" cache population as the walk-gait-curve effect just
+  // above, just off a fresh throwaway clone (bind pose, no mixer/actions
+  // needed at all) instead of a specific animation clip.
+  //
+  // computeLocationHitPoints (like computeWeaponMuzzlePoint) always
+  // divides its result by MODEL_SCALE, on the assumption its caller
+  // handed it a REAL, currently-rendered instance — one whose `.scale`
+  // R3F's own `<primitive scale={MODEL_SCALE}>` already set (see
+  // normalizeMechInstance's own doc comment on why that scale lives on
+  // an outer wrapper distinct from the object R3F touches). This
+  // throwaway clone is never mounted, so nothing ever sets that scale —
+  // without it, points would come out MODEL_SCALE times too small
+  // (found live: an early version of this effect did exactly that).
+  // Setting it explicitly here matches the real convention instead.
+  useEffect(() => {
+    if (meshDetectedHitPointCache.has(url)) return
+    const rig = normalizeMechInstance(scene)
+    rig.scale.setScalar(MODEL_SCALE)
+    meshDetectedHitPointCache.set(url, computeLocationHitPoints(rig))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url])
+
+  // See getWeaponMuzzleWorldPoint's own doc comment — same "once per
+  // chassis URL ever" population as the hit-point effect just above.
+  useEffect(() => {
+    if (weaponMountDataCache.has(url)) return
+    weaponMountDataCache.set(url, computeWeaponMountData(scene))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url])
+
   // Real user request: proper Walk/Run/Jump/Caerse-Levantarse chains
   // instead of the old straight Idle/Walk ternary — see this file's own
   // Mech3DProps doc comments (isMoving/movementType/jumpPhase/fallen/dead)
@@ -1904,6 +3356,11 @@ function Mech3DModel({
   const twistOverlayActionsRef = useRef<{ left: THREE.AnimationAction | null; right: THREE.AnimationAction | null }>({
     left: null, right: null,
   })
+  // See measureBakedTwistAngle's own doc comment — how many radians each
+  // side's own overlay clip bakes in, so the attack handler below can
+  // turn a real target offset into a proportional overlay `weight`
+  // instead of always playing it at full weight.
+  const bakedTwistAngleRef = useRef<{ left: number | null; right: number | null }>({ left: null, right: null })
   // Set inside the setup effect below (to the real `sync`/`advance`
   // closures, which need `actions` — only available there) so the
   // separate prop-watching effects further down can trigger a resync
@@ -1926,25 +3383,32 @@ function Mech3DModel({
     // effect only re-runs when `actions` itself changes identity, i.e.
     // once per real model load) rather than lazily on first attack, so
     // the very first shot on a freshly-loaded mech already has it ready.
-    const buildTwistOverlay = (appName: 'TorsoTwistLeft' | 'TorsoTwistRight'): THREE.AnimationAction | null => {
-      const idleKey = resolveClipKey(actions, 'Idle')
+    const buildTwistOverlay = (
+      appName: 'TorsoTwistLeft' | 'TorsoTwistRight',
+    ): { overlay: THREE.AnimationAction; bakedAngle: number | null } | null => {
+      const idleKey = resolveClipKey(actions, 'Idle', chassis)
       const idleClip = idleKey ? actions[idleKey]?.getClip() : undefined
-      const twistKey = resolveClipKey(actions, appName)
+      const twistKey = resolveClipKey(actions, appName, chassis)
       const twistAction = twistKey ? actions[twistKey] : undefined
       if (!idleClip || !twistAction) return null
+      const rawTwistClip = twistAction.getClip()
+      const bakedAngle = measureBakedTwistAngle(idleClip, rawTwistClip)
       // .clone() first — makeClipAdditive mutates its target's tracks in
       // place, and this clip's own object is the SAME one shared (via
       // useGLTF's cache) by every OTHER mech instance of this chassis on
       // the board; converting the shared original would corrupt it for
       // all of them.
-      const additiveClip = THREE.AnimationUtils.makeClipAdditive(twistAction.getClip().clone(), 0, idleClip, 30)
+      const additiveClip = THREE.AnimationUtils.makeClipAdditive(rawTwistClip.clone(), 0, idleClip, 30)
       const overlay = twistAction.getMixer().clipAction(additiveClip)
       overlay.blendMode = THREE.AdditiveAnimationBlendMode
       overlay.setLoop(THREE.LoopOnce, 1)
       overlay.clampWhenFinished = true
-      return overlay
+      return { overlay, bakedAngle }
     }
-    twistOverlayActionsRef.current = { left: buildTwistOverlay('TorsoTwistLeft'), right: buildTwistOverlay('TorsoTwistRight') }
+    const leftTwist = buildTwistOverlay('TorsoTwistLeft')
+    const rightTwist = buildTwistOverlay('TorsoTwistRight')
+    twistOverlayActionsRef.current = { left: leftTwist?.overlay ?? null, right: rightTwist?.overlay ?? null }
+    bakedTwistAngleRef.current = { left: leftTwist?.bakedAngle ?? null, right: rightTwist?.bakedAngle ?? null }
 
     const crossFadeTo = (
       name: string | undefined, loop: boolean, timeScale = 1, resolveAs?: string,
@@ -1954,7 +3418,7 @@ function Mech3DModel({
       // name (e.g. 'Walk', so every `current === 'Walk'`-style chain check
       // elsewhere keeps working unchanged) while actually resolving to a
       // DIFFERENT real clip — see pickWalkClipSuffix's own call site below.
-      const resolvedKey = resolveClipKey(actions, resolveAs ?? name)
+      const resolvedKey = resolveClipKey(actions, resolveAs ?? name, chassis)
       if (!resolvedKey) return null
       const next = actions[resolvedKey]
       if (!next) return null
@@ -2103,9 +3567,50 @@ function Mech3DModel({
         heldTwistRef.current = newTwist
         if (newTwist !== previousTwist) {
           const { left: leftOverlay, right: rightOverlay } = twistOverlayActionsRef.current
-          if (newTwist === 'left') { rightOverlay?.stop(); leftOverlay?.reset().fadeIn(0.15).play() }
-          else if (newTwist === 'right') { leftOverlay?.stop(); rightOverlay?.reset().fadeIn(0.15).play() }
-          else { leftOverlay?.stop(); rightOverlay?.stop() }
+          // See measureBakedTwistAngle's own doc comment — scale the
+          // overlay's own additive weight down to whatever fraction of
+          // its full baked swing the real target offset actually needs,
+          // instead of always applying it at weight 1 (the old "always
+          // ~90°" bug). No fadeIn here (unlike before) — an
+          // AnimationAction's fadeIn always ramps toward weight 1
+          // specifically, which would fight a smaller target weight;
+          // setting `.weight` directly applies it from this frame on,
+          // which at these short (150ms-ish) timescales reads the same.
+          if (newTwist === 'left') {
+            rightOverlay?.stop()
+            const bakedAngle = bakedTwistAngleRef.current.left
+            leftOverlay?.reset().play()
+            if (leftOverlay) {
+              leftOverlay.weight = bakedAngle && attack.twistAngle != null
+                ? Math.min(1, Math.abs(attack.twistAngle) / bakedAngle)
+                : 1
+            }
+          } else if (newTwist === 'right') {
+            leftOverlay?.stop()
+            const bakedAngle = bakedTwistAngleRef.current.right
+            rightOverlay?.reset().play()
+            if (rightOverlay) {
+              rightOverlay.weight = bakedAngle && attack.twistAngle != null
+                ? Math.min(1, Math.abs(attack.twistAngle) / bakedAngle)
+                : 1
+            }
+          } else {
+            leftOverlay?.stop(); rightOverlay?.stop()
+          }
+        }
+        // MW5 pipeline's own directional arm-aim clip — tried FIRST for a
+        // LA/RA shot. `twist`'s own left/right verdict is REUSED as the
+        // horizontal half (a target "to the mech's own left" is to the
+        // left regardless of which arm is firing at it — no per-arm
+        // mirroring needed); `aimVertical` is the new vertical half. A
+        // torso shot always skips straight to the plain AttackTorso
+        // fallback below — no per-torso aim clip exists on this pipeline.
+        if (attack.location === 'LA' || attack.location === 'RA') {
+          const arm = attack.location === 'LA' ? 'Left' : 'Right'
+          const horiz = attack.twist === 'left' ? 'Left' : attack.twist === 'right' ? 'Right' : ''
+          const vert = attack.aimVertical === 'up' ? 'Up' : attack.aimVertical === 'down' ? 'Down' : ''
+          const dir = `${vert}${horiz}` || 'Neutral'
+          if (crossFadeTo(`AttackArm${arm}Aim`, false, 1, `Arm${arm}Aim${dir}`)) return
         }
         const clipName = attack.location === 'LA' ? 'AttackLeftArm' : attack.location === 'RA' ? 'AttackRightArm' : 'AttackTorso'
         if (crossFadeTo(clipName, false)) return
@@ -2117,15 +3622,57 @@ function Mech3DModel({
       const hit = inputsRef.current.hitSignal
       if (hit && hit.id !== firedHitIdRef.current) {
         firedHitIdRef.current = hit.id
+        // MW5 pipeline's own zone+axis hit reaction — tried FIRST. Zone:
+        // CT is the mech's own pelvis/core, closer to "Hips" than the
+        // upper-body "Torso" bucket LT/RT/HD share; LA/RA have no zone at
+        // all (no per-arm hit clip exists on this pipeline), same
+        // "nothing to try" as a location this pipeline doesn't cover.
+        // Axis: left/right → Yaw, fwd/bwd → Pitch (Roll deliberately
+        // unused — see MW5_CLIP_SUFFIXES's own generated HitZone* doc
+        // comment). Sign (Positive = fwd/left, Negative = bwd/right) is a
+        // documented CONVENTION, not verified against the rendered pose —
+        // flip it here if a live hit ever reads backward.
+        const zone = hit.location === 'CT' ? 'Hips'
+          : hit.location === 'HD' || hit.location === 'LT' || hit.location === 'RT' ? 'Torso'
+          : hit.location === 'LL' ? 'LeftLeg'
+          : hit.location === 'RL' ? 'RightLeg'
+          : null
+        const axis = hit.direction === 'left' || hit.direction === 'right' ? 'Yaw' : 'Pitch'
+        const sign = hit.direction === 'fwd' || hit.direction === 'left' ? 'Positive' : 'Negative'
+        if (zone && crossFadeTo(`HitZone${zone}${axis}${sign}`, false)) return
+
         const severity = hit.severity === 'heavy' ? 'Heavy' : 'Light'
         const direction = hit.direction === 'bwd' ? 'Bwd' : hit.direction === 'left' ? 'Left' : hit.direction === 'right' ? 'Right' : 'Fwd'
         if (crossFadeTo(`Hit${severity}${direction}`, false)) return
       }
 
+      // Real bug found live (Bushwacker): item 1's own MW5_CLIP_SUFFIXES
+      // only maps 'Saltar' (flight) — Bushwacker has no dedicated takeoff/
+      // landing clip, only the one neutral jetting pose, so 'Despegar'/
+      // 'Aterrizar' silently failed to resolve on their own the whole
+      // 0.35s of each phase (jumpFlight.ts's own TAKEOFF_DURATION/
+      // LANDING_DURATION) — crossFadeTo no-ops on a miss, so the mech sat
+      // frozen on its PRE-jump pose through all of takeoff, popped
+      // abruptly into the jetting pose only once 'flight' began, then
+      // stayed frozen IN that pose through all of landing instead of
+      // settling back to idle/walk. Falling back to the SAME 'Saltar'
+      // clip (via resolveAs) for takeoff/landing too — only when this
+      // chassis truly has no dedicated Despegar/Aterrizar clip of its own
+      // (tried FIRST, unchanged for every old-pipeline chassis that DOES
+      // have one) — means the jetting pose fades in immediately at
+      // takeoff and holds cleanly through landing instead of both.
       const jump = inputsRef.current.jumpPhase
-      if (jump === 'takeoff') { crossFadeTo('Despegar', false); return }
+      if (jump === 'takeoff') {
+        if (crossFadeTo('Despegar', false)) return
+        crossFadeTo('Despegar', false, 1, 'Saltar')
+        return
+      }
       if (jump === 'flight') { crossFadeTo('Saltar', true); return }
-      if (jump === 'landing') { crossFadeTo('Aterrizar', false); return }
+      if (jump === 'landing') {
+        if (crossFadeTo('Aterrizar', false)) return
+        crossFadeTo('Aterrizar', false, 1, 'Saltar')
+        return
+      }
 
       if (inputsRef.current.isMoving) {
         const current = currentClipRef.current
@@ -2348,11 +3895,11 @@ function Mech3DModel({
   // a chassis that ships at least one flavor variant — a chassis with none
   // just loops plain Idle exactly as before.
   useEffect(() => {
-    const idleKey = resolveClipKey(actions, 'Idle')
+    const idleKey = resolveClipKey(actions, 'Idle', chassis)
     const idle = idleKey ? actions[idleKey] : undefined
     const isWounded = (severedLocations?.size ?? 0) > 0 || (damagedLocations?.size ?? 0) > 0
     const flavors = (['Idle2', 'IdleFlavor2', 'IdleFlavor3'] as const)
-      .map((name) => { const key = resolveClipKey(actions, name); return key ? actions[key] : undefined })
+      .map((name) => { const key = resolveClipKey(actions, name, chassis); return key ? actions[key] : undefined })
       .filter((a): a is THREE.AnimationAction => !!a)
     if (playAnimation === false || isMoving || jumpPhase != null || fallen || dead || isWounded || !idle || flavors.length === 0) {
       return
@@ -2518,12 +4065,33 @@ function Mech3DModel({
     // Real user request: "en textura, cuando acepto, quiero que ese sea
     // el mapa PBR que se aplique... en la partida" — this chassis/model's
     // own saved colorBoost (Textura tab's slider) if one exists, same
-    // MECH_COLOR_BOOST fallback as before for everything else.
-    const colorBoost = savedPbrSettings?.colorBoost ?? MECH_COLOR_BOOST
+    // MECH_COLOR_BOOST fallback as before for everything else. This
+    // faction-tint effect applies ONE shared value across the whole mesh
+    // (unlike useMechPbr's own per-zone application) — the Body zone's
+    // own value stands in for that single number, since Body is this
+    // effect's dominant, most visually representative surface.
+    const colorBoost = savedPbrSettings?.body.colorBoost ?? MECH_COLOR_BOOST
     instance.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         const mat = obj.material as THREE.MeshStandardMaterial
-        mat.color.set(0xffffff).lerp(tint, tintStrength ?? FACTION_TINT_STRENGTH)
+        // Real user report (Bushwacker weapons rendering pale/white in
+        // MechLab's "Anotar armas" tab): resetting to a hardcoded white
+        // before lerping toward the tint is harmless for a TEXTURED
+        // material (mat.color is a multiplier on top of the map, so
+        // white leaves the texture's own colors alone, per this effect's
+        // own doc comment above) — but Bushwacker's weapon material has
+        // NO base color texture, only a flat baseColorFactor loaded
+        // straight into mat.color by GLTFLoader (real data: "Black Metal
+        // Color" 0.23074/848484, from Weapon_Clan_MTI.json). For that
+        // material mat.color IS the entire visible color, so resetting
+        // it to white before tinting throws the real value away outright
+        // instead of leaving it alone. Snapshot the material's own
+        // as-loaded color once (same pattern as useMechPbr's own
+        // __mechPbrBaseColor snapshot above) and always lerp from THAT,
+        // never from a hardcoded white.
+        const userData = mat.userData as { __factionTintBaseColor?: THREE.Color }
+        if (!userData.__factionTintBaseColor) userData.__factionTintBaseColor = mat.color.clone()
+        mat.color.copy(userData.__factionTintBaseColor).lerp(tint, tintStrength ?? FACTION_TINT_STRENGTH)
         // See MECH_COLOR_BOOST's own doc comment — applied generically
         // (every chassis, not just the one it was measured/tuned against)
         // in every state this effect ever sets color for (alive,

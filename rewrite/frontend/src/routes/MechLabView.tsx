@@ -9,8 +9,8 @@ import type { Collider, RigidBody as RapierRigidBody, World } from '@dimforge/ra
 import * as THREE from 'three'
 import {
   getMechImport, listMechAnnotations, listMechAnnotationReview, listMechChassis, listMechFootprintMasks,
-  listMechModels, listMechPbrSettings, saveMechAnnotations, saveMechFootprintMask, saveMechPbrSettings,
-  setMechAnnotationReview,
+  listMechModels, listMechPbrSettings, saveMechAnnotations, saveMechFootprintMask,
+  saveMechPbrSettings, setMechAnnotationReview,
   LIMB_LOCATIONS, MECH_LOCATIONS,
   type MechAnnotation, type MechAnnotationPoint, type MechAnnotationReview, type MechAnnotationReviewStatus,
   type MechAnnotationTrack, type MechChassisResult, type MechFootprintMaskRecord, type MechModelResult,
@@ -22,8 +22,11 @@ import {
 } from '../bakedPiece'
 import { ChassisSelect } from '../components/ChassisSelect'
 import {
-  applyMechCombatVisibility, computeWeaponMuzzlePoints, DEAD_MECH_CHAR_COLOR, Mech3D, MECH_PBR_DEFAULTS, MODEL_SCALE,
-  normalizeMechInstance, useMechPbr, type MechPbrSettings,
+  applyMechCombatVisibility, buildRetargetedBorrowedClip, computeLimbMeshNames,
+  computeWeaponMuzzlePoints, DEAD_MECH_CHAR_COLOR, findSavedPbrSettings, getChassisRestQuats,
+  KNOWN_BORROWED_CLIP_PREFIX, Mech3D, MECH_PBR_DEFAULTS, MODEL_SCALE, normalizeMechInstance,
+  useMechPbr,
+  type MechPbrSettings,
 } from '../components/Mech3D'
 import { MECH_CHASSIS_ASSETS, resolveMechModelUrl } from '../mechAssets'
 import './MechLabView.css'
@@ -184,10 +187,20 @@ type LimbLocation = (typeof LIMB_LOCATIONS)[number]
 // reciba ataques en sitios especificos, podamos mostrar esos ataques
 // golpeando donde deben" — a 'hit' slot is one indexless point per
 // location (like cockpit), separate from where its weapon(s) mount.
-type ActiveSlot =
-  | { kind: 'weapon'; location: MechLocationCode; index: number }
-  | { kind: 'hit'; location: MechLocationCode }
-  | { kind: 'cockpit' }
+// Real user request: "anotar armas... que tenga la opción de
+// autoconfigurar armas (ya no hay modo manual)" — weapons dropped manual
+// click-to-place entirely (see onAutoDetectWeaponPoints below). The
+// cockpit point does NOT — real user correction: "no me deja colocar la
+// cabina a mano, para la cabina no tiene que haber automático" (it's a
+// camera viewpoint, not something a bone position can stand in for) —
+// stays exactly as manual-click as hit points always were.
+// Real user request: hit points dropped entirely from this tab — "si se
+// calcula en tiempo real, vamos a quitar la sección donde impacta un
+// ataque a esa zona" (HexMap.tsx already tries the live bone-based
+// detection FIRST for every attack, see getMeshDetectedHitPoint's own
+// doc comment — nothing here was ever a hard requirement for a
+// MW5-sourced chassis). The cockpit point is all that's left to click.
+type ActiveSlot = { kind: 'cockpit' }
 
 /** parentName is null for a root bone, or when the parent isn't itself part
  * of this same skeleton (e.g. an armature/scene root). See LimbPainter's
@@ -417,34 +430,6 @@ function ensureLimbCutShaderPatch(material: THREE.Material) {
   material.needsUpdate = true
 }
 
-/** The inverse of ensureLimbCutShaderPatch — discards everywhere EXCEPT the
- * cut region. Real user report: cutting via discard alone "no esta
- * recortando la malla y rellenandola de ninguna manera, simplemente deja
- * huecos vacios, sin malla ni textura que mostrar" (a true watertight
- * cross-section cap would need real boundary-loop geometry generation,
- * well beyond what this editor can responsibly build) — the honest,
- * buildable middle ground is a second copy of the SAME geometry, sharing
- * the same skeleton binding, rendered back-face-only with a dark "exposed
- * interior" material: it exactly fills the hole's silhouette (same
- * vertices, same skin deformation) instead of showing straight through to
- * empty space. See the liner mesh built in LimbPainter's own effect. */
-function ensureLimbCutLinerShaderPatch(material: THREE.Material) {
-  const patched = material as THREE.Material & { __limbCutLinerPatched?: boolean }
-  if (patched.__limbCutLinerPatched) return
-  patched.__limbCutLinerPatched = true
-  material.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader
-      .replace('#include <common>', `#include <common>\nattribute float ${LIMB_CUT_ATTR};\nvarying float vLimbCut;`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\nvLimbCut = ${LIMB_CUT_ATTR};`)
-    shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying float vLimbCut;')
-      .replace('#include <dithering_fragment>', 'if (vLimbCut < 0.5) discard;\n#include <dithering_fragment>')
-  }
-  material.needsUpdate = true
-}
-
-const LIMB_CUT_LINER_COLOR = '#241d1a'
-
 /** Writes `mask` (true = cut away) into the mesh's limbCut attribute — null
  * clears it back to "nothing cut." No-op until ensureLimbCutShaderPatch has
  * also been called on the mesh's own material at least once. */
@@ -604,8 +589,8 @@ function isLegMeshName(name: string): boolean {
  * separate glTF node) falls the same way on its own object transform — see
  * fallStateRef and the useFrame gravity step below. */
 function LimbPainter({
-  chassis, model, weapons, selectedMeshNames, selectedBoneNames, previewBreak, onToggleMesh, onBonesChange,
-  onMeshNamesChange,
+  chassis, model, weapons, instanceRef, selectedMeshNames, selectedBoneNames, previewBreak, onToggleMesh,
+  onBonesChange, onMeshNamesChange,
 }: {
   chassis: string
   model: string | null
@@ -616,6 +601,12 @@ function LimbPainter({
    * only the actually-equipped weapon mounts show, same as 'annotate'
    * mode already does through Mech3D itself. */
   weapons: { location: string; weaponName: string }[]
+  /** Real user request: "también podremos... encontrar las extremidades
+   * porque los nuevos modelos están nombrados y separados?" — same
+   * purpose as Mech3D's own instanceRef prop (see its doc comment):
+   * exposes this component's live, MODEL_SCALE-rendered instance so
+   * MechLabView can call computeLimbMeshNames against it on demand. */
+  instanceRef?: { current: THREE.Object3D | null }
   selectedMeshNames: Set<string>
   selectedBoneNames: Set<string>
   previewBreak: boolean
@@ -633,6 +624,7 @@ function LimbPainter({
   const url = resolveMechModelUrl(chassis, model)
   const { scene } = useGLTF(url)
   const instance = useMemo(() => normalizeMechInstance(scene), [scene])
+  if (instanceRef) instanceRef.current = instance
   // applyColorBoost: false — real user report: "en extremidades... ver rig,
   // textura y huella lo veo blanco" — MECH_COLOR_BOOST (1.7x) was measured
   // against the Jenner's own unusually dark (~19% brightness) camo texture;
@@ -656,7 +648,6 @@ function LimbPainter({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instance, limbWeaponsKey])
   const skinnedMesh = useMemo(() => findSkinnedMesh(instance), [instance])
-  const linerRef = useRef<THREE.SkinnedMesh | null>(null)
   // Real bug found this session (via live browser inspection — matrixWorld
   // updates correctly on attach()+reparent, but this SkinnedMesh's own
   // modelViewMatrix — the actual per-frame uniform WebGL draws with —
@@ -790,36 +781,20 @@ function LimbPainter({
     }
   }, [instance, world, rapier])
 
-  // The "fills the hole" half of previewBreak: a second SkinnedMesh sharing
-  // the ORIGINAL's geometry (so it shares the limbCut attribute too, no
-  // separate bookkeeping) and skeleton binding. Added as a CHILD OF
-  // skinnedMesh itself (not a sibling under its parent) — a skinned mesh's
-  // vertex shader applies `bindMatrixInverse` (mesh-local↔skeleton space)
-  // and the renderer's own `modelViewMatrix` (from the object's OWN
-  // matrixWorld) as two SEPARATE steps. Passing skinnedMesh's own
-  // bindMatrix only gets the first half right; if skinnedMesh itself has
-  // any non-identity local transform relative to its parent, a sibling
-  // liner (identity local transform, different parent chain) ends up with
-  // a matrixWorld that doesn't match skinnedMesh's — which is exactly what
-  // produced the folded/garbled mesh from the first version of this fix.
-  // A child of skinnedMesh with an identity local transform is GUARANTEED
-  // matrixWorld === skinnedMesh.matrixWorld, regardless of what that chain
-  // actually is, so this can't drift out of sync again.
-  useEffect(() => {
-    if (!skinnedMesh) return
-    const material = new THREE.MeshStandardMaterial({ color: LIMB_CUT_LINER_COLOR, roughness: 1, metalness: 0, side: THREE.BackSide })
-    ensureLimbCutLinerShaderPatch(material)
-    const liner = new THREE.SkinnedMesh(skinnedMesh.geometry, material)
-    liner.bind(skinnedMesh.skeleton, skinnedMesh.bindMatrix)
-    liner.visible = false
-    skinnedMesh.add(liner)
-    linerRef.current = liner
-    return () => {
-      skinnedMesh.remove(liner)
-      material.dispose()
-      linerRef.current = null
-    }
-  }, [skinnedMesh])
+  // Real user report: the "fills the hole" liner this used to add here (a
+  // second, back-face-only copy of the whole skinnedMesh geometry, meant
+  // to cap the cut region instead of leaving it looking straight through
+  // to empty space) itself looked wrong in practice — "se queda algo de
+  // textura en el mech... no quiero que quede" (a screenshot showed a
+  // large, dark, still-attached solid chunk sitting exactly where the
+  // limb had just fallen away from, right next to the same region
+  // highlighted red as "selected" in a second screenshot: this WAS the
+  // liner, not a leftover fragment — a fully separate BROKEN piece
+  // genuinely does fall away correctly, unrelated to this). Explicit,
+  // repeated instruction: don't touch the break/fall itself, only remove
+  // this residue — so the liner is gone outright, back to a plain
+  // shader-discarded hole on the main mesh (still handled by
+  // ensureLimbCutShaderPatch/setLimbCutMask above).
 
   useEffect(() => {
     // parentName only set when the parent is ITSELF one of this skeleton's
@@ -875,7 +850,6 @@ function LimbPainter({
       paintInfluenceMask(skinnedMesh, null)
     }
     if (skinnedMesh) setLimbCutMask(skinnedMesh, cutMask)
-    if (linerRef.current) linerRef.current.visible = cutMask !== null
 
     // Rebuild the falling fragment ONLY when the actual cut selection
     // changed (a stable, sorted key of the bone names it was built from,
@@ -899,6 +873,24 @@ function LimbPainter({
         oldFragment.geometry.dispose()
         ;(oldFragment.material as THREE.Material).dispose()
         fragmentPieceRef.current = null
+        // Real bug found live: "se cae bastante bien PERO se queda algo de
+        // textura en el mech" — the source skinnedMesh is ITSELF one of
+        // the named parts staticCollidersRef builds a collider for (see
+        // that effect above), sized to the WHOLE fused body on a chassis
+        // like this one. The directly-picked-mesh-node branch below
+        // already disables that same source part's own static collider
+        // for exactly this reason (staticCollidersRef...setEnabled(false),
+        // a few lines down) — this bone-cut branch spawned its fragment
+        // right on top of that still-ACTIVE, much bigger static collider
+        // without ever disabling it, so the new dynamic body started deep
+        // inside it and Rapier's contact resolution just held it pinned at
+        // its spawn transform instead of letting it fall: not a rendering
+        // bug, a physics one, but with a "leftover baked-in texture" look
+        // since the stuck fragment sits exactly where the cut region was.
+        // Re-enabled here (selection cleared / preview turned off) —
+        // there's nothing left needing it disabled once no fragment of
+        // this mesh is falling.
+        if (skinnedMesh) staticCollidersRef.current.get(skinnedMesh.name)?.setEnabled(true)
       }
       // Guarded on its own — a failure building the bone-cut fragment
       // (odd geometry, a multi-material mesh, whatever) must never take
@@ -947,6 +939,13 @@ function LimbPainter({
             fragmentPieceRef.current = fragment
             fallenGroupRef.current?.add(fragment)
             const fragBody = spawnFallingBody(world, rapier, physicsBodiesRef.current, fragment, piece.halfExtents)
+            // See the oldFragment cleanup's own doc comment (above) for
+            // the full bug this guards against — the new fragment starts
+            // out spatially overlapping skinnedMesh's OWN static collider
+            // (it's cut from that same mesh's geometry), which pins it in
+            // place instead of letting it fall unless that collider is
+            // disabled for as long as this fragment exists.
+            staticCollidersRef.current.get(skinnedMesh.name)?.setEnabled(false)
             // Bone-cut selection has no single "mesh node name" to check —
             // go by whichever bones were actually painted instead (same
             // "Pierna*" naming convention as the whole-piece case below).
@@ -985,12 +984,10 @@ function LimbPainter({
 
     const toBreak: THREE.Mesh[] = []
     instance.traverse((obj) => {
-      // The liner and the falling fragment both live as children of
-      // skinnedMesh (see their own effects) precisely so they inherit the
-      // right transform — but that also puts them in THIS traversal. Both
-      // manage their own material/visibility entirely separately, so skip
-      // them here.
-      if (obj === linerRef.current || obj === fragmentPieceRef.current) return
+      // fragmentPieceRef lives under fallenGroupRef, a sibling of
+      // `instance` — never actually hit by this traversal — but skipped
+      // defensively anyway in case that ever changes.
+      if (obj === fragmentPieceRef.current) return
       if (obj instanceof THREE.Mesh) {
         const mat = obj.material as THREE.MeshStandardMaterial
         mat.vertexColors = paintedByBones
@@ -1461,7 +1458,29 @@ function RigViewer({
   onBoneDragChange: (dragging: boolean) => void
 }) {
   const url = resolveMechModelUrl(chassis, model)
-  const { scene, animations } = useGLTF(url)
+  const { scene, animations: gltfAnimations } = useGLTF(url)
+  // Real user report: Ver rig is the one place actually meant to show
+  // whether a chassis's animation looks right — showing it the RAW,
+  // still-wrong borrowed atlas_ clip here (while the game itself plays
+  // the corrected version via Mech3D's own resolveClipKey) defeated the
+  // entire point of asking to check it here. Same correction as Mech3D's
+  // own animations memo (see buildRetargetedBorrowedClip's own doc
+  // comment), but SUBSTITUTED under the clip's ORIGINAL name instead of
+  // added alongside it — this component's own clip-button list is keyed
+  // directly off these names, and there's no reason to make picking
+  // between a "atlas_moveCoreIdle" and a "atlas_moveCoreIdle__retargeted"
+  // button someone's problem here; showing the corrected pose IS showing
+  // the animation, full stop.
+  const animations = useMemo(() => {
+    if (chassis?.toLowerCase() === KNOWN_BORROWED_CLIP_PREFIX) return gltfAnimations
+    const chassisRestQuats = getChassisRestQuats(scene)
+    return gltfAnimations.map((clip) => {
+      if (!clip.name.toLowerCase().startsWith(`${KNOWN_BORROWED_CLIP_PREFIX}_`)) return clip
+      const retargeted = buildRetargetedBorrowedClip(clip, chassisRestQuats)
+      return new THREE.AnimationClip(clip.name, retargeted.duration, retargeted.tracks)
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gltfAnimations, scene, chassis])
   const groupRef = useRef<THREE.Group>(null)
   const instance = useMemo(() => normalizeMechInstance(scene), [scene])
   // applyColorBoost: false — see LimbPainter's own doc comment on its
@@ -1700,6 +1719,7 @@ function TextureTuner({
   return <primitive object={instance} scale={MODEL_SCALE} />
 }
 
+
 export function MechLabView() {
   const [chassisOptions, setChassisOptions] = useState<MechChassisResult[]>([])
   const [selectedChassis, setSelectedChassis] = useState('')
@@ -1707,16 +1727,6 @@ export function MechLabView() {
   const [selectedModelFile, setSelectedModelFile] = useState('')
 
   const [mode, setMode] = useState<Mode>('annotate')
-  // Real user request: "quiero tener la opcion de rotar entre mech normal,
-  // dañado, explotado en el mechlab, para ver que todo cuadre" — MechLab
-  // has no real unit/mech record with actual armor damage to drive
-  // Mech3D's own severedLocations/damagedLocations props, so this is a pure
-  // preview toggle: forces EVERY location into the same tier at once,
-  // purely for eyeballing that a raw extraction's own _dmg/_explode
-  // sub-parts (Mech3D's damage-tier effect) line up correctly, independent
-  // of any real battle state.
-  const [damagePreview, setDamagePreview] = useState<'normal' | 'damaged' | 'destroyed'>('normal')
-  const damagePreviewLocations = useMemo(() => new Set<string>(MECH_LOCATIONS), [])
   // Textura tab's own live tuning state — see TextureTuner's own doc
   // comment. Real user follow-up: "quiero poder guardarlo desde el
   // mechlab y como lo demas, 3 estados y un marcador en el desplegable" —
@@ -1736,6 +1746,11 @@ export function MechLabView() {
   // instanceRef prop (the 'annotate' mode <Mech3D> call below) with the
   // SAME live, already-MODEL_SCALE-rendered instance it draws with.
   const annotateInstanceRef = useRef<THREE.Object3D | null>(null)
+  // Same purpose as annotateInstanceRef, for LimbPainter's own separately-
+  // built instance (the 'limbs' tab doesn't render through <Mech3D> at
+  // all) — real user request: "también podremos... encontrar las
+  // extremidades porque los nuevos modelos están nombrados y separados?"
+  const limbInstanceRef = useRef<THREE.Object3D | null>(null)
   const [fpvPreview, setFpvPreview] = useState(false)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
@@ -1917,15 +1932,7 @@ export function MechLabView() {
         .filter((a) => a.model_url === modelUrl)
         .map((a) => ({ kind: a.kind, location: a.location, x: a.x, y: a.y, z: a.z, mesh_names: a.mesh_names })),
     )
-    const savedPbr = allPbrSettings.find((r) => r.model_url === modelUrl)
-    setPbrSettings(
-      savedPbr
-        ? {
-            repeat: savedPbr.repeat, normalScale: savedPbr.normal_scale, roughness: savedPbr.roughness,
-            metalness: savedPbr.metalness, colorBoost: savedPbr.color_boost, aoIntensity: savedPbr.ao_intensity,
-          }
-        : MECH_PBR_DEFAULTS,
-    )
+    setPbrSettings(findSavedPbrSettings(allPbrSettings, modelUrl) ?? MECH_PBR_DEFAULTS)
     const savedFootprint = allFootprintMasks.find((r) => r.model_url === modelUrl)
     setFootprintCapture(
       savedFootprint
@@ -1976,7 +1983,6 @@ export function MechLabView() {
   }, [mode, selectedChassis, rigClipNames])
 
   const cockpitPoint = points.find((p) => p.kind === 'cockpit')
-  const hitPointFor = (loc: MechLocationCode) => points.find((p) => p.kind === 'hit' && p.location === loc)
   const activeLimbPoint = points.find((p) => p.kind === 'limb' && p.location === activeLimb)
   // mesh_names holds a mix of real mesh-node names and bone names (see
   // LimbPainter's own doc comment) — activeLimbMeshNames is the full raw
@@ -2007,35 +2013,10 @@ export function MechLabView() {
 
   const onModelClick = ([x, y, z]: [number, number, number]) => {
     if (!activeSlot || isTrackLocked) return
-    if (activeSlot.kind === 'cockpit') {
-      setPoints((prev) => [
-        ...prev.filter((p) => p.kind !== 'cockpit'),
-        { kind: 'cockpit', location: null, x, y, z, mesh_names: null },
-      ])
-      setSavedFlash(false)
-      return
-    }
-    if (activeSlot.kind === 'hit') {
-      const { location } = activeSlot
-      setPoints((prev) => [
-        ...prev.filter((p) => !(p.kind === 'hit' && p.location === location)),
-        { kind: 'hit', location, x, y, z, mesh_names: null },
-      ])
-      setSavedFlash(false)
-      return
-    }
-    const { location, index } = activeSlot
-    setPoints((prev) => {
-      const others = prev.filter((p) => !(p.kind === 'weapon' && p.location === location))
-      const sameLocation = prev.filter((p) => p.kind === 'weapon' && p.location === location)
-      // Clamped so clicking a not-yet-reachable slot (e.g. "arma 3" while
-      // only "arma 1" exists) fills the next open one instead of leaving a
-      // gap — slot index is positional ("arma N"), not tied to a specific
-      // real weapon, so this never loses information.
-      const targetIndex = Math.min(index, sameLocation.length)
-      sameLocation[targetIndex] = { kind: 'weapon', location, x, y, z, mesh_names: null }
-      return [...others, ...sameLocation]
-    })
+    setPoints((prev) => [
+      ...prev.filter((p) => p.kind !== 'cockpit'),
+      { kind: 'cockpit', location: null, x, y, z, mesh_names: null },
+    ])
     setSavedFlash(false)
   }
 
@@ -2059,9 +2040,47 @@ export function MechLabView() {
   // manual click) means a real gap just leaves that location visibly
   // short (its later slots simply don't get filled) instead of silently
   // wrong.
-  const onAutoDetectWeaponPoints = () => {
+  // Real user request: "necesito que detectar todos los cañones marque
+  // todas las armas del chasis, incluso las que no estan visibles" — every
+  // real MW5 variant of a chassis (BSW-L1, BSW-S2, BSW-X1, …) shares ONE
+  // .glb (see mechAssets.ts's own per-chassis `models` map, every variant
+  // key pointing at the same file), so a mount mesh the CURRENTLY selected
+  // variant's own loadout happens to leave hidden (applyMechCombatVisibility)
+  // still physically exists on this model and is worth detecting once,
+  // here, instead of forcing a re-click per variant just to catch mounts
+  // that variant's loadout doesn't use. Pulls every OTHER variant's own
+  // loadout that resolves to this SAME model file, and for each location
+  // keeps whichever variant asks for the MOST weapons there — the fullest
+  // loadout at a location is the only one guaranteed to exercise every
+  // mount mesh actually present there (a thinner loadout just reuses a
+  // subset of the same mounts, never a mount the fullest one misses).
+  const onAutoDetectWeaponPoints = async () => {
+    if (!annotateInstanceRef.current || isTrackLocked || !selectedChassis) return
+    // See autoDetectAll's own doc comment (WeaponMuzzleEditor above) for
+    // the exact bug this guards against — cheap and harmless if the
+    // scale was already correctly committed by the time this runs.
+    annotateInstanceRef.current.scale.setScalar(MODEL_SCALE)
+
+    const sameModelVariants = modelOptions.filter((m) => resolveMechModelUrl(selectedChassis, m.model) === modelUrl)
+    const loadouts = await Promise.all(
+      sameModelVariants.map((m) => getMechImport(m.file).then((data) => data.weapons).catch(() => [])),
+    )
+    const bestByLocation = new Map<string, { weapon_name: string; location: string }[]>()
+    for (const weapons of loadouts) {
+      const byLoc = new Map<string, { weapon_name: string; location: string }[]>()
+      for (const w of weapons) byLoc.set(w.location, [...(byLoc.get(w.location) ?? []), w])
+      for (const [loc, list] of byLoc) {
+        if (list.length > (bestByLocation.get(loc)?.length ?? 0)) bestByLocation.set(loc, list)
+      }
+    }
+    const allChassisWeapons = [...bestByLocation.values()].flat()
+      .map((w) => ({ location: w.location, weaponName: w.weapon_name }))
+
+    // annotateInstanceRef could point at a since-unmounted instance if the
+    // chassis/model changed while the fetches above were in flight — the
+    // usual "still relevant?" guard any async handler touching a ref needs.
     if (!annotateInstanceRef.current || isTrackLocked) return
-    const detected = computeWeaponMuzzlePoints(annotateInstanceRef.current, templateWeaponsForMech3D)
+    const detected = computeWeaponMuzzlePoints(annotateInstanceRef.current, allChassisWeapons)
     const byLocation = new Map<string, MechAnnotationPoint[]>()
     const stoppedLocations = new Set<string>()
     for (const d of detected) {
@@ -2078,6 +2097,28 @@ export function MechLabView() {
     setPoints((prev) => {
       const untouched = prev.filter((p) => !(p.kind === 'weapon' && p.location != null && byLocation.has(p.location)))
       return [...untouched, ...[...byLocation.values()].flat()]
+    })
+    setSavedFlash(false)
+  }
+
+  // Same request, for the "Extremidades" tab: "encontrar las
+  // extremidades porque los nuevos modelos están nombrados y separados?"
+  // — the 4 detachable limb locations' own mesh_names, read straight off
+  // the model's own body-part naming instead of clicking every mesh/bone
+  // by hand. Overwrites whichever limb locations actually got a
+  // detection; a chassis with no recognizable naming (the old
+  // hand-authored pipeline) leaves every existing limb definition alone.
+  const onAutoDetectLimbMeshes = () => {
+    if (!limbInstanceRef.current || isTrackLocked) return
+    const detected = computeLimbMeshNames(limbInstanceRef.current)
+    const entries = Object.entries(detected) as [MechLocationCode, string[]][]
+    if (entries.length === 0) return
+    setPoints((prev) => {
+      const others = prev.filter((p) => !(p.kind === 'limb' && p.location != null && detected[p.location] !== undefined))
+      const newLimbPoints: MechAnnotationPoint[] = entries.map(([location, mesh_names]) => ({
+        kind: 'limb', location, x: 0, y: 0, z: 0, mesh_names,
+      }))
+      return [...others, ...newLimbPoints]
     })
     setSavedFlash(false)
   }
@@ -2113,11 +2154,6 @@ export function MechLabView() {
     setSavedFlash(false)
   }
 
-  const removeHitPoint = (location: MechLocationCode) => {
-    if (isTrackLocked) return
-    setPoints((prev) => prev.filter((p) => !(p.kind === 'hit' && p.location === location)))
-    setSavedFlash(false)
-  }
 
   const removeWeaponSlot = (location: MechLocationCode, index: number) => {
     if (isTrackLocked) return
@@ -2168,8 +2204,24 @@ export function MechLabView() {
     try {
       const saved = await saveMechPbrSettings({
         model_url: modelUrl,
-        repeat: pbrSettings.repeat, normal_scale: pbrSettings.normalScale, roughness: pbrSettings.roughness,
-        metalness: pbrSettings.metalness, color_boost: pbrSettings.colorBoost, ao_intensity: pbrSettings.aoIntensity,
+        repeat: pbrSettings.repeat,
+        body_normal_scale: pbrSettings.body.normalScale, body_roughness: pbrSettings.body.roughness,
+        body_metalness: pbrSettings.body.metalness, body_color_boost: pbrSettings.body.colorBoost,
+        body_ao_intensity: pbrSettings.body.aoIntensity,
+        body_metal_roughness: pbrSettings.body.metalRoughness ?? pbrSettings.body.roughness,
+        body_metal_metalness: pbrSettings.body.metalMetalness ?? pbrSettings.body.metalness,
+        body_metal_normal_scale: pbrSettings.body.metalNormalScale ?? pbrSettings.body.normalScale,
+        body_metal_color_boost: pbrSettings.body.metalColorBoost ?? pbrSettings.body.colorBoost,
+        weapons_normal_scale: pbrSettings.weapons.normalScale, weapons_roughness: pbrSettings.weapons.roughness,
+        weapons_metalness: pbrSettings.weapons.metalness, weapons_color_boost: pbrSettings.weapons.colorBoost,
+        weapons_ao_intensity: pbrSettings.weapons.aoIntensity,
+        weapons_metal_roughness: pbrSettings.weapons.metalRoughness ?? pbrSettings.weapons.roughness,
+        weapons_metal_metalness: pbrSettings.weapons.metalMetalness ?? pbrSettings.weapons.metalness,
+        weapons_metal_normal_scale: pbrSettings.weapons.metalNormalScale ?? pbrSettings.weapons.normalScale,
+        weapons_metal_color_boost: pbrSettings.weapons.metalColorBoost ?? pbrSettings.weapons.colorBoost,
+        cockpit_normal_scale: pbrSettings.cockpit.normalScale, cockpit_roughness: pbrSettings.cockpit.roughness,
+        cockpit_metalness: pbrSettings.cockpit.metalness, cockpit_color_boost: pbrSettings.cockpit.colorBoost,
+        cockpit_ao_intensity: pbrSettings.cockpit.aoIntensity,
       })
       setAllPbrSettings((prev) => [...prev.filter((r) => r.model_url !== modelUrl), saved])
       setSavedFlash(true)
@@ -2289,20 +2341,6 @@ export function MechLabView() {
               </button>
             </div>
 
-            {mode === 'annotate' && (
-              <div className="mechlab-mode-tabs">
-                <button type="button" className={damagePreview === 'normal' ? 'active' : ''} onClick={() => setDamagePreview('normal')}>
-                  Normal
-                </button>
-                <button type="button" className={damagePreview === 'damaged' ? 'active' : ''} onClick={() => setDamagePreview('damaged')}>
-                  Dañado
-                </button>
-                <button type="button" className={damagePreview === 'destroyed' ? 'active' : ''} onClick={() => setDamagePreview('destroyed')}>
-                  Explotado
-                </button>
-              </div>
-            )}
-
             {selectedChassis && (
               <>
                 <ReviewBadge
@@ -2320,40 +2358,35 @@ export function MechLabView() {
 
             {mode === 'annotate' && (
               <>
-                <h2>¿Qué estás marcando?</h2>
+                <h2>Armas</h2>
+                <p className="mechlab-hint">
+                  Ya no hace falta marcar cada arma a mano — calcula el punto de disparo de todas a la vez
+                  directamente desde la malla/esqueleto real. Revisa el resultado (lista de abajo, con un
+                  punto en el visor por cada una) y guarda.
+                </p>
                 <div className="row">
                   <button
                     type="button" className="mechlab-save-btn"
                     onClick={onAutoDetectWeaponPoints} disabled={isTrackLocked}
                   >
-                    🎯 Detectar automáticamente
+                    🎯 Detectar todos los cañones
                   </button>
                 </div>
-                <p className="mechlab-hint">
-                  Calcula el punto de disparo de cada arma directamente desde la malla real (solo chasis con el
-                  pipeline nuevo de AssetStudio) — revisa el resultado y guarda igual que si lo hubieras marcado a mano.
-                </p>
                 <div className="mechlab-slots">
                   {MECH_LOCATIONS.filter((loc) => (weaponsByLocation[loc]?.length ?? 0) > 0).map((loc) => {
                     const weapons = weaponsByLocation[loc] ?? []
                     const filledCount = points.filter((p) => p.kind === 'weapon' && p.location === loc).length
-                    return weapons.map((weaponName, i) => {
-                      const isActive = activeSlot?.kind === 'weapon' && activeSlot.location === loc && activeSlot.index === i
-                      const isFilled = i < filledCount
-                      return (
-                        <button
-                          key={`${loc}:${i}`}
-                          type="button"
-                          className={`mechlab-slot${isActive ? ' active' : ''}${isFilled ? ' filled' : ''}`}
-                          onClick={() => setActiveSlot({ kind: 'weapon', location: loc, index: i })}
-                          disabled={isTrackLocked}
-                        >
-                          {SLOT_LABELS[loc]} · arma {i + 1}
-                          <span className="mechlab-slot-weapons">{weaponName}</span>
-                        </button>
-                      )
-                    })
+                    return weapons.map((weaponName, i) => (
+                      <span key={`${loc}:${i}`} className={`mechlab-slot${i < filledCount ? ' filled' : ''}`}>
+                        {SLOT_LABELS[loc]} · arma {i + 1}
+                        <span className="mechlab-slot-weapons">{weaponName}</span>
+                      </span>
+                    ))
                   })}
+                </div>
+
+                <h2>Cabina</h2>
+                <div className="mechlab-slots">
                   <button
                     type="button"
                     className={`mechlab-slot${activeSlot?.kind === 'cockpit' ? ' active' : ''}${cockpitPoint ? ' filled' : ''}`}
@@ -2364,40 +2397,10 @@ export function MechLabView() {
                   </button>
                 </div>
 
-                {/* Real user follow-up: "no solo vamos a seleccionar armas,
-                    ademas vamos a seleccionar las diferentes partes del
-                    cuerpo del mech, para que cuando reciba ataques en
-                    sitios especificos, podamos mostrar esos ataques
-                    golpeando donde deben" — separate from where a weapon
-                    MOUNTS, this is where an attack ON that location should
-                    visually LAND (one point per location, all 8). */}
-                <h2>¿Dónde impacta un ataque a esa zona?</h2>
-                <div className="mechlab-slots">
-                  {MECH_LOCATIONS.map((loc) => {
-                    const isActive = activeSlot?.kind === 'hit' && activeSlot.location === loc
-                    return (
-                      <button
-                        key={loc}
-                        type="button"
-                        className={`mechlab-slot${isActive ? ' active' : ''}${hitPointFor(loc) ? ' filled' : ''}`}
-                        onClick={() => setActiveSlot({ kind: 'hit', location: loc })}
-                        disabled={isTrackLocked}
-                      >
-                        {SLOT_LABELS[loc]}
-                      </button>
-                    )
-                  })}
-                </div>
-
                 {activeSlot && (
                   <p className="mechlab-hint">
-                    Clic en el modelo para colocar/mover «
-                    {activeSlot.kind === 'cockpit'
-                      ? SLOT_LABELS.cockpit
-                      : activeSlot.kind === 'hit'
-                        ? `impacto en ${SLOT_LABELS[activeSlot.location]}`
-                        : `${SLOT_LABELS[activeSlot.location]} · arma ${activeSlot.index + 1}`}
-                    ». Puedes seguir haciendo clic para afinar la posición.
+                    Clic en el modelo para colocar/mover «{SLOT_LABELS.cockpit}». Puedes seguir haciendo
+                    clic para afinar la posición.
                   </p>
                 )}
 
@@ -2409,22 +2412,19 @@ export function MechLabView() {
                   {(() => {
                     const seen: Partial<Record<MechLocationCode, number>> = {}
                     return points
-                      .filter((p) => p.kind !== 'limb')
+                      // Real user request: hit points dropped from this
+                      // tab entirely (see ActiveSlot's own doc comment) —
+                      // any 'hit' entry still in `points` here is only
+                      // ever a pre-existing saved record loaded from the
+                      // server, never something this tab can create or
+                      // edit any more, so it's simply not shown.
+                      .filter((p) => p.kind !== 'limb' && p.kind !== 'hit')
                       .map((p) => {
                         if (p.kind === 'cockpit') {
                           return (
                             <li key="cockpit">
                               <span>{SLOT_LABELS.cockpit}</span>
                               <button type="button" onClick={removeCockpitPoint}>✕</button>
-                            </li>
-                          )
-                        }
-                        if (p.kind === 'hit') {
-                          const loc = p.location as MechLocationCode
-                          return (
-                            <li key={`hit:${loc}`}>
-                              <span>Impacto · {SLOT_LABELS[loc]}</span>
-                              <button type="button" onClick={() => removeHitPoint(loc)}>✕</button>
                             </li>
                           )
                         }
@@ -2468,6 +2468,18 @@ export function MechLabView() {
             {mode === 'limbs' && (
               <>
                 <h2>¿Qué extremidad?</h2>
+                <div className="row">
+                  <button
+                    type="button" className="mechlab-save-btn"
+                    onClick={onAutoDetectLimbMeshes} disabled={isTrackLocked}
+                  >
+                    🎯 Detectar automáticamente
+                  </button>
+                </div>
+                <p className="mechlab-hint">
+                  Agrupa las mallas del modelo por nombre de zona (solo chasis con el pipeline nuevo de
+                  AssetStudio) — revisa el resultado y guarda igual que si lo hubieras marcado a mano.
+                </p>
                 <div className="mechlab-slots">
                   {LIMB_LOCATIONS.map((loc) => {
                     const count = points.find((p) => p.kind === 'limb' && p.location === loc)?.mesh_names?.length ?? 0
@@ -2508,23 +2520,23 @@ export function MechLabView() {
                       </label>
                     </div>
 
-                    {limbMeshNodeNames.length > 0 ? (
+                    {limbBoneNames.length > 0 ? (
                       <>
-                        <h2>Piezas de la malla ({limbMeshNodeNames.length})</h2>
+                        <h2>Huesos ({limbBoneNames.length})</h2>
                         <ul className={`mechlab-point-list mechlab-bone-list${isTrackLocked ? ' mechlab-locked' : ''}`}>
-                          {limbMeshNodeNames.map((name) => (
+                          {limbBoneNames.map((name) => (
                             <li
                               key={name}
-                              className={activeLimbMeshNames.has(name) ? 'selected' : ''}
+                              className={activeLimbBoneNames.has(name) ? 'selected' : ''}
                               onClick={() => onToggleLimbMesh(name)}
                             >
-                              <span>{activeLimbMeshNames.has(name) ? '☑' : '☐'} {name}</span>
+                              <span>{activeLimbBoneNames.has(name) ? '☑' : '☐'} {name}</span>
                             </li>
                           ))}
                         </ul>
                       </>
                     ) : (
-                      <p className="mechlab-hint">Este modelo no tiene piezas detectadas todavía.</p>
+                      <p className="mechlab-hint">Este modelo no tiene huesos detectados todavía.</p>
                     )}
                     <h2>Piezas marcadas</h2>
                     <ul className="mechlab-point-list">
@@ -2621,45 +2633,84 @@ export function MechLabView() {
                 <h2>PBR</h2>
                 <p className="mechlab-hint">
                   Vista previa en directo del material PBR (detalle de metal escaneado, ver MECH_PBR_DEFAULTS).
+                  Cuerpo, armas y cabina son materiales reales distintos — cada uno se ajusta por separado.
                 </p>
+                {/* Real user request: "los sliders... cambia todo a la vez,
+                    cabina/armas y cuerpo, deberían ser cambios independientes"
+                    — confirmed live (Bushwacker) these three really are
+                    separate materials with different real baselines, not
+                    just separate taste. One full slider set per zone,
+                    reading/writing pbrSettings[zone][key] instead of the
+                    old flat pbrSettings[key].
+                    Real follow-up: "en textura debemos dejar solo los
+                    sliders de detalle de relieve rugosidad metalicidad y
+                    brillo" — repeat (shared tiling) and aoIntensity stay in
+                    the data model/backend (still applied, at whatever was
+                    last saved or the default) but are no longer exposed as
+                    sliders here; same for the derived glossiness readout
+                    (mathematically just 1-roughness, redundant with
+                    rugosidad already being one of the four kept). */}
                 {([
-                  { key: 'repeat', label: 'Repetición de textura', min: 1, max: 20, step: 1 },
-                  { key: 'normalScale', label: 'Detalle de relieve (normal)', min: 0, max: 1.5, step: 0.01 },
-                  { key: 'roughness', label: 'Rugosidad (roughness)', min: 0, max: 1, step: 0.01 },
-                  { key: 'metalness', label: 'Metalicidad (metalness)', min: 0, max: 1, step: 0.01 },
-                  { key: 'aoIntensity', label: 'Oclusión ambiental (AO, procedural)', min: 0, max: 1, step: 0.01 },
-                  { key: 'colorBoost', label: 'Brillo (aclarar textura)', min: 0.5, max: 3, step: 0.01 },
-                ] as const).map(({ key, label, min, max, step }) => (
-                  <div key={key}>
-                    <p className="mechlab-hint">{label}: {pbrSettings[key].toFixed(2)}</p>
-                    <input
-                      type="range" min={min} max={max} step={step} value={pbrSettings[key]} disabled={isTrackLocked}
-                      onChange={(e) => {
-                        setPbrSettings((prev) => ({ ...prev, [key]: Number(e.target.value) }))
-                        setSavedFlash(false)
-                      }}
-                      className="mechlab-scrub"
-                    />
+                  { zone: 'body', label: 'Cuerpo' },
+                  { zone: 'weapons', label: 'Armas' },
+                  { zone: 'cockpit', label: 'Cabina' },
+                ] as const).map(({ zone, label: zoneLabel }) => (
+                  <div key={zone}>
+                    <h2>{zoneLabel}</h2>
+                    {([
+                      { key: 'normalScale', label: 'Detalle de relieve (normal)', min: 0, max: 1.5, step: 0.01 },
+                      { key: 'roughness', label: 'Rugosidad (roughness)', min: 0, max: 1, step: 0.01 },
+                      { key: 'metalness', label: 'Metalicidad (metalness)', min: 0, max: 1, step: 0.01 },
+                      { key: 'colorBoost', label: 'Brillo (aclarar textura)', min: 0.5, max: 3, step: 0.01 },
+                    ] as const).map(({ key, label: fieldLabel, min, max, step }) => (
+                      <div key={key}>
+                        <p className="mechlab-hint">{fieldLabel}: {pbrSettings[zone][key].toFixed(2)}</p>
+                        <input
+                          type="range" min={min} max={max} step={step} value={pbrSettings[zone][key]} disabled={isTrackLocked}
+                          onChange={(e) => {
+                            const v = Number(e.target.value)
+                            setPbrSettings((prev) => ({ ...prev, [zone]: { ...prev[zone], [key]: v } }))
+                            setSavedFlash(false)
+                          }}
+                          className="mechlab-scrub"
+                        />
+                      </div>
+                    ))}
+                    {/* Real user request: "el cuerpo, las armas... tienen
+                        una máscara para aplicar las texturas. Los sliders
+                        solo afectan a la parte de la máscara. Quiero otro
+                        slider que afecte a las partes FUERA de la mask" —
+                        Body/Weapons only (see MechPbrZoneSettings' own doc
+                        comment on metalRoughness/metalMetalness for why
+                        Cabina has no split). Rugosidad/Metalicidad above
+                        keep meaning the PAINTED region; these two are the
+                        bare-metal region specifically. */}
+                    {zone !== 'cockpit' && (
+                      <>
+                        <h2>{zoneLabel} — fuera de la máscara (metal desnudo, aproximado)</h2>
+                        {([
+                          { key: 'metalNormalScale' as const, label: 'Detalle de relieve (metal desnudo)', min: 0, max: 1.5, step: 0.01 },
+                          { key: 'metalRoughness' as const, label: 'Rugosidad (metal desnudo)', min: 0, max: 1, step: 0.01 },
+                          { key: 'metalMetalness' as const, label: 'Metalicidad (metal desnudo)', min: 0, max: 1, step: 0.01 },
+                          { key: 'metalColorBoost' as const, label: 'Brillo (metal desnudo)', min: 0.5, max: 3, step: 0.01 },
+                        ]).map(({ key, label: fieldLabel, min, max, step }) => (
+                          <div key={key}>
+                            <p className="mechlab-hint">{fieldLabel}: {(pbrSettings[zone][key] ?? 0).toFixed(2)}</p>
+                            <input
+                              type="range" min={min} max={max} step={step} value={pbrSettings[zone][key] ?? 0} disabled={isTrackLocked}
+                              onChange={(e) => {
+                                const v = Number(e.target.value)
+                                setPbrSettings((prev) => ({ ...prev, [zone]: { ...prev[zone], [key]: v } }))
+                                setSavedFlash(false)
+                              }}
+                              className="mechlab-scrub"
+                            />
+                          </div>
+                        ))}
+                      </>
+                    )}
                   </div>
                 ))}
-                {/* Real user request: "y el glossiness?" — the metallic-
-                    roughness workflow this material uses has no separate
-                    glossiness channel, it's mathematically just 1-roughness
-                    (a "glossy" surface IS a low-roughness one) — rather than
-                    add a second field that could drift out of sync with
-                    roughness, this drives/reads the SAME pbrSettings.roughness
-                    value through the inverted scale some artists think in. */}
-                <div>
-                  <p className="mechlab-hint">Brillo especular (glossiness): {(1 - pbrSettings.roughness).toFixed(2)}</p>
-                  <input
-                    type="range" min={0} max={1} step={0.01} value={1 - pbrSettings.roughness} disabled={isTrackLocked}
-                    onChange={(e) => {
-                      setPbrSettings((prev) => ({ ...prev, roughness: 1 - Number(e.target.value) }))
-                      setSavedFlash(false)
-                    }}
-                    className="mechlab-scrub"
-                  />
-                </div>
                 <div className="row">
                   <button
                     type="button" className="mechlab-save-btn" disabled={isTrackLocked}
@@ -2677,6 +2728,7 @@ export function MechLabView() {
                 </div>
               </>
             )}
+
 
             {mode === 'footprint' && (
               <>
@@ -2747,7 +2799,7 @@ export function MechLabView() {
         )}
         {modelUrl ? (
           <Canvas
-            shadows camera={{ position: [2, 1.4, 2], fov: 45 }}
+            shadows camera={{ position: [2 * MODEL_SCALE, 1.4 * MODEL_SCALE, 2 * MODEL_SCALE], fov: 45 }}
             onCreated={(state) => {
               state.gl.domElement.addEventListener('webglcontextlost', (e) => {
                 e.preventDefault()
@@ -2790,13 +2842,12 @@ export function MechLabView() {
                     instanceRef={annotateInstanceRef}
                     playAnimation={false}
                     weapons={templateWeaponsForMech3D}
-                    damagedLocations={damagePreview === 'damaged' ? damagePreviewLocations : undefined}
-                    severedLocations={damagePreview === 'destroyed' ? damagePreviewLocations : undefined}
                   />
                 )}
                 {mode === 'limbs' && (
                   <LimbPainter
                     chassis={selectedChassis} model={selectedModel} weapons={templateWeaponsForMech3D}
+                    instanceRef={limbInstanceRef}
                     selectedMeshNames={activeLimbMeshNames} selectedBoneNames={activeLimbBoneNames}
                     previewBreak={previewBreak}
                     onToggleMesh={onToggleLimbMesh} onBonesChange={setLimbBoneInfo}
@@ -2828,11 +2879,11 @@ export function MechLabView() {
                 )}
               </Suspense>
             </Physics>
-            {mode === 'annotate' && points.map((p, i) => (p.kind !== 'limb' ? <PointMarker key={`${pointKey(p.kind, p.location)}:${i}`} point={p} /> : null))}
+            {mode === 'annotate' && points.map((p, i) => (p.kind !== 'limb' && p.kind !== 'hit' ? <PointMarker key={`${pointKey(p.kind, p.location)}:${i}`} point={p} /> : null))}
             {mode === 'annotate' && fpvPreview && cockpitPoint ? (
               <FpvPreviewCam cockpitLocal={[cockpitPoint.x, cockpitPoint.y, cockpitPoint.z]} />
             ) : (
-              <OrbitControls target={[0, 0.5, 0]} enabled={!boneDragging && !footprintDragging} />
+              <OrbitControls target={[0, 0.5 * MODEL_SCALE, 0]} enabled={!boneDragging && !footprintDragging} />
             )}
           </Canvas>
         ) : (

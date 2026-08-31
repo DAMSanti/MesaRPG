@@ -133,13 +133,42 @@ def import_and_mount_weapons(armature, weapons_root, mech_name):
             print(f"  - {f}: {err}")
 
 
-def animations_to_nla(armature):
+def animations_to_nla(armature, mech_name):
     print("\n--- Pasando animaciones a NLA ---")
     if armature.animation_data is None:
         armature.animation_data_create()
 
     existing_action = armature.animation_data.action
-    actions = list(bpy.data.actions)
+    # BUG REAL (encontrado en produccion): bpy.data.actions es GLOBAL a todo
+    # el .blend abierto, no esta filtrado por armature. Si se reutiliza la
+    # misma sesion/archivo para procesar varios mechs seguidos (o se
+    # importa/enlaza un .blend que ya tenia acciones de otro mech cargadas),
+    # las acciones del mech ANTERIOR seguian vivas en bpy.data.actions y este
+    # bucle las colgaba tambien como NLA tracks del armature actual -> el
+    # exportador glTF las horneaba con su nombre original (p.ej.
+    # "atlas_moveCoreIdle") como si fueran animaciones propias del mech
+    # nuevo. Confirmado en los 14 chasis exportados tras el Atlas: TODOS
+    # llevaban la libreria de animacion del Atlas en vez de la suya propia
+    # (visible desde fuera de Blender leyendo el glTF, MechLab nunca lo
+    # mostro porque su preview no reproduce animacion). Filtrar por nombre
+    # de mech evita que una accion ajena se cuele.
+    all_actions = list(bpy.data.actions)
+    actions = [a for a in all_actions if a.name.lower().startswith(mech_name.lower())]
+    foreign = [a for a in all_actions if a not in actions]
+    # BUG REAL #2 (Commando): filtrar cuales se cuelgan como NLA track no
+    # basta - las acciones ajenas SIGUEN existiendo en bpy.data.actions, y
+    # si el paso de exportacion a glTF (manual, fuera de este script) usa
+    # "Animation Mode: Actions" en vez de "NLA Tracks", exporta esas
+    # acciones ajenas directamente sin mirar las NLA tracks en absoluto -
+    # confirmado en el Commando.blend real: NLA tracks vacias, pero
+    # bpy.data.actions seguia teniendo las 64 acciones "atlas_..." de
+    # antes, y el .glb exportado las llevaba igualmente. Purgarlas del
+    # archivo (no solo ignorarlas al construir NLA tracks) es la unica
+    # forma de que NINGUN modo de exportacion pueda recogerlas por error.
+    if foreign:
+        print(f"AVISO: {len(foreign)} acciones en el archivo no empiezan por '{mech_name}', las borro (no son de este mech): {sorted(a.name for a in foreign)}")
+        for a in foreign:
+            bpy.data.actions.remove(a)
     if not actions:
         print("No hay acciones/animaciones para convertir.")
         return
@@ -224,7 +253,7 @@ def main():
     print(f"Carpeta de modelos: {weapons_root}")
 
     import_and_mount_weapons(armature, weapons_root, mech_name)
-    animations_to_nla(armature)
+    animations_to_nla(armature, mech_name)
     fix_materials()
 
     save_path = os.path.join(MODELS_ROOT, f"{mech_name.capitalize()}.blend")

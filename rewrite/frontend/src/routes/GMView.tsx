@@ -1430,6 +1430,7 @@ function GMViewBattletech() {
                 <HexMap
                   map={map}
                   units={units}
+                  mechs={mechs}
                   needsInitiativePilotIds={needsInitiativePilotIds}
                   activeMoverPilotId={activeMover}
                   activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}

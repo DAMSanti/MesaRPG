@@ -123,6 +123,26 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'BLK-NT-2Y', 'BLK-NT-3A', 'BLK-NT-3B', 'BLK-NT-4D', 'BLK-NT-5H',
     ].map((model) => [model, `${MECHS_DIR}/Blackknight.glb`])),
   },
+  // First chassis from the MW5:Mercenaries (Unreal Engine) extraction
+  // pipeline instead of the original HBS/Unity one — source is FModel's
+  // own UEFormat (.uemodel/.ueanim), imported via the io_scene_ueformat
+  // Blender addon, not AssetStudio+FBX. Real upside: 85 of its own
+  // BSW_-prefixed animations, not a single borrowed atlas_ clip anywhere
+  // — no retargeting needed for this one. Textures aren't wired up yet
+  // (the importer only sets material NAMES/indices, no node graph), so
+  // it currently renders untextured — same "mesh first, texture later"
+  // order every other placeholder-tier chassis went through.
+  Bushwacker: {
+    placeholder: `${MECHS_DIR}/Bushwacker.glb`,
+    models: {
+      ...Object.fromEntries([
+        'BSW-L1', 'BSW-S2', 'BSW-S2r', 'BSW-X1', 'BSW-X2', 'BSW-X4',
+      ].map((model) => [model, `${MECHS_DIR}/Bushwacker.glb`])),
+      // Temporary test entry for the Hero skin swap (real color-recipe
+      // scrape from Bushwacker_Hero_SKN.json) - remove once verified.
+      'BSW-HR (Hero test)': `${MECHS_DIR}/Bushwacker_Hero_test.glb`,
+    },
+  },
   // Replaces the old hand-authored catapult-cplt-{k2,c1,c1d} trio (moved to
   // legacy/) with the placeholder-tier pipeline.
   Catapult: {
@@ -157,6 +177,116 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'CDA-2A', 'CDA-2B', 'CDA-3C', 'CDA-3F', 'CDA-3G', 'CDA-3M', 'CDA-3MA', 'CDA-3P', 'CDA-4A',
     ].map((model) => [model, `${MECHS_DIR}/Cicada.glb`])),
   },
+  // Brand new chassis, no prior hand-authored asset (Commando used to be
+  // one of the "no placeholder-tier replacement yet" chassis in the big
+  // comment below — real user request added its own asset, so it's
+  // removed from that list now).
+  Commando: {
+    placeholder: `${MECHS_DIR}/Commando.glb`,
+    models: Object.fromEntries([
+      'COM-1A', 'COM-1B', 'COM-1C', 'COM-1D', 'COM-2D', 'COM-2Dr', 'COM-3A', 'COM-4H', 'COM-5S',
+      'COM-7B', 'COM-7S', 'COM-7S2 (Freyr)', 'COM-8S', 'COM-9S',
+    ].map((model) => [model, `${MECHS_DIR}/Commando.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Crab: {
+    placeholder: `${MECHS_DIR}/Crab.glb`,
+    models: Object.fromEntries([
+      'CRB-20', 'CRB-27', 'CRB-27b', 'CRB-27sl', 'CRB-30', 'CRB-45', 'CRB-54', 'CRB-C',
+    ].map((model) => [model, `${MECHS_DIR}/Crab.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Cyclops: {
+    placeholder: `${MECHS_DIR}/Cyclops.glb`,
+    models: Object.fromEntries([
+      'C', 'CP-10-HQ', 'CP-10-Q', 'CP-10-Z', 'CP-11-A', 'CP-11-A-DC', 'CP-11-B', 'CP-11-C',
+      'CP-11-C2', 'CP-11-C3', 'CP-11-G', 'CP-11-H', 'CP-12-K',
+    ].map((model) => [model, `${MECHS_DIR}/Cyclops.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Dragon: {
+    placeholder: `${MECHS_DIR}/Dragon.glb`,
+    models: Object.fromEntries([
+      'DRG-1C', 'DRG-2Y (Yoriyoshi)', 'DRG-5N', 'DRG-5Nr', 'DRG-7N',
+    ].map((model) => [model, `${MECHS_DIR}/Dragon.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Enforcer: {
+    placeholder: `${MECHS_DIR}/Enforcer.glb`,
+    models: Object.fromEntries([
+      'ENF-4R', 'ENF-4R (Daniel)', 'ENF-5D', 'ENF-5D (Daniel)', 'ENF-5R',
+    ].map((model) => [model, `${MECHS_DIR}/Enforcer.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Flea: {
+    placeholder: `${MECHS_DIR}/Flea.glb`,
+    models: Object.fromEntries([
+      "'Fire Ant'", 'FLE-15', 'FLE-16', 'FLE-17', 'FLE-19', 'FLE-20', 'FLE-21', 'FLE-4',
+    ].map((model) => [model, `${MECHS_DIR}/Flea.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Grasshopper: {
+    placeholder: `${MECHS_DIR}/Grasshopper.glb`,
+    models: Object.fromEntries([
+      '(Reynolds)', 'GHR-5H', 'GHR-5J', 'GHR-5N', 'GHR-6K', 'GHR-7K', "GHR-7K 'Gravedigger'",
+      'GHR-7P', 'GHR-7X', 'GHR-8K', 'GHR-C',
+    ].map((model) => [model, `${MECHS_DIR}/Grasshopper.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Griffin: {
+    placeholder: `${MECHS_DIR}/Griffin.glb`,
+    models: Object.fromEntries([
+      'C', 'GRF-1A', 'GRF-1DS', "GRF-1E 'Sparky'", "GRF-1E2 'Sparky 2.0'", 'GRF-1N', 'GRF-1RG',
+      'GRF-1S', 'GRF-2N', 'GRF-3M', 'GRF-3N', 'GRF-3RG', 'GRF-4N', 'GRF-4R', 'GRF-5K', 'GRF-5L',
+      'GRF-5M', 'GRF-6CS', 'GRF-6R', 'GRF-6S', 'GRF-6S (Francine II)', 'GRF-6S (Francine)', 'GRF-6S2',
+    ].map((model) => [model, `${MECHS_DIR}/Griffin.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset — exported later than
+  // the batch above (the first export attempt hadn't actually finished).
+  Hatchetman: {
+    placeholder: `${MECHS_DIR}/Hatchetman.glb`,
+    models: Object.fromEntries([
+      'HCT-3F', 'HCT-3F (Austin)', 'HCT-5D', 'HCT-5DD', 'HCT-5DT', 'HCT-5K', 'HCT-5S',
+      'HCT-5S (Austin)', 'HCT-6D', 'HCT-6M', 'HCT-6S', 'HCT-7D', 'HCT-7R', 'HCT-7S', 'HCT-8S',
+    ].map((model) => [model, `${MECHS_DIR}/Hatchetman.glb`])),
+  },
+  // Replaces the old hand-authored highlander-hgn-732 (moved to legacy/)
+  // with the placeholder-tier pipeline.
+  Highlander: {
+    placeholder: `${MECHS_DIR}/Highlander.glb`,
+    models: Object.fromEntries([
+      'HGN-641-X-2', 'HGN-694', 'HGN-732', 'HGN-732 (Colleen)', 'HGN-732 (Jorgensson)', 'HGN-732b',
+      'HGN-733', 'HGN-733C', 'HGN-733P', 'HGN-734', 'HGN-736', 'HGN-738', 'HGN-740',
+    ].map((model) => [model, `${MECHS_DIR}/Highlander.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Hunchback: {
+    placeholder: `${MECHS_DIR}/Hunchback.glb`,
+    models: Object.fromEntries([
+      'C', 'HBK-4G', 'HBK-4G (Hohiro)', 'HBK-4G (Shakir)', 'HBK-4H', 'HBK-4J', 'HBK-4N', 'HBK-4P',
+      'HBK-4SP', 'HBK-5H', 'HBK-5M', 'HBK-5N', 'HBK-5P', 'HBK-5S', 'HBK-5SG', 'HBK-5SS', 'HBK-6N',
+      'HBK-6P', 'HBK-6S', 'HBK-7R', 'HBK-7S', 'HBK-7X-4',
+    ].map((model) => [model, `${MECHS_DIR}/Hunchback.glb`])),
+  },
+  // Replaces the old hand-authored jagermech-jm6-fb (moved to legacy/ —
+  // "JM6-FB"/"Firebrand" was never a real catalog code, same class of
+  // mistake as the old Commando/Awesome/Blackjack entries) with the
+  // placeholder-tier pipeline.
+  JagerMech: {
+    placeholder: `${MECHS_DIR}/Jagermech.glb`,
+    models: Object.fromEntries([
+      'JM6-A', 'JM6-DD', 'JM6-DDa', 'JM6-DG', 'JM6-DGr', 'JM6-H', 'JM6-S', 'JM7-C3BS', 'JM7-D',
+      'JM7-DD', 'JM7-F', 'JM7-G',
+    ].map((model) => [model, `${MECHS_DIR}/Jagermech.glb`])),
+  },
+  // Brand new chassis, no prior hand-authored asset.
+  Javelin: {
+    placeholder: `${MECHS_DIR}/Javelin.glb`,
+    models: Object.fromEntries([
+      'JVN-10A', "JVN-10F 'Fire Javelin'", 'JVN-10N', 'JVN-10P', "JVN-11A 'Fire Javelin'", 'JVN-11B',
+      'JVN-11D', 'JVN-11D (Farrell)', 'JVN-11F', 'JVN-11P', 'JVN-12N',
+    ].map((model) => [model, `${MECHS_DIR}/Javelin.glb`])),
+  },
   // Real user request: "mueve todos los modelos antiguos [a legacy], no
   // solo los que reemplazamos" — every hand-authored chassis below without
   // a placeholder-tier replacement yet had its .glb moved to legacy/ too,
@@ -164,8 +294,8 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
   // (resolveMechModelUrl's own 3-tier fallback means these chassis just
   // land on GENERIC_MECH_PLACEHOLDER until each gets its own new asset —
   // exactly the same "no asset for this chassis at all" case the fallback
-  // was already designed for, not a new failure mode). Commando, Crockett,
-  // Executioner, Hatamoto-Chi, Highlander, JagerMech, Jenner, Kintaro,
+  // was already designed for, not a new failure mode). Crockett,
+  // Executioner, Hatamoto-Chi, Jenner, Kintaro,
   // Locust, Mongrel, Rifleman IIC, Shadow Hawk, Thanatos, Thug,
   // Thunderbolt, Timber Wolf, Trebuchet, UrbanMech, Uziel, Viking, Vulcan.
   // NOTE — Jenner specifically: LIMB_MESH_NAMES/the real footstep-IK path

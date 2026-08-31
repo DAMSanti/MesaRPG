@@ -166,7 +166,29 @@ def set_review_status(chassis: str, track: str, status: str) -> dict:
 # snake_case for the DB/wire format — normalScale -> normal_scale, etc.)
 # so the frontend can round-trip the object with a simple key rename, not
 # a bespoke mapping.
-PBR_FIELDS = ("repeat", "normal_scale", "roughness", "metalness", "color_boost", "ao_intensity")
+#
+# Real user follow-up: "deberían ser cambios independientes" (cuerpo/armas/
+# cabina) — see db.py's own mech_pbr_settings doc comment for why the 5
+# tunable values are now per-zone. `repeat` alone stays unprefixed/shared.
+# This whole module stays zone-agnostic on purpose (list/save just push
+# whatever PBR_FIELDS says through, no zone-specific logic here) — the
+# actual body/weapons/cockpit MEANING of each column only matters to
+# Mech3D.tsx's own useMechPbr, which is the only place that needs it.
+# Real user follow-up: "quiero otro slider que afecte a las partes FUERA
+# de la mask" — body_metal_roughness/body_metal_metalness (and their
+# weapons_ twins) are the bare-metal-region target these two zones alone
+# support; MechLabView always has real numbers for them (Body/Weapons
+# always populate metalRoughness/metalMetalness, unlike Cockpit, which
+# has neither the columns nor the UI for this split), so they're
+# required here exactly like every other field, not optional.
+PBR_FIELDS = (
+    "repeat",
+    "body_normal_scale", "body_roughness", "body_metalness", "body_color_boost", "body_ao_intensity",
+    "body_metal_roughness", "body_metal_metalness", "body_metal_normal_scale", "body_metal_color_boost",
+    "weapons_normal_scale", "weapons_roughness", "weapons_metalness", "weapons_color_boost", "weapons_ao_intensity",
+    "weapons_metal_roughness", "weapons_metal_metalness", "weapons_metal_normal_scale", "weapons_metal_color_boost",
+    "cockpit_normal_scale", "cockpit_roughness", "cockpit_metalness", "cockpit_color_boost", "cockpit_ao_intensity",
+)
 
 
 class InvalidPbrSettings(ValueError):
@@ -249,5 +271,51 @@ def save_footprint_mask(model_url: str, image_data_url: str, half_width: float, 
             "SELECT model_url, image_data_url, half_width, half_depth, updated_at "
             "FROM mech_footprint_masks WHERE model_url = ?",
             (model_url,),
+        ).fetchone()
+        return dict(row)
+
+
+# Real user report: the per-mech muzzle auto-detect "no funciona muy
+# bien" — real user request instead: browse each weapon's own model,
+# click its firing point once, apply it to that exact mount.
+#
+# Real follow-up correction: "los mechs pueden tener varias armas de un
+# tipo... el autodetectar solo esta detectando 1" — see db.py's own
+# weapon_muzzle_points doc comment for why this moved from one shared
+# point per visual_bucket to one point per (model_url, mount_key, visual).
+class InvalidWeaponMuzzlePoint(ValueError):
+    pass
+
+
+def list_weapon_muzzle_points() -> list[dict]:
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT model_url, mount_key, visual, x, y, z, updated_at "
+            "FROM weapon_muzzle_points ORDER BY model_url, mount_key, visual"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def save_weapon_muzzle_point(model_url: str, mount_key: str, visual: str, x: float, y: float, z: float) -> dict:
+    for name, value in (("model_url", model_url), ("mount_key", mount_key), ("visual", visual)):
+        if not isinstance(value, str) or not value:
+            raise InvalidWeaponMuzzlePoint(f"{name} must be a non-empty string")
+    for name, value in (("x", x), ("y", y), ("z", z)):
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise InvalidWeaponMuzzlePoint(f"{name} must be a number, got {value!r}")
+    with db.connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO weapon_muzzle_points (model_url, mount_key, visual, x, y, z, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(model_url, mount_key, visual) DO UPDATE SET
+                x = excluded.x, y = excluded.y, z = excluded.z, updated_at = excluded.updated_at
+            """,
+            (model_url, mount_key, visual, float(x), float(y), float(z)),
+        )
+        row = conn.execute(
+            "SELECT model_url, mount_key, visual, x, y, z, updated_at "
+            "FROM weapon_muzzle_points WHERE model_url = ? AND mount_key = ? AND visual = ?",
+            (model_url, mount_key, visual),
         ).fetchone()
         return dict(row)

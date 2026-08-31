@@ -628,21 +628,64 @@ export const setMechAnnotationReview = (chassis: string, track: MechAnnotationTr
  * MechAnnotationTrack='texture' above via the existing review endpoints;
  * this is only the actual slider VALUES. Wire format is snake_case (the
  * backend's own column names); the frontend's own MechPbrSettings type
- * (Mech3D.tsx) is camelCase — callers convert at the boundary. */
+ * (Mech3D.tsx) is camelCase — callers convert at the boundary.
+ *
+ * Real user follow-up: "deberían ser cambios independientes" (cuerpo/
+ * armas/cabina) — see db.py's own mech_pbr_settings doc comment for why
+ * the 5 tunable values are now per zone (`repeat` alone stays shared).
+ * The weapons_/cockpit_ fields are nullable ONLY because a row saved
+ * before this existed has no value for them yet — findSavedPbrSettings
+ * (Mech3D.tsx) falls back to MECH_PBR_DEFAULTS for that one zone in that
+ * case. A fresh save always sends real numbers for all three zones (see
+ * saveMechPbrSettings's own stricter parameter type below), so this
+ * nullability is a read-only, migration-window concern. */
 export interface MechPbrSettingsRecord {
   model_url: string
   repeat: number
-  normal_scale: number
-  roughness: number
-  metalness: number
-  color_boost: number
-  ao_intensity: number
+  body_normal_scale: number
+  body_roughness: number
+  body_metalness: number
+  body_color_boost: number
+  body_ao_intensity: number
+  // Real user follow-up: "quiero otro slider que afecte a las partes
+  // FUERA de la mask" — nullable on read for the same reason as every
+  // other zone field above (a row saved before this pair existed);
+  // findSavedPbrSettings (Mech3D.tsx) falls back to that same row's own
+  // plain roughness/metalness (the painted-region value) rather than
+  // MECH_PBR_DEFAULTS directly, so an old chassis' mask split starts
+  // as a no-op (both targets equal) instead of jumping to some
+  // unrelated default the instant it's next viewed.
+  body_metal_roughness: number | null
+  body_metal_metalness: number | null
+  body_metal_normal_scale: number | null
+  body_metal_color_boost: number | null
+  weapons_normal_scale: number | null
+  weapons_roughness: number | null
+  weapons_metalness: number | null
+  weapons_color_boost: number | null
+  weapons_ao_intensity: number | null
+  weapons_metal_roughness: number | null
+  weapons_metal_metalness: number | null
+  weapons_metal_normal_scale: number | null
+  weapons_metal_color_boost: number | null
+  cockpit_normal_scale: number | null
+  cockpit_roughness: number | null
+  cockpit_metalness: number | null
+  cockpit_color_boost: number | null
+  cockpit_ao_intensity: number | null
   updated_at: string
 }
 
 export const listMechPbrSettings = () => request<MechPbrSettingsRecord[]>('/api/mech-pbr-settings')
 
-export const saveMechPbrSettings = (record: Omit<MechPbrSettingsRecord, 'updated_at'>) =>
+// Every save always carries real numbers for every zone (MechLabView's
+// Textura tab always has live values for all three, never a partial
+// edit) — a stricter, all-non-null variant of the record above, since
+// nullability there exists only to describe a pre-migration READ, never
+// something this app itself would ever choose to write.
+type MechPbrSettingsWrite = { [K in Exclude<keyof MechPbrSettingsRecord, 'updated_at'>]: NonNullable<MechPbrSettingsRecord[K]> }
+
+export const saveMechPbrSettings = (record: MechPbrSettingsWrite) =>
   request<MechPbrSettingsRecord>('/api/mech-pbr-settings', {
     method: 'PUT',
     body: JSON.stringify(record),
@@ -665,6 +708,45 @@ export const listMechFootprintMasks = () => request<MechFootprintMaskRecord[]>('
 
 export const saveMechFootprintMask = (record: Omit<MechFootprintMaskRecord, 'updated_at'>) =>
   request<MechFootprintMaskRecord>('/api/mech-footprint-masks', {
+    method: 'PUT',
+    body: JSON.stringify(record),
+  })
+
+/** Real user report: the per-mech muzzle auto-detect "no funciona muy
+ * bien" — real user request instead: browse each weapon's own model,
+ * click its firing point once, apply it to that exact mount.
+ *
+ * Real follow-up correction: "los mechs pueden tener varias armas de un
+ * tipo... el autodetectar solo está detectando 1" — a first version of
+ * this keyed by `visual_bucket` ALONE (one point per weapon TYPE, shared
+ * across every mount that ever shows it), on the assumption a rigid
+ * weapon-mount prop's own local shape is identical everywhere it's used.
+ * Confirmed wrong: two mounts of the same visual on one chassis (e.g. a
+ * laser in each arm) don't necessarily share the same local offset, so
+ * each individual mount now gets its own saved point — keyed by
+ * `(model_url, mount_key, visual)`. `mount_key` is Mech3D.tsx's own
+ * `weaponMountOfMesh` output (`"<location>:<slot>"`, e.g. "leftarm:eh1")
+ * — the physical socket, independent of which weapon currently occupies
+ * it; `visual` (the WEAPON_VISUAL_BUCKETS value, e.g. 'laser') picks
+ * which of that socket's possible weapon-shaped meshes this point is
+ * for, since one physical socket can show different barrel shapes
+ * depending on loadout. x/y/z are in that specific mount mesh's OWN
+ * local space (before its bone's world transform), not mech-root space
+ * like every other saved point in this file. */
+export interface WeaponMuzzlePointRecord {
+  model_url: string
+  mount_key: string
+  visual: string
+  x: number
+  y: number
+  z: number
+  updated_at: string
+}
+
+export const listWeaponMuzzlePoints = () => request<WeaponMuzzlePointRecord[]>('/api/weapon-muzzle-points')
+
+export const saveWeaponMuzzlePoint = (record: Omit<WeaponMuzzlePointRecord, 'updated_at'>) =>
+  request<WeaponMuzzlePointRecord>('/api/weapon-muzzle-points', {
     method: 'PUT',
     body: JSON.stringify(record),
   })

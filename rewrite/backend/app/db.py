@@ -352,14 +352,69 @@ CREATE TABLE IF NOT EXISTS mech_model_review (
 -- needed — the editor always sends its full current slider state). Review
 -- status for this same tab lives in mech_model_review under track='texture',
 -- reusing that table rather than a parallel status column here.
+--
+-- Real user follow-up: "los sliders... cambia todo a la vez, cabina/armas
+-- y cuerpo, deberían ser cambios independientes" — the 5 tunable values
+-- (normal_scale/roughness/metalness/color_boost/ao_intensity) are now
+-- per ZONE (body/weapons/cockpit — see useMechPbr's own material-name
+-- classification in Mech3D.tsx), since Bushwacker's own real materials
+-- confirmed these three groups genuinely need independent calibration
+-- (the Weapons materials ship with NO real roughness/metallic factor at
+-- all — glTF's bare 1.0/1.0 default — which reads as "stuck, doesn't
+-- respond" next to the Body's own already-calibrated values under one
+-- shared slider). `repeat` (tiling density of the generic placeholder
+-- overlay, only ever relevant for a chassis with no real per-chassis
+-- maps at all) stays shared — it was never a per-material calibration
+-- value to begin with. weapons_*/cockpit_* are nullable (NULL on a row
+-- saved before this existed) — the read path treats a NULL column as
+-- "use MECH_PBR_DEFAULTS for that zone," same graceful-missing-data
+-- contract as everywhere else in this app; see
+-- _migrate_mech_pbr_settings_to_zones for the rename of the old shared
+-- 5 columns into their own body_ prefix.
+--
+-- Real user follow-up: "el cuerpo, las armas... tienen una máscara para
+-- aplicar las texturas. Los sliders solo afectan a la parte de la
+-- máscara. Quiero otro slider que afecte a las partes FUERA de la mask"
+-- — body_metal_roughness/body_metal_metalness and their weapons_
+-- equivalents are a SECOND roughness/metalness target for the
+-- bare-metal (unpainted) region specifically, blended in per-texel at
+-- the shader level against a mask APPROXIMATION (see Mech3D.tsx's own
+-- applyMechPbrMaskPatch doc comment for why it's an approximation, not
+-- the real paint mask, which doesn't survive export). Cockpit gets no
+-- metal_* columns at all — no mask split was requested there, the
+-- plain cockpit_roughness/cockpit_metalness above still apply uniformly.
+--
+-- Real follow-up: "los generales afectan a TODO a la vez" (Detalle de
+-- relieve / Brillo specifically) — those two didn't get a mask split in
+-- the first version above, so they always touched the whole zone
+-- material regardless of the mask. body_metal_normal_scale/
+-- body_metal_color_boost (and their weapons_ twins) close that gap.
 CREATE TABLE IF NOT EXISTS mech_pbr_settings (
     model_url TEXT PRIMARY KEY,
     repeat REAL NOT NULL,
-    normal_scale REAL NOT NULL,
-    roughness REAL NOT NULL,
-    metalness REAL NOT NULL,
-    color_boost REAL NOT NULL,
-    ao_intensity REAL NOT NULL,
+    body_normal_scale REAL NOT NULL,
+    body_roughness REAL NOT NULL,
+    body_metalness REAL NOT NULL,
+    body_color_boost REAL NOT NULL,
+    body_ao_intensity REAL NOT NULL,
+    body_metal_roughness REAL,
+    body_metal_metalness REAL,
+    body_metal_normal_scale REAL,
+    body_metal_color_boost REAL,
+    weapons_normal_scale REAL,
+    weapons_roughness REAL,
+    weapons_metalness REAL,
+    weapons_color_boost REAL,
+    weapons_ao_intensity REAL,
+    weapons_metal_roughness REAL,
+    weapons_metal_metalness REAL,
+    weapons_metal_normal_scale REAL,
+    weapons_metal_color_boost REAL,
+    cockpit_normal_scale REAL,
+    cockpit_roughness REAL,
+    cockpit_metalness REAL,
+    cockpit_color_boost REAL,
+    cockpit_ao_intensity REAL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -380,6 +435,36 @@ CREATE TABLE IF NOT EXISTS mech_footprint_masks (
     half_width REAL NOT NULL,
     half_depth REAL NOT NULL,
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Real user report: the per-mech, per-location muzzle auto-detect
+-- (computeWeaponMuzzlePoint, geometric heuristic off each mesh's own
+-- posed bounding box) "no funciona muy bien" — real user request instead:
+-- browse each WEAPON's own model directly, click its firing point once,
+-- apply it to that exact mount.
+--
+-- Real follow-up correction: "los mechs pueden tener varias armas de un
+-- tipo... el autodetectar solo esta detectando 1" — a first version of
+-- this keyed by visual_bucket ALONE (one point per weapon TYPE, shared
+-- across every mount that ever shows it), on the assumption a rigid
+-- weapon-mount prop's own local shape is identical everywhere it's used.
+-- Confirmed wrong: two mounts of the same visual on one chassis (a laser
+-- in each arm) don't necessarily share the same local offset, so each
+-- individual mount now gets its own row — keyed by (model_url, mount_key,
+-- visual). mount_key is Mech3D.tsx's own weaponMountOfMesh output
+-- ("<location>:<slot>", e.g. "leftarm:eh1") — the physical socket,
+-- independent of which weapon currently occupies it; visual (the
+-- WEAPON_VISUAL_BUCKETS value, e.g. 'laser') picks which of that
+-- socket's possible weapon-shaped meshes this point is for.
+CREATE TABLE IF NOT EXISTS weapon_muzzle_points (
+    model_url TEXT NOT NULL,
+    mount_key TEXT NOT NULL,
+    visual TEXT NOT NULL,
+    x REAL NOT NULL,
+    y REAL NOT NULL,
+    z REAL NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (model_url, mount_key, visual)
 );
 
 -- D&D 5e (ROADMAP.md Fase R4 — segundo sistema, slice mínimo de
@@ -618,6 +703,38 @@ def init_db() -> None:
         # say). NULL for kind='weapon'/'cockpit' rows, which don't use it.
         _ensure_column(conn, "mech_model_annotations", "mesh_names", "TEXT")
         _migrate_mech_model_review_to_chassis(conn)
+        _migrate_weapon_muzzle_points_to_per_mount(conn)
+        _migrate_mech_pbr_settings_to_zones(conn)
+
+
+def _migrate_weapon_muzzle_points_to_per_mount(conn: sqlite3.Connection) -> None:
+    """Light migration: an older dev DB has weapon_muzzle_points keyed by
+    visual_bucket alone (see that table's own comment for why this moved to
+    a per-mount composite key) — 34 real points had already been detected
+    under that old shape by the time this changed. Renaming the old table
+    aside (instead of dropping it) keeps that work recoverable rather than
+    silently deleting it, even though the new per-mount table starts empty
+    (there's no reliable way to guess which specific mount an old
+    bucket-wide point was measured from) — re-running "Detectar todas
+    automáticamente" per chassis is the real path forward, this is just a
+    safety net."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(weapon_muzzle_points)")}
+    if "visual_bucket" in existing and "mount_key" not in existing:
+        conn.execute("ALTER TABLE weapon_muzzle_points RENAME TO weapon_muzzle_points_legacy_by_bucket")
+        conn.execute(
+            """
+            CREATE TABLE weapon_muzzle_points (
+                model_url TEXT NOT NULL,
+                mount_key TEXT NOT NULL,
+                visual TEXT NOT NULL,
+                x REAL NOT NULL,
+                y REAL NOT NULL,
+                z REAL NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                PRIMARY KEY (model_url, mount_key, visual)
+            )
+            """
+        )
 
 
 def _migrate_mech_model_review_to_chassis(conn: sqlite3.Connection) -> None:
@@ -631,6 +748,41 @@ def _migrate_mech_model_review_to_chassis(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(mech_model_review)")}
     if "model_url" in existing and "chassis" not in existing:
         conn.execute("ALTER TABLE mech_model_review RENAME COLUMN model_url TO chassis")
+
+
+def _migrate_mech_pbr_settings_to_zones(conn: sqlite3.Connection) -> None:
+    """Light migration: an older dev DB has mech_pbr_settings' 5 tunable
+    columns unprefixed (one shared set for the whole mech) — see that
+    table's own comment for why this moved to per-zone (body/weapons/
+    cockpit) columns. Renaming the existing 5 to their own body_ prefix
+    preserves whatever was already tuned as that zone's own values;
+    weapons_*/cockpit_* simply don't exist yet on these old rows — the
+    read path already treats a NULL column as "use MECH_PBR_DEFAULTS for
+    that zone," same graceful-missing-data contract as everywhere else in
+    this app, so nothing needs backfilling here."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(mech_pbr_settings)")}
+    if "normal_scale" in existing and "body_normal_scale" not in existing:
+        for old, new in [
+            ("normal_scale", "body_normal_scale"), ("roughness", "body_roughness"),
+            ("metalness", "body_metalness"), ("color_boost", "body_color_boost"),
+            ("ao_intensity", "body_ao_intensity"),
+        ]:
+            conn.execute(f"ALTER TABLE mech_pbr_settings RENAME COLUMN {old} TO {new}")
+    for col in (
+        "weapons_normal_scale", "weapons_roughness", "weapons_metalness",
+        "weapons_color_boost", "weapons_ao_intensity",
+        "cockpit_normal_scale", "cockpit_roughness", "cockpit_metalness",
+        "cockpit_color_boost", "cockpit_ao_intensity",
+        # Real user follow-up: "quiero otro slider que afecte a las partes
+        # FUERA de la mask" — see mech_pbr_settings' own table comment.
+        "body_metal_roughness", "body_metal_metalness",
+        "weapons_metal_roughness", "weapons_metal_metalness",
+        # Real follow-up: "los generales afectan a TODO a la vez" — same
+        # table comment, the Detalle de relieve/Brillo half of the split.
+        "body_metal_normal_scale", "body_metal_color_boost",
+        "weapons_metal_normal_scale", "weapons_metal_color_boost",
+    ):
+        _ensure_column(conn, "mech_pbr_settings", col, "REAL")
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str) -> None:

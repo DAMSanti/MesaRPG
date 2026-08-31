@@ -1,6 +1,6 @@
 import { Suspense, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {Canvas} from '@react-three/fiber'
-import { useProgress } from '@react-three/drei'
+import { useGLTF, useProgress } from '@react-three/drei'
 import { EffectComposer, Outline, Selection } from '@react-three/postprocessing'
 import { KernelSize } from 'postprocessing'
 import * as THREE from 'three'
@@ -9,7 +9,8 @@ import {
   findAnnotatedLocalPoint, lerpAngle, rotateLocalOffsetByYaw, useAttackVfxQueue, useMechAnnotationsCache,
 } from './HexMap'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
-import { MODEL_HEAD_FRACTION, MODEL_SCALE } from './Mech3D'
+import { MODEL_HEAD_FRACTION, MODEL_SCALE, MW5_FP_WALK_SUFFIX, computeCameraBobCurve } from './Mech3D'
+import { resolveMechModelUrl } from '../mechAssets'
 import { ARMOR_GEOMETRY, ARMOR_VIEWBOX, type MechLocationCode } from '../mechSheetGeometry'
 import { FacingPicker } from './FacingPicker'
 import {
@@ -19,7 +20,7 @@ import {
   type RoundState, type Unit, type VisibleEnemy, type VisibleHex, type WeaponStats,
 } from '../api'
 import { activeMoverPilotId, currentPhase, useDisplayedPhase, useHeldActiveMover } from '../rounds'
-import { hexToWorld, mapCenter, WALK_SPEED } from '../hexMath'
+import { hexToWorld, mapCenter, ONE_HEX_SECONDS, WALK_SPEED } from '../hexMath'
 import type { FogWalkStep, MeleeResult, UnitWalked } from '../ws'
 import './FirstPersonView.css'
 import { SceneLighting } from './SceneLighting'
@@ -50,10 +51,33 @@ const MARKER_MIN_SEPARATION = 64
 // glide. BOB_SMOOTH_RATE fades it in/out instead of snapping the instant
 // isMoving flips, so a step that's mid-leg when the path queue empties
 // doesn't cut the bob off abruptly.
-// MECH-factor scaled, same family as LOOK_DISTANCE above — BOB_FREQUENCY/
-// BOB_SMOOTH_RATE are rates (Hz / per-second), not spatial, so they stay.
-const BOB_AMPLITUDE = 0.035 * (MODEL_SCALE / 1.65)
-const BOB_FREQUENCY = 4
+// MECH-factor scaled, same family as LOOK_DISTANCE above — BOB_CYCLE_
+// FREQUENCY/BOB_SMOOTH_RATE are rates (Hz / per-second), not spatial, so
+// they stay.
+// Real user follow-up, right after retiming this cycle rate to the real
+// (much slower) walk cadence below: "ahora no hay bob en absoluto". The
+// dip COUNT is correct now (one per real footfall), but a slower
+// oscillation at the OLD amplitude also moves at a much lower peak
+// vertical speed (roughly amplitude × frequency) — a mech that takes
+// ~1.73s per step has an inherently gentler bob than the old runaway
+// 4Hz one did, and at the old 0.035 factor that reads as barely-there
+// instead of a felt footstep. Bumped so a correctly-paced bob still
+// reads as one — first thing to retune further if it over/undershoots.
+const BOB_AMPLITUDE = 0.07 * (MODEL_SCALE / 1.65)
+// Real user report: "el bob de la camara... ahora es un bob muy rapido"
+// — this used to be a flat 4Hz, tuned back when a hex crossed in well
+// under a second (see hexMath.ts's own WALK_SPEED doc comment for the
+// two rounds of slowdown since — a hex is real 30m now, ~3.46s to
+// cross). A hardcoded frequency has no way to track that, so the bob
+// kept dipping ~14 times over a single hex crossing that only has 2 real
+// footfalls in it. ONE_HEX_SECONDS IS one full gait cycle now (one
+// footfall per foot per hex crossing — see WALK_CYCLE_TIME_SCALE's own
+// doc comment, the same fact HexMap.tsx's getWalkGaitProgress leans on
+// for the walk-skating fix), so one full cycle (curve OR the fallback
+// sine's own two periods, see bobPhaseRef's own useFrame use below) per
+// that duration puts one dip at each real footfall instead of an
+// arbitrary rate.
+const BOB_CYCLE_FREQUENCY = 1 / ONE_HEX_SECONDS
 const BOB_SMOOTH_RATE = 8
 
 /** The cockpit's own view of the world, non-orbiting but no longer a
@@ -81,11 +105,21 @@ const BOB_SMOOTH_RATE = 8
  * ever cleared it. onWalkDone here is that missing call. */
 function WalkingFirstPersonCam({
   q, r, facingDeg, path, movementType, eyeYAt, cockpitLocal, centerX, centerZ, lookYawDeg, onWalkDone, onWalkStep,
+  chassis, model,
 }: {
   q: number
   r: number
   facingDeg: number
   path?: { q: number; r: number }[]
+  /** Real user request: "mira como podemos implementar estas animaciones
+   * en nuestro juego" (BSW_FP_* clips) — this pilot's own chassis/model,
+   * used ONLY to load its BSW_FP_WalkForward_Straight_ANI clip and derive
+   * a real cockpit bob curve from it (see bobCurveRef below); this
+   * component still never renders the mech's own body (see this
+   * component's own top doc comment) — it stays a bare camera. Either
+   * null falls back to the old synthetic sine bob unchanged. */
+  chassis: string | null
+  model: string | null
   /** Real user request: real Despegar→Saltar→Aterrizar with the cockpit
    * camera genuinely rising and falling during the player's OWN jump —
    * this cockpit never renders its own body (see this component's own
@@ -119,6 +153,22 @@ function WalkingFirstPersonCam({
   const target: [number, number] = [rawX - centerX, rawZ - centerZ]
   const baseY = eyeYAt(q, r)
   const facingRotationY = Math.PI / 2 - (facingDeg * Math.PI) / 180
+
+  // Real, animation-derived cockpit bob (see computeCameraBobCurve's own
+  // doc comment) — this SAME chassis is virtually always already in
+  // drei's useGLTF cache by the time a pilot opens FPV (its body is
+  // already rendered on the main board), so this second useGLTF call
+  // resolves near-instantly in practice; the Suspense boundary wrapping
+  // this component at its call site only matters for a truly first-ever
+  // load. null chassis/model (a mech with no curated asset) falls back to
+  // the generic placeholder via resolveMechModelUrl, same as everywhere
+  // else that helper is used.
+  const { scene: bobScene, animations: bobAnimations } = useGLTF(resolveMechModelUrl(chassis, model))
+  const bobCurve = useMemo(() => {
+    const clip = bobAnimations.find((c) => c.name.endsWith(`_${MW5_FP_WALK_SUFFIX}`))
+    return clip ? computeCameraBobCurve(bobScene, clip) : null
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bobScene, bobAnimations])
 
   const animatedPos = useRef<[number, number]>(target)
   const animatedY = useRef<number>(baseY)
@@ -221,7 +271,17 @@ function WalkingFirstPersonCam({
       const dx = immediateTarget.x - cx
       const dz = immediateTarget.z - cz
       const dist = Math.hypot(dx, dz)
-      const headingTarget = dist > ARRIVE_EPSILON ? Math.atan2(dx, dz) : facingRotationY
+      // Same fix as HexMap.tsx's own stepToward (real user report: the
+      // camera "mira momentáneamente al norte" at every intermediate hex
+      // center on a long move) — see its own doc comment. Falling back to
+      // facingRotationY the instant `dist` bottoms out fires at every
+      // intermediate arrival too, not just the true final one; peeking at
+      // queue[1] keeps the camera looking toward the NEXT leg instead.
+      const headingTarget = dist > ARRIVE_EPSILON
+        ? Math.atan2(dx, dz)
+        : queue.length > 1
+          ? Math.atan2(queue[1].x - immediateTarget.x, queue[1].z - immediateTarget.z)
+          : facingRotationY
       animatedRot.current = lerpAngle(animatedRot.current, headingTarget, Math.min(1, TURN_SPEED * delta))
 
       if (dist <= ARRIVE_EPSILON) {
@@ -254,8 +314,18 @@ function WalkingFirstPersonCam({
     bobIntensityRef.current = THREE.MathUtils.lerp(
       bobIntensityRef.current, isMoving && !jump ? 1 : 0, Math.min(1, BOB_SMOOTH_RATE * delta),
     )
-    bobPhaseRef.current += delta * BOB_FREQUENCY
-    const bobY = Math.sin(bobPhaseRef.current * Math.PI * 2) * BOB_AMPLITUDE * bobIntensityRef.current
+    // One full gait cycle (both footfalls) per hex crossing, whichever
+    // shape drives it — see BOB_CYCLE_FREQUENCY's own doc comment.
+    bobPhaseRef.current += delta * BOB_CYCLE_FREQUENCY
+    const cyclePhase = bobPhaseRef.current % 1
+    // bobCurve is already normalized to peak amplitude 1 in both
+    // directions (see computeCameraBobCurve's own doc comment) — the
+    // fallback sine's `* 2` reproduces the exact old two-dips-per-cycle
+    // shape when no real curve is available (mathematically identical to
+    // the old `sin(oldPhase * 2π)` with oldPhase accumulating at 2×
+    // this rate — see BOB_CYCLE_FREQUENCY's own doc comment).
+    const bobShape = bobCurve ? bobCurve(cyclePhase) : Math.sin(cyclePhase * Math.PI * 2 * 2)
+    const bobY = bobShape * BOB_AMPLITUDE * bobIntensityRef.current
 
     // lookYawDeg is SUBTRACTED, not added — same sign convention the old
     // static formula used (Math.PI/2 - (facing_deg + lookYawDeg)*π/180),
@@ -1485,17 +1555,39 @@ export function FirstPersonView({
 
   const elevationAt = (q: number, r: number) => map?.tiles.find((t) => t.q === q && t.r === r)?.elevation ?? 0
 
+  // This cockpit's own fog of war (real user request: "esa niebla en el
+  // FPV pero ahí solo mostrará lo que ve el personaje") — deliberately
+  // NOT the team-wide union TableView uses, just this one unit's own
+  // facing-cone LoS (visibleHexes, from getUnitVisibleHexes). Needed
+  // above sceneUnits below too now (see its own doc comment on a
+  // destroyed enemy's wreck) — was previously computed further down,
+  // only for the fog overlay itself.
+  const cockpitVisibleHexes = new Set(visibleHexes.map((h) => `${h.q},${h.r}`))
+
   // Only render mechs this cockpit would actually see — this unit's own
-  // side always (you'd see your allies regardless), enemies only if
-  // they're in the detected `enemies` list (facing cone + LoS — see
+  // side always (you'd see your allies regardless), a live enemy only if
+  // it's in the detected `enemies` list (facing cone + LoS — see
   // visible_enemies_from_unit). Rendering an undetected enemy's model
   // anyway (e.g. one hidden behind forest) contradicted "lo que vería
   // ese mech" and read as a marker bug once its model showed up on
   // screen with no reticle over it.
+  // Real user report: a destroyed enemy's wreck vanished from this
+  // cockpit the instant it died. Root cause: visible_enemies_from_unit
+  // deliberately excludes an already-destroyed mech (see its own backend
+  // test — it's no longer a valid attack target to detect), but this
+  // component was using that SAME list to decide whether to render the
+  // model at all, conflating "can I still target it" with "can I still
+  // see it sitting there". A wreck doesn't move or hide once destroyed,
+  // so it's shown whenever its own hex is still within this cockpit's
+  // currently-revealed fog, regardless of whether it's still in the live
+  // enemies list.
   const visibleEnemyUnitIds = new Set(enemies.map((e) => e.unit_id))
-  const sceneUnits = units.filter(
-    (u) => u.id !== unit.id && (u.pilot_faction === unit.pilot_faction || visibleEnemyUnitIds.has(u.id)),
-  )
+  const sceneUnits = units.filter((u) => {
+    if (u.id === unit.id) return false
+    if (u.pilot_faction === unit.pilot_faction || visibleEnemyUnitIds.has(u.id)) return true
+    const isDestroyed = mechs?.find((m) => m.id === u.mech_id)?.destroyed_reason != null
+    return isDestroyed && cockpitVisibleHexes.has(`${u.q},${u.r}`)
+  })
   // Real user report: steam was showing on ANY hot mech in every phase —
   // the actual request was only DURING the Heat phase ("los mechs EN
   // ESTA FASE desprenderán vapor"), on every mech carrying real heat.
@@ -1553,12 +1645,6 @@ export function FirstPersonView({
       return [[u.id, damaged] as const]
     }),
   )
-
-  // This cockpit's own fog of war (real user request: "esa niebla en el
-  // FPV pero ahí solo mostrará lo que ve el personaje") — deliberately
-  // NOT the team-wide union TableView uses, just this one unit's own
-  // facing-cone LoS (visibleHexes, from getUnitVisibleHexes).
-  const cockpitVisibleHexes = new Set(visibleHexes.map((h) => `${h.q},${h.r}`))
 
   return (
     <div className="first-person-view">
@@ -1693,22 +1779,32 @@ export function FirstPersonView({
                   hour={timeOfDay} sunScale={1.8} ambientScale={1.2} background={false}
                   castShadow={gpu.shadows} shadowMapSize={gpu.shadowMapSize}
                 />
-                <WalkingFirstPersonCam
-                  q={unit.q} r={unit.r} facingDeg={unit.facing_deg}
-                  path={walkPaths.get(unit.id)} movementType={walkMovementTypes.get(unit.id)}
-                  eyeYAt={eyeYAt} cockpitLocal={cockpitLocal}
-                  centerX={centerX} centerZ={centerZ} lookYawDeg={lookYawDeg}
-                  onWalkDone={() => {
-                    // Safety net for onCockpitWalkStep's own last-index
-                    // clear — a walk that never actually reaches its
-                    // last waypoint (interrupted mid-flight for any
-                    // reason) would otherwise leave the cockpit's fog
-                    // stuck frozen forever.
-                    walkingCockpitFogRef.current = false
-                    heldMover.onUnitWalkDone(unit.id)
-                  }}
-                  onWalkStep={onCockpitWalkStep}
-                />
+                {/* Suspense: WalkingFirstPersonCam now loads its own
+                    chassis's GLTF (for the real cockpit-bob curve, see its
+                    own doc comment on the chassis/model prop) via
+                    useGLTF, which suspends. Virtually always already in
+                    drei's cache (this same chassis's body is already
+                    rendered on the main board before a pilot ever opens
+                    FPV), so this fallback rarely if ever actually shows. */}
+                <Suspense fallback={null}>
+                  <WalkingFirstPersonCam
+                    q={unit.q} r={unit.r} facingDeg={unit.facing_deg}
+                    path={walkPaths.get(unit.id)} movementType={walkMovementTypes.get(unit.id)}
+                    eyeYAt={eyeYAt} cockpitLocal={cockpitLocal}
+                    centerX={centerX} centerZ={centerZ} lookYawDeg={lookYawDeg}
+                    chassis={unit.mech_chassis} model={unit.mech_model}
+                    onWalkDone={() => {
+                      // Safety net for onCockpitWalkStep's own last-index
+                      // clear — a walk that never actually reaches its
+                      // last waypoint (interrupted mid-flight for any
+                      // reason) would otherwise leave the cockpit's fog
+                      // stuck frozen forever.
+                      walkingCockpitFogRef.current = false
+                      heldMover.onUnitWalkDone(unit.id)
+                    }}
+                    onWalkStep={onCockpitWalkStep}
+                  />
+                </Suspense>
                 <Suspense fallback={null}>
                   <HexMap
                     // Regions, and with them the level of detail: past six
@@ -1719,6 +1815,7 @@ export function FirstPersonView({
                     cullRegions
                     map={map}
                     units={sceneUnits}
+                    mechs={mechs}
                     activeAttack={activeAttackVfx}
                     onAttackEffectDone={onAttackEffectDone}
                     onUnitWalkDone={heldMover.onUnitWalkDone}

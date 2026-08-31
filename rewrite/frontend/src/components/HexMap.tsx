@@ -23,12 +23,12 @@ import { grassShadeAt, isGrassTerrain, GRASS_SHADE, GRASS_SHADE_STRENGTH } from 
 import { FACTION_COLORS, NEUTRAL_UNIT_COLOR } from '../factions'
 import {
   BUILDING_MIN_HEIGHT, ELEVATION_STEP, elevationToY, GROUND_BASE_HEIGHT, HEX_SIZE,
-  hexToWorld, mapCenter, WALK_SPEED, worldToHex,
+  hexToWorld, mapCenter, ONE_HEX_DISTANCE, ONE_HEX_SECONDS, WALK_SPEED, worldToHex,
 } from '../hexMath'
 import { jumpFlight, type JumpPhase } from '../jumpFlight'
 import {
-  DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE, getSavedFootprintMask, weaponHitSeverity,
-  type SeveredLimbInfo,
+  DEAD_MECH_CHAR_COLOR, MODEL_CHEST_FRACTION, MODEL_SCALE, getMeshDetectedHitPoint, getSavedFootprintMask,
+  getWalkGaitProgress, getWeaponMuzzleWorldPoint, weaponHitSeverity, type SeveredLimbInfo,
 } from './Mech3D'
 import { resolveMechModelUrl } from '../mechAssets'
 import { AttackEffect, getGlowTexture, ImpactFlash } from './AttackEffects'
@@ -155,6 +155,13 @@ export interface ActiveAttackVfx {
    * guess for THAT side specifically. */
   attackerOffset: THREE.Vector3 | null
   targetOffset: THREE.Vector3 | null
+  /** Real user request: "reacciones a impacto por zona+eje" — the BT body
+   * location this shot actually struck (HD/CT/LT/RT/LA/RA/LL/RL), straight
+   * off AttackResult.location. Previously computed (targetLocal, right
+   * above) but never actually kept on the vfx object — hitSignal's own
+   * zone-bucket mapping (Mech3D.tsx) needs it too, not just the impact
+   * point. */
+  targetLocation: string | null
 }
 
 /** Turns a raw `lastAttack` broadcast into a QUEUED sequence of
@@ -219,10 +226,34 @@ export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, u
     const weaponIndexAtLocation = firingWeapon && attackerMech
       ? attackerMech.weapons.filter((w) => w.location === weaponLocation).findIndex((w) => w.id === firingWeapon.id)
       : 0
-    const attackerLocal = findAnnotatedLocalPoint(
-      annotations, attackerUnit, 'weapon', weaponLocation, Math.max(0, weaponIndexAtLocation),
-    )
-    const targetLocal = findAnnotatedLocalPoint(annotations, targetUnit, 'hit', lastAttack.location)
+    // Real user request: "quiero poder ir viendo los modelos de cada
+    // arma, poner su punto de disparo y que eso lo traslades al modelo
+    // montado", plus the follow-up fix once several-of-the-same-weapon
+    // chassis exposed the gap ("los mechs pueden tener varias armas de un
+    // tipo... el autodetectar solo esta detectando 1") — see
+    // getWeaponMuzzleWorldPoint's own doc comment. `firingWeapon` must be
+    // the SAME object reference as an entry in `attackerMech.weapons`
+    // (its own mount-assignment pairing keys by identity) — true here
+    // since it was found via .find() on that exact array. Tried FIRST;
+    // only a weapon that didn't resolve to any real mount, or a mount
+    // nobody's clicked a point for yet, falls back to the old per-mech,
+    // per-location manual/auto-detected annotation.
+    const attackerModelUrl = resolveMechModelUrl(attackerUnit.mech_chassis, attackerUnit.mech_model)
+    const attackerLocal = (firingWeapon
+      ? getWeaponMuzzleWorldPoint(attackerModelUrl, attackerMech?.weapons, firingWeapon)
+      : null)
+      ?? findAnnotatedLocalPoint(
+        annotations, attackerUnit, 'weapon', weaponLocation, Math.max(0, weaponIndexAtLocation),
+      )
+    // Real user request: "el área de recibir el golpe, podemos sustituir el
+    // punto fijo con detección de malla por nombre?" — see
+    // getMeshDetectedHitPoint's own doc comment. Tried FIRST; only a
+    // chassis whose body-part mesh names it can't recognize (or whose
+    // detection hasn't been computed yet this session) falls back to
+    // whatever was manually saved via MechLab's own "hit" annotation.
+    const targetModelUrl = resolveMechModelUrl(targetUnit.mech_chassis, targetUnit.mech_model)
+    const targetLocal = (lastAttack.location ? getMeshDetectedHitPoint(targetModelUrl, lastAttack.location) : null)
+      ?? findAnnotatedLocalPoint(annotations, targetUnit, 'hit', lastAttack.location)
 
     const vfx: ActiveAttackVfx = {
       id: `${seq.current}`,
@@ -237,6 +268,7 @@ export function useAttackVfxQueue(lastAttack: AttackResult | null | undefined, u
       attackerUnitId: attackerUnit.id,
       targetUnitId: targetUnit.id,
       weaponLocation,
+      targetLocation: lastAttack.location,
     }
     if (activeRef.current === null) {
       setActive(vfx)
@@ -847,6 +879,7 @@ function sameSeveredLocations(prev?: ReadonlySet<string>, next?: ReadonlySet<str
 function unitMarkerPropsEqual(prev: Readonly<UnitMarkerProps>, next: Readonly<UnitMarkerProps>) {
   return sameSeveredLocations(prev.severedLocations, next.severedLocations)
     && prev.unit === next.unit
+    && prev.weapons === next.weapons
     && prev.elevation === next.elevation
     && prev.terrain === next.terrain
     && prev.physics === next.physics
@@ -891,6 +924,20 @@ export const BOARDGAME_MECH_SCALE = (1.65 * HEX_SIZE) / MODEL_SCALE
 
 type UnitMarkerProps = {
   unit: Unit
+  /** This unit's real equipped loadout (HexMap's own mechs prop, looked
+   * up by unit.mech_id and mapped to Mech3D's own {location, weaponName}
+   * shape) — undefined when this unit has no mech record yet (a
+   * dnd_character_id unit, or mechs hasn't loaded). Real user report:
+   * "en la partida si pongo un bushwacker, aparece siempre sin armas" —
+   * this component never passed `weapons` to <Mech3D> at all before,
+   * which every OTHER already-shipped chassis got away with because
+   * each of their hardpoints only ever had ONE possible visual baked in
+   * (nothing to choose between). Bushwacker's hardpoints share multiple
+   * weapon visuals per mount (same convention as WEAPON_VISUAL_BUCKETS
+   * documents for Atlas/Warhammer/etc.), so with no `weapons` to match
+   * against, applyMechCombatVisibility's own contract (no match = show
+   * "blank") hid every one of them, on every mount, permanently. */
+  weapons?: { location: string; weaponName: string }[]
   elevation: number
   /** The terrain of the tile this unit is currently standing on — only
    * consulted to sink a unit's resting height into water/mud (terrainSinkY),
@@ -1032,7 +1079,7 @@ type UnitMarkerProps = {
 }
 
 const UnitMarker = memo(function UnitMarker({
-  unit, elevation, terrain, terrainAt, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
+  unit, weapons, elevation, terrain, terrainAt, dragPosition, physics, worldOffset, walkPath, movementType, heightAt, outlined, heat,
   prone, shutdown, destroyedReason, severedLocations, damagedLocations, activeAttack, onLimbSevered, boardgameScale,
   onPointerDown, onPointerUp, onWalkDone, onWalkStep, onFootstep,
 }: UnitMarkerProps) {
@@ -1196,6 +1243,21 @@ const UnitMarker = memo(function UnitMarker({
   // gait instead of both feet landing on the centerline.
   const legStartRef = useRef<[number, number]>(animatedPos.current)
   const footprintSideRef = useRef(1)
+  // Real gait-curve stepping (see Mech3D.tsx's own getWalkGaitProgress
+  // doc comment — the foot-skating fix): a real, adjacent-hex leg is
+  // walked by ELAPSED TIME through this chassis's own measured Walk
+  // footfall curve instead of by flat WALK_SPEED*delta distance, so the
+  // body speeds up/slows down in step with which foot is actually
+  // planted. legMotionRef captures the CURRENT leg's fixed start/end
+  // points the instant `immediateTarget` first changes (comparing target
+  // x/z catches every transition: queue advancing, a fresh walkPath
+  // arriving, or falling back to the plain `target` field) — legGaitElapsedRef
+  // resets alongside it. Anything that ISN'T a plain adjacent-hex leg
+  // (a drag preview, the final snap-to-server-position fallback, a
+  // shorter/longer distance for any reason) is intentionally left out of
+  // isFullHexLeg's check below and keeps the old flat stepping untouched.
+  const legMotionRef = useRef<{ originX: number; originZ: number; targetX: number; targetZ: number } | null>(null)
+  const legGaitElapsedRef = useRef(0)
   // Real user request: real Despegar→Saltar→Aterrizar with the miniature
   // actually rising and falling, not the same ground-hugging slide a
   // walk/run uses — movement.py's own jump resolution never produces a
@@ -1249,6 +1311,13 @@ const UnitMarker = memo(function UnitMarker({
       // wherever the mech is RIGHT NOW, not wherever the previous,
       // unrelated move's last leg happened to end.
       legStartRef.current = animatedPos.current
+      // Same reason: a brand-new route's first leg is a fresh gait clock,
+      // never a continuation of whatever leg was previously mid-stride —
+      // matters when a new path's first waypoint happens to coincide with
+      // the previous route's final target (isNewLeg's own x/z comparison
+      // in stepToward wouldn't otherwise catch that coincidence).
+      legMotionRef.current = null
+      legGaitElapsedRef.current = 0
       firstStepFiredEarlyRef.current = false
       const first = pathQueueRef.current[0]
       if (first) {
@@ -1274,6 +1343,7 @@ const UnitMarker = memo(function UnitMarker({
       animatedRot.current = facingRotationY
       pathQueueRef.current = []
       jumpFlightRef.current = null
+      legMotionRef.current = null
       if (jumpPhase !== null) setJumpPhase(null)
       if (isMoving) setIsMoving(false)
       return
@@ -1307,7 +1377,24 @@ const UnitMarker = memo(function UnitMarker({
     const dx = immediateTarget.x - cx
     const dz = immediateTarget.z - cz
     const dist = Math.hypot(dx, dz)
-    const headingTarget = dist > ARRIVE_EPSILON ? Math.atan2(dx, dz) : facingRotationY
+    // Real user report: on a long multi-hex move, the mech "mira
+    // momentáneamente al norte" at every intermediate hex center, then
+    // resumes. Root cause: this used to fall back to facingRotationY
+    // (the unit's own static, server-commanded FINAL facing) any time
+    // `dist` bottomed out — which happens at EVERY intermediate arrival
+    // too, not just the real final one, since `dist` is measured against
+    // whichever waypoint is CURRENTLY `immediateTarget`. For one frame at
+    // each hex center it snapped toward that final facing (often however
+    // the unit happened to be facing before the whole move started)
+    // instead of toward the NEXT queued leg. Peeking at queue[1] (the
+    // waypoint after the one just reached) keeps it looking the right
+    // way through a mid-route arrival; only the true last leg (nothing
+    // queued after this one) still settles onto facingRotationY.
+    const headingTarget = dist > ARRIVE_EPSILON
+      ? Math.atan2(dx, dz)
+      : queue.length > 1
+        ? Math.atan2(queue[1].x - immediateTarget.x, queue[1].z - immediateTarget.z)
+        : facingRotationY
     animatedRot.current = lerpAngle(
       animatedRot.current,
       headingTarget,
@@ -1382,9 +1469,35 @@ const UnitMarker = memo(function UnitMarker({
         onWalkDone?.()
       }
     } else {
-      const step = Math.min(1, (WALK_SPEED * delta) / dist)
-      animatedPos.current = [cx + dx * step, cz + dz * step]
-      animatedY.current = cy + (immediateTarget.y - cy) * step
+      const leg = legMotionRef.current
+      const isNewLeg = !leg || leg.targetX !== immediateTarget.x || leg.targetZ !== immediateTarget.z
+      if (isNewLeg) {
+        legMotionRef.current = { originX: cx, originZ: cz, targetX: immediateTarget.x, targetZ: immediateTarget.z }
+        legGaitElapsedRef.current = 0
+      } else {
+        legGaitElapsedRef.current += delta
+      }
+      const { originX, originZ, targetX, targetZ } = legMotionRef.current!
+      const legDx = targetX - originX
+      const legDz = targetZ - originZ
+      const legDist = Math.hypot(legDx, legDz)
+      // Only a real, single adjacent-hex leg matches the curve's own
+      // domain (0..1 across exactly one hex) — queue-driven legs always
+      // are one; a free-form drag/direct-fallback leg (queue empty) can
+      // be any length, so it's excluded here and keeps the flat step below.
+      const isFullHexLeg = queue.length > 0 && Math.abs(legDist - ONE_HEX_DISTANCE) < ONE_HEX_DISTANCE * 0.05
+      const modelUrl = resolveMechModelUrl(unit.mech_chassis, unit.mech_model)
+      const gaitProgress = isFullHexLeg
+        ? getWalkGaitProgress(modelUrl, legGaitElapsedRef.current / ONE_HEX_SECONDS)
+        : null
+      if (gaitProgress != null) {
+        animatedPos.current = [originX + legDx * gaitProgress, originZ + legDz * gaitProgress]
+        animatedY.current = cy + (immediateTarget.y - cy) * gaitProgress
+      } else {
+        const step = Math.min(1, (WALK_SPEED * delta) / dist)
+        animatedPos.current = [cx + dx * step, cz + dz * step]
+        animatedY.current = cy + (immediateTarget.y - cy) * step
+      }
       if (!isMoving) setIsMoving(true)
     }
   }
@@ -1461,12 +1574,41 @@ const UnitMarker = memo(function UnitMarker({
     const dx = tx - ax
     const dz = tz - az
     let twist: 'left' | 'right' | null = null
+    let twistAngle: number | undefined
     if (Math.hypot(dx, dz) > 1e-6) {
       const offset = angleDelta(facingRotationY, Math.atan2(dx, dz))
-      if (Math.abs(offset) > TORSO_TWIST_EPSILON) twist = offset > 0 ? 'left' : 'right'
+      if (Math.abs(offset) > TORSO_TWIST_EPSILON) {
+        twist = offset > 0 ? 'left' : 'right'
+        // See Mech3D.tsx's own attackSignal.twistAngle doc comment — the
+        // real offset magnitude, not just its sign, so the overlay can
+        // scale proportionally instead of always playing its full swing.
+        twistAngle = Math.abs(offset)
+      }
     }
-    return { id: activeAttack.id, location: activeAttack.weaponLocation, twist }
-  }, [activeAttack, unit.q, unit.r, unit.id, facingRotationY])
+    // Real user request: "apuntado direccional por brazo" — the vertical
+    // half of target bearing, same "is it worth reacting to" epsilon-cone
+    // convention as twist's own horizontal check just above (reused
+    // directly, not a separate constant — no reason the two axes should
+    // read as centered at different thresholds). heightAt already exists
+    // on this component purely for walk-path interpolation; this is its
+    // first use for anything angular. horizontalDist reuses the same
+    // dx/dz this function already computed for twist — genuinely shared
+    // geometry, not a coincidence.
+    const horizontalDist = Math.hypot(dx, dz)
+    let aimVertical: 'up' | 'down' | null = null
+    let aimVerticalAngle: number | undefined
+    if (horizontalDist > 1e-6) {
+      const verticalDelta = heightAt(activeAttack.targetQ, activeAttack.targetR) - heightAt(unit.q, unit.r)
+      const elevationAngle = Math.atan2(verticalDelta, horizontalDist)
+      if (Math.abs(elevationAngle) > TORSO_TWIST_EPSILON) {
+        aimVertical = elevationAngle > 0 ? 'up' : 'down'
+        aimVerticalAngle = Math.abs(elevationAngle)
+      }
+    }
+    return {
+      id: activeAttack.id, location: activeAttack.weaponLocation, twist, twistAngle, aimVertical, aimVerticalAngle,
+    }
+  }, [activeAttack, unit.q, unit.r, unit.id, facingRotationY, heightAt])
 
   // Same idea, for the moment a shot actually LANDS on this unit instead
   // of the moment it's fired — a miss (activeAttack.hit === false) plays
@@ -1487,7 +1629,10 @@ const UnitMarker = memo(function UnitMarker({
       const abs = Math.abs(relative)
       direction = abs <= Math.PI / 4 ? 'fwd' : abs >= (3 * Math.PI) / 4 ? 'bwd' : relative > 0 ? 'left' : 'right'
     }
-    return { id: activeAttack.id, severity: weaponHitSeverity(activeAttack.weaponName), direction }
+    return {
+      id: activeAttack.id, severity: weaponHitSeverity(activeAttack.weaponName), direction,
+      location: activeAttack.targetLocation,
+    }
   }, [activeAttack, unit.q, unit.r, unit.id, facingRotationY])
 
   const mechOrMarker = (
@@ -1508,6 +1653,7 @@ const UnitMarker = memo(function UnitMarker({
           <Suspense fallback={null}>
             <Mech3D
               color={color} chassis={unit.mech_chassis} model={unit.mech_model}
+              weapons={weapons}
               isMoving={isMoving} movementType={movementType === 'run' ? 'run' : 'walk'}
               jumpPhase={jumpPhase} fallen={tiltProne} dead={destroyedReason != null}
               shutdown={shutdown} turning={turning}
@@ -2659,7 +2805,7 @@ function FogRegionMesh({
 }
 
 export function HexMap({
-  map, units, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
+  map, units, mechs, losDebugHexes, needsInitiativePilotIds, activeMoverPilotId, activeAttackerPilotIds,
   moveHighlightHexes, pathPreviewHexes, targetableHexes, walkPaths, walkMovementTypes, outlineUnitIds, heatByUnitId,
   proneUnitIds, shutdownUnitIds,
   destroyedReasonByUnitId,
@@ -2670,6 +2816,13 @@ export function HexMap({
 }: {
   map: MapData
   units: Unit[]
+  /** Real equipped loadouts, keyed to units via Unit.mech_id — see
+   * UnitMarkerProps' own `weapons` doc comment for why this has to be
+   * threaded all the way down to <Mech3D> instead of assuming a chassis
+   * only ever has one visual per hardpoint. Optional/defaults to empty
+   * so call sites that never render a mech-bearing unit (none today, but
+   * cheap to keep true) don't have to pass it. */
+  mechs?: Mech[]
   /** Cut the vegetation into cullable regions instead of one batch per
    * species across the whole board.
    *
@@ -2990,6 +3143,20 @@ export function HexMap({
     if (u.pilot_faction === 'enemy' && !teamVisibleHexes.has(`${u.q},${u.r}`)) return false
     return true
   })
+  // See UnitMarkerProps' own `weapons` doc comment. Keyed by unit id
+  // (not mech id) so UnitMarker can look itself up with nothing but the
+  // unit it already has.
+  const weaponsByUnitId = useMemo(() => {
+    const mechById = new Map((mechs ?? []).map((m) => [m.id, m]))
+    const result = new Map<number, { location: string; weaponName: string }[]>()
+    for (const u of units) {
+      if (u.mech_id == null) continue
+      const mech = mechById.get(u.mech_id)
+      if (!mech) continue
+      result.set(u.id, mech.weapons.map((w) => ({ location: w.location, weaponName: w.weapon_name })))
+    }
+    return result
+  }, [units, mechs])
   const [centerX, centerZ] = mapCenter(map.tiles)
   const needsInitiativeTiles = new Set(
     visibleUnits
@@ -3433,6 +3600,7 @@ export function HexMap({
         <UnitMarker
           key={unit.id}
           unit={unit}
+          weapons={weaponsByUnitId.get(unit.id)}
           elevation={elevationAt.get(`${unit.q},${unit.r}`) ?? 0}
           terrain={terrainAt.get(`${unit.q},${unit.r}`) ?? 'plains'}
           terrainAt={terrainAt}

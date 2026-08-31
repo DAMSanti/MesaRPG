@@ -679,6 +679,7 @@ function TableViewBattletech() {
               <HexMap
                 map={map}
                 units={units}
+                mechs={mechs}
                 needsInitiativePilotIds={pilotsNeedingInitiative(roundState, units, destroyedPilotIds)}
                 activeMoverPilotId={heldMover.displayedMoverPilotId}
                 activeAttackerPilotIds={roundState ? activeAttackPilotIds(roundState, units) : undefined}
