@@ -589,12 +589,15 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // sidearm with no distinct mesh of its own -- closest existing family.
   'Magshot': 'mg',
   'AC/2': 'ac2', 'AC/5': 'ac5', 'AC/10': 'ac10', 'AC/20': 'ac20',
+  // Orion's own real catalog data has "AC/10p" as a typo of AC/10.
+  'AC/10p': 'ac10',
   'LB 2-X AC': 'lbx2', 'LB 5-X AC': 'lbx5', 'LB 10-X AC': 'lbx10', 'LB 20-X AC': 'lbx20',
   // Hatamoto-Chi's own real catalog data has "LBXAC 10" as an alternate
   // spelling of LB 10-X AC (confirmed via mech_templates).
   'LBXAC 10': 'lbx10',
   'Ultra AC/2': 'uac2', 'Ultra AC/5': 'uac5', 'Ultra AC/10': 'uac10', 'Ultra AC/20': 'uac20',
   'Gauss Rifle': 'gauss', 'Heavy Gauss Rifle': 'hgauss', 'Light Gauss Rifle': 'lgauss', 'Silver Bullet Gauss Rifle': 'gauss',
+  'AP Gauss Rifle': 'gauss',
   'SRM 2': 'missile2', 'SRM 4': 'missile4', 'SRM 6': 'missile6',
   // Real bug found via the weapon-muzzle auto-detect feature: "Streak SRM
   // 6" had NO bucket at all (missing from this table entirely, not just
@@ -608,7 +611,7 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   'LRM 5': 'missile5', 'LRM 10': 'missile10', 'LRM 15': 'missile15', 'LRM 20': 'missile20',
   'Flamer': 'flamer', 'ER Flamer': 'flamer',
   'AMS': 'ams', 'Laser AMS': 'ams', 'Laser Anti Missile System': 'ams',
-  'Narc': 'narc', 'Narc Beacon': 'narc',
+  'Narc': 'narc', 'Narc Beacon': 'narc', 'i Narc': 'narc',
   // Rotary AC and Rocket Launcher had NO bucket at all — same "aparece
   // siempre fija" failure mode as the PPC/Gauss/MG gap above, just from a
   // missing entry rather than a wrong one. Confirmed against

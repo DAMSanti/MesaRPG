@@ -437,6 +437,70 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'NSR-10D', 'NSR-9FC', 'NSR-9J', 'NSR-9J (Brubaker)', 'NSR-9SS',
     ].map((model) => [model, `${MECHS_DIR}/Nightstar.glb`])),
   },
+  Orion: {
+    placeholder: `${MECHS_DIR}/Orion.glb`,
+    models: Object.fromEntries([
+      'C', 'C 2', 'ON1-C', 'ON1-H', 'ON1-K', 'ON1-K (Kerensky)', 'ON1-M', 'ON1-M-DC',
+      'ON1-MA', 'ON1-MB', 'ON1-MC', 'ON1-MD', 'ON1-V', 'ON1-V-DC', 'ON1-VA',
+      'ON2-M', 'ON3-M', 'ON3-MX',
+    ].map((model) => [model, `${MECHS_DIR}/Orion.glb`])),
+  },
+  Panther: {
+    placeholder: `${MECHS_DIR}/Panther.glb`,
+    models: Object.fromEntries([
+      'PNT-10K', 'PNT-10K2', 'PNT-10KA', 'PNT-12A', 'PNT-12K', 'PNT-12K2',
+      'PNT-12KC', 'PNT-13K', 'PNT-14R', 'PNT-14S', 'PNT-16K', 'PNT-8Z',
+      'PNT-9ALAG', 'PNT-9R', 'PNT-C', 'PNT-CA',
+    ].map((model) => [model, `${MECHS_DIR}/Panther.glb`])),
+  },
+  'Phoenix Hawk': {
+    placeholder: `${MECHS_DIR}/Phoenixhawk.glb`,
+    models: Object.fromEntries([
+      'C', 'C 2', 'PXH-1', 'PXH-1-EC', 'PXH-1D', 'PXH-1K', 'PXH-1Kk',
+      'PXH-1b (Special)', 'PXH-1bC', 'PXH-1c (Special)', 'PXH-2', 'PXH-2K',
+      'PXH-3D', 'PXH-3K', 'PXH-3M', 'PXH-3M (Masters)', 'PXH-3PL', 'PXH-3S',
+      'PXH-4L', 'PXH-4L (Sante)', 'PXH-4M', 'PXH-4W', 'PXH-5L', 'PXH-6D',
+      'PXH-7CS', 'PXH-7K', 'PXH-7S', 'PXH-8CS', 'PXH-9', 'PXH-99',
+    ].map((model) => [model, `${MECHS_DIR}/Phoenixhawk.glb`])),
+  },
+  Quickdraw: {
+    placeholder: `${MECHS_DIR}/Quickdraw.glb`,
+    models: Object.fromEntries([
+      'QKD-4G', 'QKD-4H', 'QKD-5A', 'QKD-5K', 'QKD-5K2', 'QKD-5M', 'QKD-5Mr',
+      'QKD-8K', 'QKD-8P', 'QKD-8X', 'QKD-9G', 'QKD-9M', 'QKD-C',
+    ].map((model) => [model, `${MECHS_DIR}/Quickdraw.glb`])),
+  },
+  Raven: {
+    placeholder: `${MECHS_DIR}/Raven.glb`,
+    models: Object.fromEntries([
+      'RVN-1X', 'RVN-2X', 'RVN-3L', 'RVN-3M', 'RVN-3X', 'RVN-4L', 'RVN-4LC',
+      'RVN-4Lr', 'RVN-4X', 'RVN-5L', "RVN-SR 'Shattered Raven'", "RVN-SS 'Shattered Raven'",
+    ].map((model) => [model, `${MECHS_DIR}/Raven.glb`])),
+  },
+  Rifleman: {
+    placeholder: `${MECHS_DIR}/Rifleman.glb`,
+    models: Object.fromEntries([
+      'C', 'C 2', 'C 3', 'RFL-1N', 'RFL-2N', 'RFL-3C', 'RFL-3Cr', 'RFL-3N',
+      'RFL-4D', 'RFL-5CS', 'RFL-5D', 'RFL-5M', 'RFL-6D', 'RFL-6X', 'RFL-7G',
+      'RFL-7M', 'RFL-7N', 'RFL-7N2', 'RFL-7X', 'RFL-8D', 'RFL-8X', 'RFL-9T',
+      'RFL-X3 MUSE WIND',
+    ].map((model) => [model, `${MECHS_DIR}/Rifleman.glb`])),
+  },
+  'Shadow Hawk': {
+    placeholder: `${MECHS_DIR}/Shadowhawk.glb`,
+    models: Object.fromEntries([
+      'C', 'SHD-11CS', 'SHD-12C', 'SHD-1R', 'SHD-2D', 'SHD-2D2', 'SHD-2H',
+      'SHD-2Hb', 'SHD-2Ht', 'SHD-2K', 'SHD-3K', 'SHD-4H', 'SHD-5D',
+      'SHD-5D (Sandy)', 'SHD-5M', 'SHD-5R', 'SHD-5S', 'SHD-6D', 'SHD-7CS',
+      'SHD-7H', 'SHD-7M', 'SHD-8L', 'SHD-9D',
+    ].map((model) => [model, `${MECHS_DIR}/Shadowhawk.glb`])),
+  },
+  'Shadow Hawk IIC': {
+    placeholder: `${MECHS_DIR}/ShadowHawkIIC.glb`,
+    models: Object.fromEntries([
+      '(Standard)', '10', '11', '2', '3', '4', '5', '6', '7', '8', '9',
+    ].map((model) => [model, `${MECHS_DIR}/ShadowHawkIIC.glb`])),
+  },
   Champion: {
     placeholder: `${MECHS_DIR}/Champion.glb`,
     models: Object.fromEntries([

@@ -123,6 +123,7 @@ KNOWN_LOCATION_TOKENS = [
     "Forearm_Left", "Forearm_Right", "Torso_Center", "Torso_Left", "Torso_Right", "Torso", "Head",
     "Clavicle_Left", "Clavicle_Right", "Upperarm_Left", "Upperarm_Right",
     "Missile_Left", "Missile_Right", "Shoulder_Left", "Shoulder_Right",
+    "Arm_Left", "Arm_Right",
 ]
 BONE_BY_LOCATION = {
     "Forearm_Left": "Forearm_Left_Weapon", "Forearm_Right": "Forearm_Right_Weapon",
@@ -137,6 +138,7 @@ BONE_BY_LOCATION = {
     # that name, so route to the nearest real equivalent.
     "Missile_Left": "Torso_Weapon", "Missile_Right": "Torso_Weapon",
     "Shoulder_Left": "Clavicle_Left_Weapon", "Shoulder_Right": "Clavicle_Right_Weapon",
+    "Arm_Left": "Forearm_Left_Weapon", "Arm_Right": "Forearm_Right_Weapon",
 }
 LOCATION_HINT = {
     "Forearm_Left": "left_arm", "Forearm_Right": "right_arm", "Torso_Center": "center_torso",
@@ -144,6 +146,7 @@ LOCATION_HINT = {
     "Clavicle_Left": "left_shoulder", "Clavicle_Right": "right_shoulder",
     "Missile_Left": "left_torso", "Missile_Right": "right_torso",
     "Shoulder_Left": "left_shoulder", "Shoulder_Right": "right_shoulder",
+    "Arm_Left": "left_arm", "Arm_Right": "right_arm",
     "Upperarm_Left": "left_arm", "Upperarm_Right": "right_arm",
 }
 LOCATIONS_SORTED = sorted(BONE_BY_LOCATION.keys(), key=len, reverse=True)
@@ -256,8 +259,15 @@ bpy.ops.object.mode_set(mode="OBJECT")
 # =====================================================================
 
 
-def load_pixels(path):
+def load_pixels(path, size=None):
+    # Some chassis (Rifleman confirmed: Variant_Default_MSK at 128x128
+    # vs its own Variant_Wear_MSK at 2048x2048) ship mask/wear pairs at
+    # mismatched resolutions -- resize to the caller's reference size
+    # before extracting so the numpy elementwise ops downstream don't
+    # crash on a shape mismatch.
     img = bpy.data.images.load(path, check_existing=True)
+    if size is not None and tuple(img.size) != tuple(size):
+        img.scale(size[0], size[1])
     w, h = img.size
     arr = np.empty(w * h * 4, dtype=np.float32)
     img.pixels.foreach_get(arr)
@@ -378,7 +388,8 @@ print("Body material baked+rebuilt")
 # instead of crashing on a missing file.
 _variant_mask_prefix = "Variant" if os.path.exists(TEX_DIR + f"{CHASSIS}_Variant_Default_MSK.png") else "Body"
 mask_arr, _ = load_pixels(TEX_DIR + f"{CHASSIS}_{_variant_mask_prefix}_Default_MSK.png")
-wear_arr, _ = load_pixels(TEX_DIR + f"{CHASSIS}_{_variant_mask_prefix if os.path.exists(TEX_DIR + f'{CHASSIS}_{_variant_mask_prefix}_Wear_MSK.png') else 'Body'}_Wear_MSK.png")
+_wear_prefix = _variant_mask_prefix if os.path.exists(TEX_DIR + f"{CHASSIS}_{_variant_mask_prefix}_Wear_MSK.png") else "Body"
+wear_arr, _ = load_pixels(TEX_DIR + f"{CHASSIS}_{_wear_prefix}_Wear_MSK.png", size=mask_arr.shape[1::-1])
 R = mask_arr[..., 0]; G = mask_arr[..., 1]; B = mask_arr[..., 2]
 remainder = np.clip(1.0 - R - G - B, 0.0, 1.0)
 h, w = R.shape
