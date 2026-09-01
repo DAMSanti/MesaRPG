@@ -615,6 +615,11 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // Plasma Rifle/MML 5 above — reuses the plain AC/2 mesh instead of
   // silently staying empty for these two variants.
   'Light AC/2': 'ac2',
+  // Wolverine's real stock loadouts carry Light Machine Gun Array — no
+  // distinct mesh exists (checked directly: Wolverine's own weapon set
+  // only modeled a plain LMG barrel). Same "shares the physical launcher,
+  // stat-only difference" reasoning as Plasma Rifle/MML 5/Light AC/2 above.
+  'Light Machine Gun Array': 'lmg',
 }
 for (const laser of [
   'Small Laser', 'Medium Laser', 'Large Laser', 'ER Small Laser', 'ER Medium Laser', 'ER Large Laser', 'ER Micro Laser',

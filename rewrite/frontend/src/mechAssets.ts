@@ -319,6 +319,15 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'WHM-8R', 'WHM-9D', 'WHM-9K', 'WHM-9S', "WHM-X7 'The Lich'",
     ].map((model) => [model, `${MECHS_DIR}/Warhammer.glb`])),
   },
+  Wolverine: {
+    placeholder: `${MECHS_DIR}/Wolverine.glb`,
+    models: Object.fromEntries([
+      'WVR-10D', 'WVR-10R', 'WVR-10V2', 'WVR-11M', 'WVR-1R', 'WVR-3R', 'WVR-6D',
+      'WVR-6K', 'WVR-6M', 'WVR-6R', 'WVR-7D', 'WVR-7K', 'WVR-7M', 'WVR-7M2',
+      'WVR-8C', 'WVR-8D', 'WVR-8K', 'WVR-9D', 'WVR-9K', 'WVR-9M', 'WVR-9R',
+      'WVR-9W', 'WVR-9W2',
+    ].map((model) => [model, `${MECHS_DIR}/Wolverine.glb`])),
+  },
 }
 
 export const GENERIC_MECH_PLACEHOLDER = '/models/mech-placeholder.glb'
