@@ -372,8 +372,13 @@ nt.links.new(bsdf.outputs["BSDF"], out2.inputs["Surface"])
 print("Body material baked+rebuilt")
 
 # --- Variant: numpy bake (Pattern B) ---
-mask_arr, _ = load_pixels(TEX_DIR + f"{CHASSIS}_Variant_Default_MSK.png")
-wear_arr, _ = load_pixels(TEX_DIR + f"{CHASSIS}_Variant_Wear_MSK.png")
+# Some chassis (Kodiak confirmed) have no Variant_Default_MSK at all --
+# only a real per-pixel metalID, no paint-region mask -- fall back to the
+# Body's own mask so the Variant slot still gets a sensible painted look
+# instead of crashing on a missing file.
+_variant_mask_prefix = "Variant" if os.path.exists(TEX_DIR + f"{CHASSIS}_Variant_Default_MSK.png") else "Body"
+mask_arr, _ = load_pixels(TEX_DIR + f"{CHASSIS}_{_variant_mask_prefix}_Default_MSK.png")
+wear_arr, _ = load_pixels(TEX_DIR + f"{CHASSIS}_{_variant_mask_prefix if os.path.exists(TEX_DIR + f'{CHASSIS}_{_variant_mask_prefix}_Wear_MSK.png') else 'Body'}_Wear_MSK.png")
 R = mask_arr[..., 0]; G = mask_arr[..., 1]; B = mask_arr[..., 2]
 remainder = np.clip(1.0 - R - G - B, 0.0, 1.0)
 h, w = R.shape
@@ -396,7 +401,8 @@ out_img.save()
 
 # --- Safe per-region roughness/metallic for Body + Variant ---
 for prefix in ["Body", "Variant"]:
-    mask_arr2, _ = load_pixels(TEX_DIR + f"{CHASSIS}_{prefix}_Default_MSK.png")
+    mask_prefix = prefix if os.path.exists(TEX_DIR + f"{CHASSIS}_{prefix}_Default_MSK.png") else "Body"
+    mask_arr2, _ = load_pixels(TEX_DIR + f"{CHASSIS}_{mask_prefix}_Default_MSK.png")
     R2 = mask_arr2[..., 0]; G2 = mask_arr2[..., 1]; B2 = mask_arr2[..., 2]
     rem2 = np.clip(1.0 - R2 - G2 - B2, 0.0, 1.0)
     metallic = R2 * 0.10 + G2 * 0.10 + B2 * 0.10 + rem2 * 0.35
@@ -493,6 +499,7 @@ NAME_TO_MATERIAL = {
     "Variant": variant_mat, "Body": variant_mat,
     "Weapons": weapons_mat, "MissileHead": weapons_mat, "MIssileHead": weapons_mat, "Missilehead": weapons_mat,
     "Arrow": weapons_mat, "Geo": weapons_mat, "Missiles": weapons_mat,
+    "ArrowMech": weapons_mat, "ArrowMech_MTI": weapons_mat,
 }
 assigned = 0
 assign_errors = []
@@ -523,7 +530,14 @@ for o in list(bpy.data.objects):
         if len(slot_names) < n_slots:
             slot_names = slot_names + [slot_names[-1]] * (n_slots - len(slot_names))
         else:
-            slot_names = slot_names[:n_slots]
+            # More JSON slot names than real Blender slots (seen on single-
+            # slot Flamer/Laser/PPC meshes that still list both "Weapons"
+            # and "Variant") -- prefer "Weapons" over "Variant" since the
+            # metal weapon look is right far more often than body paint
+            # would be for an actual weapon barrel; otherwise keep order.
+            priority = [s for s in slot_names if s == "Weapons"]
+            rest = [s for s in slot_names if s != "Weapons"]
+            slot_names = (priority + rest)[:n_slots]
     for i, sname in enumerate(slot_names):
         target_mat = NAME_TO_MATERIAL.get(sname)
         if target_mat is None:

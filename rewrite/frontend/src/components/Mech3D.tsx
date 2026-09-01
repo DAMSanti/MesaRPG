@@ -585,6 +585,9 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // Javelin's own real catalog data has "MGA" as an alternate spelling of
   // Machine Gun (Array), same family as the plain Machine Gun bucket.
   'MGA': 'mg',
+  // Locust's real stock loadouts carry Magshot, a small ballistic
+  // sidearm with no distinct mesh of its own -- closest existing family.
+  'Magshot': 'mg',
   'AC/2': 'ac2', 'AC/5': 'ac5', 'AC/10': 'ac10', 'AC/20': 'ac20',
   'LB 2-X AC': 'lbx2', 'LB 5-X AC': 'lbx5', 'LB 10-X AC': 'lbx10', 'LB 20-X AC': 'lbx20',
   // Hatamoto-Chi's own real catalog data has "LBXAC 10" as an alternate
@@ -669,6 +672,9 @@ for (const laser of [
   // — reuse the shared generic laser bucket, same reasoning as every
   // other laser variant in this list.
   'Bombast Laser', 'Large Re-engineered Laser', 'Medium Re-engineered Laser',
+  // Marauder's real stock loadouts carry Blazer Cannon, an energy-based
+  // cannon with no distinct mesh -- reuses the generic laser look.
+  'Blazer Cannon',
 ]) WEAPON_VISUAL_BUCKETS[laser] = 'laser'
 
 /** `null` for a weapon this chassis's game art never modeled a distinct

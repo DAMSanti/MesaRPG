@@ -377,6 +377,66 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'KGC-007', 'KGC-008', 'KGC-008B', 'KGC-009', 'KGC-009C', 'KGC-010', 'KGC-011',
     ].map((model) => [model, `${MECHS_DIR}/Kingcrab.glb`])),
   },
+  Kintaro: {
+    placeholder: `${MECHS_DIR}/Kintaro.glb`,
+    models: Object.fromEntries([
+      'KTO-18', 'KTO-19', 'KTO-19b', 'KTO-20', 'KTO-21', 'KTO-C', 'KTO-K',
+    ].map((model) => [model, `${MECHS_DIR}/Kintaro.glb`])),
+  },
+  Kodiak: {
+    placeholder: `${MECHS_DIR}/Kodiak.glb`,
+    models: Object.fromEntries([
+      '(Cale)', '(Standard)', '2', '3', '4', '5', '6',
+    ].map((model) => [model, `${MECHS_DIR}/Kodiak.glb`])),
+  },
+  Locust: {
+    placeholder: `${MECHS_DIR}/Locust.glb`,
+    models: Object.fromEntries([
+      'C', 'LCT-1E', 'LCT-1L', 'LCT-1M', 'LCT-1S', 'LCT-1V', 'LCT-1V2', 'LCT-1Vb',
+      'LCT-3D', 'LCT-3M', 'LCT-3S', 'LCT-3V', 'LCT-5M', 'LCT-5M2', 'LCT-5M3',
+      'LCT-5S', 'LCT-5T', 'LCT-5V', 'LCT-5W', 'LCT-5W2', 'LCT-6M', 'LCT-7S',
+      'LCT-7V', 'LCT-7V2',
+    ].map((model) => [model, `${MECHS_DIR}/Locust.glb`])),
+  },
+  Longbow: {
+    placeholder: `${MECHS_DIR}/Longbow.glb`,
+    models: Object.fromEntries([
+      'LGB-0C', 'LGB-0H', 'LGB-0W', 'LGB-0W2', 'LGB-10C', 'LGB-10K', 'LGB-12C',
+      'LGB-12R', 'LGB-13C', 'LGB-13NAIS', 'LGB-14C', 'LGB-14Q', 'LGB-14V',
+      'LGB-7Q', 'LGB-7V', 'LGB-8C', 'LGB-8V',
+    ].map((model) => [model, `${MECHS_DIR}/Longbow.glb`])),
+  },
+  Marauder: {
+    placeholder: `${MECHS_DIR}/Marauder.glb`,
+    models: Object.fromEntries([
+      '(Bounty Hunter-3015)', '(Bounty Hunter-3044)', 'Bounty Hunter 3138', 'C',
+      'MAD-11D', 'MAD-1R', 'MAD-2R', 'MAD-2T', 'MAD-3D', 'MAD-3L', 'MAD-3M',
+      'MAD-3R', 'MAD-4X', 'MAD-5CS', 'MAD-5D', 'MAD-5D-DC', 'MAD-5L', 'MAD-5M',
+      'MAD-5R', 'MAD-5S', 'MAD-5T', 'MAD-6L', 'MAD-7C', 'MAD-7D', 'MAD-7M',
+      'MAD-7R', 'MAD-7S', 'MAD-9D', 'MAD-9M', 'MAD-9M2', 'MAD-9S', 'MAD-9W',
+      'MAD-9W2', 'MAD-SD (Douglass)', 'Red Hunter', 'Red Hunter 3146',
+    ].map((model) => [model, `${MECHS_DIR}/Marauder.glb`])),
+  },
+  'Marauder II': {
+    placeholder: `${MECHS_DIR}/Marauderii.glb`,
+    models: Object.fromEntries([
+      '(Bounty Hunter)', 'C', 'MAD-10D', 'MAD-4A', 'MAD-4H', 'MAD-4K', 'MAD-4L',
+      'MAD-4S', 'MAD-5A', 'MAD-5B', 'MAD-5C', 'MAD-5W', 'MAD-6A', 'MAD-6C',
+      'MAD-6D', 'MAD-6M', 'MAD-6S', 'MAD-8K',
+    ].map((model) => [model, `${MECHS_DIR}/Marauderii.glb`])),
+  },
+  Mauler: {
+    placeholder: `${MECHS_DIR}/Mauler.glb`,
+    models: Object.fromEntries([
+      'MAL-1K', 'MAL-1R', 'MAL-2R', 'MAL-3R', "MAL-4X 'Todesbote'", 'MAL-C',
+    ].map((model) => [model, `${MECHS_DIR}/Mauler.glb`])),
+  },
+  Nightstar: {
+    placeholder: `${MECHS_DIR}/Nightstar.glb`,
+    models: Object.fromEntries([
+      'NSR-10D', 'NSR-9FC', 'NSR-9J', 'NSR-9J (Brubaker)', 'NSR-9SS',
+    ].map((model) => [model, `${MECHS_DIR}/Nightstar.glb`])),
+  },
   Champion: {
     placeholder: `${MECHS_DIR}/Champion.glb`,
     models: Object.fromEntries([
