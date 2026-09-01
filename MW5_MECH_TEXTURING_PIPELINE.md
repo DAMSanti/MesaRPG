@@ -1317,3 +1317,18 @@ también con una comparación directa de datos (contar nodos, diffear
 posiciones `.blend` vs `.glb`) antes de concluir "es tu sesión" — la
 combinación de ambas señales es la única forma fiable de saber cuál de
 las dos es la causa real.
+
+### Los `.blend` finales y los scripts del pipeline se guardan SIEMPRE en el proyecto, nunca solo en el scratchpad temporal
+
+Regla obligatoria, no opcional: cada `.blend` final de un chasis
+(`models/<Chasis>_new.blend` o equivalente) se copia a
+`backups/<chasis>_<fecha>/` DENTRO del repo en cuanto queda estable —
+no basta con dejarlo en `models/` (gitignored, pero al menos vive en
+el proyecto) ni, mucho peor, dejar los SCRIPTS que lo construyeron
+solo en el directorio de scratchpad temporal de la sesión (se pierden
+al cerrarla). Ver `mw5_pipeline_scripts/` en la raíz del repo — ahí
+viven los scripts reales (Python de Blender + el minificador de
+Node) que de verdad funcionaron para Archer y Assassin, no solo la
+prosa de este documento. Para cada chasis nuevo: guardar copia de sus
+propios scripts finales ahí (o reutilizar los de un chasis ya
+plantilla, editando solo lo específico) antes de darlo por terminado.
