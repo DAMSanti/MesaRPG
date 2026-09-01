@@ -570,9 +570,20 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // its own literal mesh token, same pattern the AC/LB-X/Ultra AC families
   // already used correctly below.
   'PPC': 'ppc', 'ER PPC': 'ppc', 'Heavy PPC': 'hppc', 'Light PPC': 'lppc', 'Snub-Nose PPC': 'snppc',
+  // Griffin's own real catalog data has a literal typo, "PP Cp" instead of
+  // "PPC" (confirmed via mech_templates) -- mapped as-is rather than
+  // touching the source data.
+  'PP Cp': 'ppc',
   'Machine Gun': 'mg', 'Heavy Machine Gun': 'hmg', 'Light Machine Gun': 'lmg',
+  // Flea's real stock loadouts use "LMGA" and "Light MG" as alternate
+  // catalog spellings of the same Light Machine Gun (Array) family already
+  // mapped above.
+  'LMGA': 'lmg', 'Light MG': 'lmg',
   'AC/2': 'ac2', 'AC/5': 'ac5', 'AC/10': 'ac10', 'AC/20': 'ac20',
   'LB 2-X AC': 'lbx2', 'LB 5-X AC': 'lbx5', 'LB 10-X AC': 'lbx10', 'LB 20-X AC': 'lbx20',
+  // Hatamoto-Chi's own real catalog data has "LBXAC 10" as an alternate
+  // spelling of LB 10-X AC (confirmed via mech_templates).
+  'LBXAC 10': 'lbx10',
   'Ultra AC/2': 'uac2', 'Ultra AC/5': 'uac5', 'Ultra AC/10': 'uac10', 'Ultra AC/20': 'uac20',
   'Gauss Rifle': 'gauss', 'Heavy Gauss Rifle': 'hgauss', 'Light Gauss Rifle': 'lgauss', 'Silver Bullet Gauss Rifle': 'gauss',
   'SRM 2': 'missile2', 'SRM 4': 'missile4', 'SRM 6': 'missile6',
@@ -631,8 +642,9 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // other LRM/SRM bucket above. A chassis whose own catalog lacks the
   // matching mesh just falls back to blank, same as any other unmodeled
   // visual (see this table's own doc comment).
-  'MML 9': 'missile9', 'MRM 30': 'missile30', 'MRM 20': 'missile20',
-  'Thunderbolt 15': 'missile15', 'ATM 6': 'missile6',
+  'MML 9': 'missile9', 'MRM 30': 'missile30', 'MRM 20': 'missile20', 'MRM 10': 'missile10',
+  'Thunderbolt 15': 'missile15', 'Thunderbolt 10': 'missile10', 'ATM 6': 'missile6',
+  'Enhanced LRM 10': 'missile10',
   // HVAC/10, Light AC/5 and HAG/30 are stat-only variants of an existing
   // physical barrel family (Hyper-Velocity/Light/Hyper-Assault are rules
   // differences, not a different in-game model) — same reasoning as

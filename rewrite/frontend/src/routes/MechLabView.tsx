@@ -1863,6 +1863,7 @@ export function MechLabView() {
       'Atlas', 'Awesome', 'Banshee', 'BattleMaster', 'Blackjack', 'Black Knight', 'Cataphract', 'Catapult',
       'Champion', 'Cicada', 'Commando', 'Crab', 'Cyclops',
       'Centurion', 'Charger', 'Crusader',
+      'Dervish', 'Dragon', 'Enforcer', 'Firestarter', 'Flea', 'Grasshopper', 'Griffin', 'Hatamoto-Chi',
     ])
     listMechChassis()
       .then((all) => setChassisOptions(all.filter((c) => READY_CHASSIS.has(c.chassis))))

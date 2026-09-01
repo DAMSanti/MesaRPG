@@ -335,6 +335,28 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'CRD-8R', 'CRD-8S', 'CRD-9BR', 'CRD-9R', 'CRD-9S',
     ].map((model) => [model, `${MECHS_DIR}/Crusader.glb`])),
   },
+  Dervish: {
+    placeholder: `${MECHS_DIR}/Dervish.glb`,
+    models: Object.fromEntries([
+      'DV-11DK', 'DV-1S', 'DV-6M', 'DV-6Md', 'DV-6Mr', 'DV-7D', 'DV-8D',
+      "DV-8D2 'Lightbringer'", 'DV-9D',
+    ].map((model) => [model, `${MECHS_DIR}/Dervish.glb`])),
+  },
+  Firestarter: {
+    placeholder: `${MECHS_DIR}/Firestarter.glb`,
+    models: Object.fromEntries([
+      'FS9-A', 'FS9-B', 'FS9-C', 'FS9-H', 'FS9-K', "FS9-M 'Mirage II'",
+      "FS9-M 'Mirage'", 'FS9-M2', 'FS9-M3', 'FS9-M4', 'FS9-P', 'FS9-S',
+      'FS9-S1', 'FS9-S2', 'FS9-S3', 'FS9-X81',
+    ].map((model) => [model, `${MECHS_DIR}/Firestarter.glb`])),
+  },
+  'Hatamoto-Chi': {
+    placeholder: `${MECHS_DIR}/Hatamotochi.glb`,
+    models: Object.fromEntries([
+      'HTM-26T', 'HTM-27T', 'HTM-27T (Daniel II)', 'HTM-27T (Daniel)',
+      'HTM-28T', 'HTM-28T (Shin)', 'HTM-28Tr',
+    ].map((model) => [model, `${MECHS_DIR}/Hatamotochi.glb`])),
+  },
   Champion: {
     placeholder: `${MECHS_DIR}/Champion.glb`,
     models: Object.fromEntries([
