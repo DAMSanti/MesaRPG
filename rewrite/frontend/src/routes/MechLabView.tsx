@@ -1861,6 +1861,8 @@ export function MechLabView() {
     const READY_CHASSIS = new Set([
       'Bushwacker', 'Annihilator', 'Archer', 'Assassin', 'Wolverine',
       'Atlas', 'Awesome', 'Banshee', 'BattleMaster', 'Blackjack', 'Black Knight', 'Cataphract', 'Catapult',
+      'Champion', 'Cicada', 'Commando', 'Crab', 'Cyclops',
+      'Centurion', 'Charger', 'Crusader',
     ])
     listMechChassis()
       .then((all) => setChassisOptions(all.filter((c) => READY_CHASSIS.has(c.chassis))))

@@ -319,6 +319,28 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'WHM-8R', 'WHM-9D', 'WHM-9K', 'WHM-9S', "WHM-X7 'The Lich'",
     ].map((model) => [model, `${MECHS_DIR}/Warhammer.glb`])),
   },
+  Charger: {
+    placeholder: `${MECHS_DIR}/Charger.glb`,
+    models: Object.fromEntries([
+      'CGR-1A1', 'CGR-1A5', 'CGR-1A9', 'CGR-1L', 'CGR-1X1', 'CGR-2A2', 'CGR-3K',
+      'CGR-3Kr', 'CGR-C', 'CGR-KMZ', 'CGR-SA5', "CGR-SB 'Challenger'",
+    ].map((model) => [model, `${MECHS_DIR}/Charger.glb`])),
+  },
+  Crusader: {
+    placeholder: `${MECHS_DIR}/Crusader.glb`,
+    models: Object.fromEntries([
+      'CRD-10S', 'CRD-2R', 'CRD-3D', 'CRD-3K', 'CRD-3L', 'CRD-3R', 'CRD-3R (Crael)',
+      'CRD-4BR', 'CRD-4D', 'CRD-4K', 'CRD-4L', 'CRD-5K', 'CRD-5M', 'CRD-5S', 'CRD-6D',
+      'CRD-6M', 'CRD-6T', 'CRD-7D', 'CRD-7L', 'CRD-7M', 'CRD-7M2', 'CRD-7W', 'CRD-8L',
+      'CRD-8R', 'CRD-8S', 'CRD-9BR', 'CRD-9R', 'CRD-9S',
+    ].map((model) => [model, `${MECHS_DIR}/Crusader.glb`])),
+  },
+  Champion: {
+    placeholder: `${MECHS_DIR}/Champion.glb`,
+    models: Object.fromEntries([
+      'C', 'CHP-1N', 'CHP-1N2', 'CHP-1Nb', 'CHP-2N', 'CHP-3N', 'CHP-3P',
+    ].map((model) => [model, `${MECHS_DIR}/Champion.glb`])),
+  },
   Wolverine: {
     placeholder: `${MECHS_DIR}/Wolverine.glb`,
     models: Object.fromEntries([

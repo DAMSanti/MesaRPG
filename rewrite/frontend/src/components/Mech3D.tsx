@@ -587,7 +587,7 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   'Streak SRM 2': 'missile2', 'Streak SRM 4': 'missile4', 'Streak SRM 6': 'missile6',
   'LRM 5': 'missile5', 'LRM 10': 'missile10', 'LRM 15': 'missile15', 'LRM 20': 'missile20',
   'Flamer': 'flamer', 'ER Flamer': 'flamer',
-  'AMS': 'ams', 'Laser AMS': 'ams',
+  'AMS': 'ams', 'Laser AMS': 'ams', 'Laser Anti Missile System': 'ams',
   'Narc': 'narc',
   // Rotary AC and Rocket Launcher had NO bucket at all — same "aparece
   // siempre fija" failure mode as the PPC/Gauss/MG gap above, just from a
@@ -631,7 +631,7 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // other LRM/SRM bucket above. A chassis whose own catalog lacks the
   // matching mesh just falls back to blank, same as any other unmodeled
   // visual (see this table's own doc comment).
-  'MML 9': 'missile9', 'MRM 30': 'missile30',
+  'MML 9': 'missile9', 'MRM 30': 'missile30', 'MRM 20': 'missile20',
   'Thunderbolt 15': 'missile15', 'ATM 6': 'missile6',
   // HVAC/10, Light AC/5 and HAG/30 are stat-only variants of an existing
   // physical barrel family (Hyper-Velocity/Light/Hyper-Assault are rules
@@ -649,7 +649,7 @@ for (const laser of [
   // both single-barrel energy weapons with no distinct mesh of their own
   // — reuse the shared generic laser bucket, same reasoning as every
   // other laser variant in this list.
-  'Bombast Laser', 'Large Re-engineered Laser',
+  'Bombast Laser', 'Large Re-engineered Laser', 'Medium Re-engineered Laser',
 ]) WEAPON_VISUAL_BUCKETS[laser] = 'laser'
 
 /** `null` for a weapon this chassis's game art never modeled a distinct

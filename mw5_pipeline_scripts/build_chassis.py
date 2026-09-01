@@ -134,6 +134,10 @@ LOCATION_HINT = {
     "Upperarm_Left": "left_arm", "Upperarm_Right": "right_arm",
 }
 LOCATIONS_SORTED = sorted(BONE_BY_LOCATION.keys(), key=len, reverse=True)
+BONE_FALLBACK = {
+    "Clavicle_Left_Weapon": "Torso_Weapon", "Clavicle_Right_Weapon": "Torso_Weapon",
+    "Upperarm_Left_Weapon": "Forearm_Left_Weapon", "Upperarm_Right_Weapon": "Forearm_Right_Weapon",
+}
 
 mounted = 0
 errors = []
@@ -161,8 +165,16 @@ for fname in weapon_files:
     visual = "_".join(parts[1:]).lower()
     target_bone = BONE_BY_LOCATION[location]
     if target_bone not in bone_names:
-        errors.append(f"MISSING_BONE {target_bone} for {fname}")
-        continue
+        # Some chassis skeletons are asymmetric (e.g. Crusader has
+        # Clavicle_Left_Weapon but no Clavicle_Right_Weapon at all, even
+        # though its real stock loadouts do mount a weapon there) --
+        # falling back to the nearest real bone beats dropping the weapon.
+        fallback_bone = BONE_FALLBACK.get(target_bone)
+        if fallback_bone and fallback_bone in bone_names:
+            target_bone = fallback_bone
+        else:
+            errors.append(f"MISSING_BONE {target_bone} for {fname}")
+            continue
 
     before = set(o.name for o in bpy.data.objects)
     bpy.ops.uf.import_uemodel(directory=WEAPONS_DIR, files=[{"name": fname}])
@@ -466,7 +478,8 @@ print("Weapons material built")
 # --- Assign every weapon's material slots by REAL name (never by index) ---
 NAME_TO_MATERIAL = {
     "Variant": variant_mat, "Body": variant_mat,
-    "Weapons": weapons_mat, "MissileHead": weapons_mat, "MIssileHead": weapons_mat, "Arrow": weapons_mat,
+    "Weapons": weapons_mat, "MissileHead": weapons_mat, "MIssileHead": weapons_mat, "Missilehead": weapons_mat,
+    "Arrow": weapons_mat, "Geo": weapons_mat,
 }
 assigned = 0
 assign_errors = []
