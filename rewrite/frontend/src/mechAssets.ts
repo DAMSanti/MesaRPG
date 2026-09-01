@@ -562,6 +562,26 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'VP-1', 'VP-5', 'VP-7', 'VP-8', 'VP-9',
     ].map((model) => [model, `${MECHS_DIR}/Viper.glb`])),
   },
+  Vulcan: {
+    placeholder: `${MECHS_DIR}/Vulcan.glb`,
+    models: Object.fromEntries([
+      'VL-2T', 'VL-5T', 'VT-5M', 'VT-5S', 'VT-5Sr', 'VT-6C', 'VT-6M', 'VT-7T',
+    ].map((model) => [model, `${MECHS_DIR}/Vulcan.glb`])),
+  },
+  Wolfhound: {
+    placeholder: `${MECHS_DIR}/Wolfhound.glb`,
+    models: Object.fromEntries([
+      'WLF-1', 'WLF-1 (Allard)', 'WLF-1A', 'WLF-1B', 'WLF-2', 'WLF-2H', 'WLF-2X',
+      'WLF-3M', 'WLF-3S', 'WLF-4W', 'WLF-4WA', 'WLF-5', 'WLF-6S',
+    ].map((model) => [model, `${MECHS_DIR}/Wolfhound.glb`])),
+  },
+  Zeus: {
+    placeholder: `${MECHS_DIR}/Zeus.glb`,
+    models: Object.fromEntries([
+      '(Leonidas)', 'ZEU-10WB', 'ZEU-11S', 'ZEU-5S', 'ZEU-5T', 'ZEU-6A',
+      'ZEU-6S', 'ZEU-6T', 'ZEU-6Y', 'ZEU-9S', 'ZEU-9S-DC', 'ZEU-9S2', 'ZEU-9T',
+    ].map((model) => [model, `${MECHS_DIR}/Zeus.glb`])),
+  },
   Champion: {
     placeholder: `${MECHS_DIR}/Champion.glb`,
     models: Object.fromEntries([

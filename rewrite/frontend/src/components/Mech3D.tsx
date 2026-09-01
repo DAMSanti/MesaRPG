@@ -609,7 +609,7 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // shares its visual/tube-count bucket.
   'Streak SRM 2': 'missile2', 'Streak SRM 4': 'missile4', 'Streak SRM 6': 'missile6',
   'LRM 5': 'missile5', 'LRM 10': 'missile10', 'LRM 15': 'missile15', 'LRM 20': 'missile20',
-  'Flamer': 'flamer', 'ER Flamer': 'flamer',
+  'Flamer': 'flamer', 'ER Flamer': 'flamer', 'Heavy Flamer': 'flamer',
   'AMS': 'ams', 'Laser AMS': 'ams', 'Laser Anti Missile System': 'ams',
   'Narc': 'narc', 'Narc Beacon': 'narc', 'i Narc': 'narc',
   // Rotary AC and Rocket Launcher had NO bucket at all — same "aparece

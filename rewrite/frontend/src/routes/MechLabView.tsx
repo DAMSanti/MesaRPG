@@ -1868,6 +1868,7 @@ export function MechLabView() {
       'Kintaro', 'Kodiak', 'Locust', 'Longbow', 'Marauder', 'Marauder II', 'Mauler', 'Nightstar',
       'Orion', 'Panther', 'Phoenix Hawk', 'Quickdraw', 'Raven', 'Rifleman', 'Shadow Hawk', 'Shadow Hawk IIC',
       'Spider', 'Stalker', 'Thunderbolt', 'Trebuchet', 'UrbanMech', 'Victor', 'Vindicator', 'Viper',
+      'Vulcan', 'Wolfhound', 'Zeus',
     ])
     listMechChassis()
       .then((all) => setChassisOptions(all.filter((c) => READY_CHASSIS.has(c.chassis))))
