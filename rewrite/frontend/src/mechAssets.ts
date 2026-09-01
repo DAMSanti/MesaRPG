@@ -501,6 +501,67 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       '(Standard)', '10', '11', '2', '3', '4', '5', '6', '7', '8', '9',
     ].map((model) => [model, `${MECHS_DIR}/ShadowHawkIIC.glb`])),
   },
+  Spider: {
+    placeholder: `${MECHS_DIR}/Spider.glb`,
+    models: Object.fromEntries([
+      'SDR-10K', 'SDR-5D', 'SDR-5K', 'SDR-5V', 'SDR-7K', 'SDR-7K2', 'SDR-7KC',
+      'SDR-7Kr', 'SDR-7M', 'SDR-8K', 'SDR-8M', 'SDR-8R', 'SDR-8X', 'SDR-8Xr',
+      'SDR-9M', 'SDR-C',
+    ].map((model) => [model, `${MECHS_DIR}/Spider.glb`])),
+  },
+  Stalker: {
+    placeholder: `${MECHS_DIR}/Stalker.glb`,
+    models: Object.fromEntries([
+      'STK-3F', 'STK-3F (Jagawen)', 'STK-3F (Jamison)', 'STK-3Fb', 'STK-3Fk',
+      'STK-3H', 'STK-4N', 'STK-4P', 'STK-5M', 'STK-5S', 'STK-6M', 'STK-7C3BS',
+      'STK-7D', 'STK-9F',
+    ].map((model) => [model, `${MECHS_DIR}/Stalker.glb`])),
+  },
+  Thunderbolt: {
+    placeholder: `${MECHS_DIR}/Thunderbolt.glb`,
+    models: Object.fromEntries([
+      'C', 'C 2', 'TDR-10M', 'TDR-10M (Ilyena)', 'TDR-10M (Salazar)', 'TDR-10S',
+      'TDR-10SE', 'TDR-11S', 'TDR-11SE', 'TDR-12R', 'TDR-17S', 'TDR-1C',
+      'TDR-5D', 'TDR-5S', 'TDR-5S-T (Tallman)', 'TDR-5SE', 'TDR-5SS', 'TDR-5Sb',
+      'TDR-5Sd', 'TDR-60-RLA', 'TDR-7M', 'TDR-7S', 'TDR-7SE', 'TDR-8M', 'TDR-9M',
+      'TDR-9NAIS', 'TDR-9Nr', 'TDR-9S', 'TDR-9SE', 'TDR-9T', 'TDR-9W',
+    ].map((model) => [model, `${MECHS_DIR}/Thunderbolt.glb`])),
+  },
+  Trebuchet: {
+    placeholder: `${MECHS_DIR}/Trebuchet.glb`,
+    models: Object.fromEntries([
+      'TBT-3C', 'TBT-5J', 'TBT-5K', 'TBT-5N', 'TBT-5S', 'TBT-7K', 'TBT-7M',
+      'TBT-8B', 'TBT-9K', 'TBT-9N', 'TBT-9R', 'TBT-K7R', 'TBT-XK7',
+    ].map((model) => [model, `${MECHS_DIR}/Trebuchet.glb`])),
+  },
+  UrbanMech: {
+    placeholder: `${MECHS_DIR}/Urbanmech.glb`,
+    models: Object.fromEntries([
+      'UM-AIV', 'UM-R60', 'UM-R60L', 'UM-R63', 'UM-R68', 'UM-R69', 'UM-R70',
+      'UM-R80', 'UM-R93', 'UM-R96',
+    ].map((model) => [model, `${MECHS_DIR}/Urbanmech.glb`])),
+  },
+  Victor: {
+    placeholder: `${MECHS_DIR}/Victor.glb`,
+    models: Object.fromEntries([
+      'C', 'VTR-10D', 'VTR-10L', 'VTR-10S', 'VTR-11D', 'VTR-12D', 'VTR-9A',
+      'VTR-9A1', 'VTR-9B', 'VTR-9B (Li)', 'VTR-9B (Shoji)', 'VTR-9D', 'VTR-9K',
+      'VTR-9K2 (St. James)', 'VTR-9Ka', 'VTR-9S', 'VTR-C', 'VTR-Cr',
+    ].map((model) => [model, `${MECHS_DIR}/Victor.glb`])),
+  },
+  Vindicator: {
+    placeholder: `${MECHS_DIR}/Vindicator.glb`,
+    models: Object.fromEntries([
+      "VND-1AA 'Avenging Angel'", 'VND-1R', 'VND-1R (Vong)', 'VND-1SIC', 'VND-1X',
+      'VND-3L', 'VND-3LD (Dao)', 'VND-3Lr', 'VND-4L', 'VND-5L', 'VND-6L', 'VND-7L',
+    ].map((model) => [model, `${MECHS_DIR}/Vindicator.glb`])),
+  },
+  Viper: {
+    placeholder: `${MECHS_DIR}/Viper.glb`,
+    models: Object.fromEntries([
+      'VP-1', 'VP-5', 'VP-7', 'VP-8', 'VP-9',
+    ].map((model) => [model, `${MECHS_DIR}/Viper.glb`])),
+  },
   Champion: {
     placeholder: `${MECHS_DIR}/Champion.glb`,
     models: Object.fromEntries([

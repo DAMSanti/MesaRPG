@@ -655,13 +655,17 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // matching mesh just falls back to blank, same as any other unmodeled
   // visual (see this table's own doc comment).
   'MML 9': 'missile9', 'MRM 30': 'missile30', 'MRM 20': 'missile20', 'MRM 10': 'missile10',
-  'Thunderbolt 15': 'missile15', 'Thunderbolt 10': 'missile10', 'ATM 6': 'missile6',
+  'Thunderbolt 15': 'missile15', 'Thunderbolt 10': 'missile10', 'Thunderbolt 5': 'missile5', 'ATM 6': 'missile6',
   'Enhanced LRM 10': 'missile10',
   // HVAC/10, Light AC/5 and HAG/30 are stat-only variants of an existing
   // physical barrel family (Hyper-Velocity/Light/Hyper-Assault are rules
   // differences, not a different in-game model) — same reasoning as
   // Light AC/2 above.
-  'HVAC/10': 'ac10', 'Light AC/5': 'ac5', 'HAG/30': 'gauss', 'HAG/20': 'gauss',
+  'HVAC/10': 'ac10', 'Hyper Velocity Auto Cannon/10': 'ac10',
+  'Light AC/5': 'ac5', 'HAG/30': 'gauss', 'HAG/20': 'gauss',
+  // Long Tom Cannon (Victor) is a heavy artillery piece with no distinct
+  // mesh -- reuses the biggest existing autocannon barrel look.
+  'Long Tom Cannon': 'ac20',
   'ATM 3': 'missile3', 'MML 3': 'missile3',
 }
 for (const laser of [
@@ -676,8 +680,9 @@ for (const laser of [
   // other laser variant in this list.
   'Bombast Laser', 'Large Re-engineered Laser', 'Medium Re-engineered Laser',
   // Marauder's real stock loadouts carry Blazer Cannon, an energy-based
-  // cannon with no distinct mesh -- reuses the generic laser look.
-  'Blazer Cannon',
+  // cannon with no distinct mesh -- reuses the generic laser look. Viper's
+  // "Binary Laser (Blazer) Cannon" is the same family under its full name.
+  'Blazer Cannon', 'Binary Laser (Blazer) Cannon',
 ]) WEAPON_VISUAL_BUCKETS[laser] = 'laser'
 
 /** `null` for a weapon this chassis's game art never modeled a distinct
