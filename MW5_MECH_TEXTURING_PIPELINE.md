@@ -1332,3 +1332,130 @@ Node) que de verdad funcionaron para Archer y Assassin, no solo la
 prosa de este documento. Para cada chasis nuevo: guardar copia de sus
 propios scripts finales ahí (o reutilizar los de un chasis ya
 plantilla, editando solo lo específico) antes de darlo por terminado.
+
+### El lote completo de `activos/`: pipeline genérico (`mw5_pipeline_scripts/build_chassis.py`) para 60 chasis + Atlas II aparte
+
+Tras Wolverine confirmar que el pipeline de Archer/Assassin era
+repetible, se generalizó a un único script parametrizado
+(`build_chassis.py -- <Chasis> <Prefijo>`) que aplica TODO lo de este
+documento (pose reset, wrapper sin colisión de nombre, material por
+slot real, metallic capado, centrado por malla con skin) a partir solo
+del nombre del chasis y el prefijo de archivo. Se corrió contra los 65
+chasis de `modelsmw5/activos/` en 8 lotes de 8 (más Atlas II aparte),
+verificando cada uno con: conteo de nodos `chrMdlWeap_` exportados vs.
+armas montadas (detecta el bug del wrapper), consulta a `mech_templates`
+para el catálogo real de armas de cada chasis (detecta huecos en
+`WEAPON_VISUAL_BUCKETS`), y un screenshot Playwright en vivo por chasis
+antes de dar el lote por bueno. Resultado: 60 chasis por el pipeline
+genérico + Atlas II por un pipeline dedicado (ver más abajo) = 64 de
+los 65 (Executioner, MistLynx y Nova no tienen NINGÚN catálogo real en
+`mech_templates` — confirmado, no hay ni una variante jugable — así que
+construirlos no serviría de nada hasta que esos datos existan).
+
+**Bugs reales del script genérico encontrados y arreglados durante el
+lote** (todos ya en `build_chassis.py`, no hace falta repetirlos a
+mano en el siguiente chasis):
+
+- **`--factory-startup` deja el Cube/Camera/Light por defecto de
+  Blender en la escena, y se importan DESPUÉS de ellos** — el primer
+  intento cogía `bpy.data.objects` filtrado por `type=="MESH"` y se
+  quedaba con el Cube por error (Wolverine). Fix: limpiar la escena
+  por defecto ANTES de importar, no después.
+- **Hardpoints con nombre de hueso distinto según el chasis**:
+  `Clavicle_Left/Right`, `Upperarm_Left/Right` (huesos reales,
+  confirmado via introspección de bones), `Missile_Left/Right`
+  (Highlander, sin hueso propio → cae a `Torso_Weapon`),
+  `Shoulder_Left/Right` (Hunchback, sin hueso propio → cae a
+  `Clavicle_*_Weapon`), `Arm_Left/Right` (Shadow Hawk, alias corto de
+  `Forearm_*`). Todos añadidos a `KNOWN_LOCATION_TOKENS`/
+  `BONE_BY_LOCATION`.
+- **Esqueletos asimétricos**: Crusader tiene `Clavicle_Left_Weapon`
+  pero NO `Clavicle_Right_Weapon` (confirmado, aunque sus loadouts
+  reales SÍ usan ese lado) — `BONE_FALLBACK` intenta el hueso hermano
+  más cercano (`Torso_Weapon` para Clavicle, `Forearm_*_Weapon` para
+  Upperarm) en vez de perder el arma.
+- **Nombres de slot de material con variantes reales**: además de
+  `Weapons`/`MissileHead`/`MIssileHead` (typo original), aparecieron
+  `Missilehead` (minúscula), `Arrow`/`ArrowMech`/`ArrowMech_MTI`
+  (Arrow IV), `Geo`, `Missiles` — todos mapeados a la misma
+  `weapons_mat`. Y un slot `"None"` literal (string, no null) que hay
+  que filtrar igual que `_LOD`.
+- **Cuando el JSON de un arma lista MÁS slots de los que el mesh LOD0
+  realmente tiene** (visto en Marauder: `['Weapons','Variant']` pero
+  solo 1 slot real, en cualquier orden), el truncamiento a ciegas daba
+  resultados aleatorios según el arma. Fix: priorizar `"Weapons"` si
+  está presente antes de truncar — el look metálico acierta casi
+  siempre más que la pintura de cuerpo para un cañón de arma.
+- **Carpeta de texturas variable**: la mayoría de chasis usan
+  `Body/Materials/Textures/`, pero Kodiak, JennerIIC, ShadowHawkIIC y
+  Viper (confirmados) usan `Body/Textures/` directamente — el script
+  ahora prueba ambas rutas y usa la que exista.
+- **Resolución de máscara inconsistente dentro del mismo chasis**:
+  Rifleman tiene `Variant_Default_MSK` a 128×128 pero
+  `Variant_Wear_MSK` a 2048×2048 (confirmado); Atlas II tiene su propio
+  `MetalID` a 2048×2048 pero `wear_MSK`/`NRM` a 4096×4096 en las 4
+  regiones. `load_pixels()` ahora acepta un `size` de referencia y
+  reescala con `image.scale()` antes de extraer píxeles en vez de
+  fallar con `ValueError` de broadcast de numpy.
+- **Kodiak no tiene `Variant_Default_MSK` en absoluto** — solo un
+  `variant_metalID` real (sin máscara de pintura por región). El
+  script cae de vuelta a la máscara del `Body` para construir el
+  material `Variant` en vez de fallar con `FileNotFoundError`.
+- **Catálogo de armas con typos y alias reales confirmados vía
+  `mech_templates`**, no inventados: `"PP Cp"` (Griffin, debería ser
+  PPC), `"LBXAC 10"` (Hatamoto-Chi, debería ser LB 10-X AC),
+  `"AC/10p"` (Orion). `WEAPON_VISUAL_BUCKETS` los mapea tal cual en vez
+  de tocar los datos de origen.
+- **Muchas familias de armas sin mesh propio** reutilizan la mecánica
+  ya establecida con Plasma Rifle/MML 5/Light AC/2 (mismo lanzador
+  físico, solo diferencia de stats): HVAC/10→ac10, Light AC/5→ac5,
+  HAG/20 y HAG/30→gauss, Blazer Cannon→laser, Magshot→mg, Long Tom
+  Cannon→ac20, y varios tamaños de misil nuevos (missile3/9/30) cuando
+  existe un mesh real con ese número de tubos en al menos un chasis.
+- **Ganancia real de nombrar bien el chasis en `READY_CHASSIS`**: el
+  nombre canónico real en `mech_templates` a veces difiere del nombre
+  de carpeta en `activos/` (ej. carpeta `Blackknight` → nombre real
+  `"Black Knight"`, con espacio). `mechAssets.ts` ya tenía esto bien
+  resuelto en sus entradas pre-existentes (con comentario explicándolo)
+  — el bug estaba en `READY_CHASSIS`, que usé mal la primera vez.
+  Lección: copiar el nombre EXACTO de `mechAssets.ts` cuando ya existe
+  esa entrada, nunca rederivarlo del nombre de carpeta.
+
+### Atlas II: un pipeline dedicado (`mw5_pipeline_scripts/build_atlas2.py`)
+
+Atlas II (`AS7II`) es un Omnimech Clan de verdad, estructuralmente
+distinto de los otros 60 chasis:
+
+- **Cuerpo en un archivo con nombre de prefijo**, no `<Chasis>_SKM`:
+  `AS7II.uemodel` directamente en `Model/Body/` (confirmado: mesh
+  completo de 184.440 vértices con el mismo esqueleto estándar, no un
+  fragmento).
+- **4 slots de material por región** (`AS_TORSO`/`AS_LEG`/`AS_HIP`/
+  `AS_ARM`), cada uno con su propio `MetalID` real + `MSK` + `NRM` +
+  `wear_MSK`, en vez del par compartido `Body`/`Variant`.
+- **Sin color de pintura real que aplicar**: las 2 skins disponibles
+  (`Metal`, `StarLeague`) sobreescriben `RGBPaintMask` a una textura
+  `Flat_Black` y no definen ningún `PaintColorPrimary/Secondary/
+  Tertiary` — confirmado en el JSON de ambas. La receta honesta es
+  metal genérico uniforme + roughness/metallic real desde el
+  `MetalID` propio de cada región (misma fórmula segura ya probada
+  para el material `Weapons`) + tinte de suciedad real desde el
+  `wear_MSK` propio — sin la mezcla de 3 colores por máscara RGB que
+  usan los demás chasis.
+- **Armas en hardpoints genéricos, no una malla por tipo**: en vez de
+  `Weapon_Mech_AS7II_<loc>_<slot>_<Arma>_SKM`, los archivos son
+  `<loc>_Energy_EH1/EH2` (mismo mesh genérico para CUALQUIER arma de
+  energía) y `<loc>_Ballistic` (ídem, un solo mesh sin ni siquiera
+  número de slot). Confirmado vía el catálogo real completo en
+  `mech_templates` (solo 4 variantes, 9 armas distintas): el mismo
+  mesh se duplica una vez por cada arma real que puede ocupar ese
+  hardpoint (mismos datos de malla vía `mesh.data = base_mesh_data`,
+  objetos distintos con nombre `chrMdlWeap_..._<token>_<slot>`), y el
+  sistema de visibilidad ya existente (que empareja por nombre) elige
+  la copia correcta según el loadout de cada variante — verificado en
+  vivo comparando AS7-D-H (2× ER Large Laser en el mismo brazo) contra
+  AS7-D-H2 (ER PPC en vez de Laser, mismo hardpoint). Las mallas de
+  `Missile<N>`/`Narc` sí son directas (un mesh real por tamaño, igual
+  que en el pipeline genérico) y usan el slot `MissileHead` normal;
+  solo las de Energy/Ballistic usan el slot `AS_ARM` del propio cuerpo
+  (confirmado en su JSON), no un material `Weapons` aparte.
