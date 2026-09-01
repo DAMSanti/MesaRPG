@@ -620,6 +620,24 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // only modeled a plain LMG barrel). Same "shares the physical launcher,
   // stat-only difference" reasoning as Plasma Rifle/MML 5/Light AC/2 above.
   'Light Machine Gun Array': 'lmg',
+  // Catapult's own weapon set models a real distinct Arrow IV mesh
+  // ("Arrowiv") with its own dedicated material slot name ("Arrow", not
+  // "Weapons") — confirmed via its own _SKM.json. Atlas's stock loadout
+  // carries the same weapon under the shorter catalog name.
+  'Arrow IV System': 'arrowiv', 'Arrow IV': 'arrowiv',
+  // Real numbered-tube meshes confirmed present in at least one chassis's
+  // own weapon set (Catapult ships Missile9/Missile30, BattleMaster ships
+  // Missile6/Missile15) — same numeric-tube-count convention as every
+  // other LRM/SRM bucket above. A chassis whose own catalog lacks the
+  // matching mesh just falls back to blank, same as any other unmodeled
+  // visual (see this table's own doc comment).
+  'MML 9': 'missile9', 'MRM 30': 'missile30',
+  'Thunderbolt 15': 'missile15', 'ATM 6': 'missile6',
+  // HVAC/10, Light AC/5 and HAG/30 are stat-only variants of an existing
+  // physical barrel family (Hyper-Velocity/Light/Hyper-Assault are rules
+  // differences, not a different in-game model) — same reasoning as
+  // Light AC/2 above.
+  'HVAC/10': 'ac10', 'Light AC/5': 'ac5', 'HAG/30': 'gauss',
 }
 for (const laser of [
   'Small Laser', 'Medium Laser', 'Large Laser', 'ER Small Laser', 'ER Medium Laser', 'ER Large Laser', 'ER Micro Laser',
@@ -627,6 +645,11 @@ for (const laser of [
   'ER Medium Pulse Laser', 'ER Large Pulse Laser',
   'Small X-Pulse Laser', 'Medium X-Pulse Laser', 'Large X-Pulse Laser',
   'Heavy Small Laser', 'Heavy Medium Laser', 'Heavy Large Laser',
+  // Bombast Laser (Banshee) and Large Re-engineered Laser (Blackjack) are
+  // both single-barrel energy weapons with no distinct mesh of their own
+  // — reuse the shared generic laser bucket, same reasoning as every
+  // other laser variant in this list.
+  'Bombast Laser', 'Large Re-engineered Laser',
 ]) WEAPON_VISUAL_BUCKETS[laser] = 'laser'
 
 /** `null` for a weapon this chassis's game art never modeled a distinct

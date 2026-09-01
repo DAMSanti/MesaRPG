@@ -117,16 +117,21 @@ FILENAME_RE = re.compile(rf"^Weapon_Mech_{PREFIX}_(.+)_SKM\.uemodel$", re.IGNORE
 
 KNOWN_LOCATION_TOKENS = [
     "Forearm_Left", "Forearm_Right", "Torso_Center", "Torso_Left", "Torso_Right", "Torso", "Head",
+    "Clavicle_Left", "Clavicle_Right", "Upperarm_Left", "Upperarm_Right",
 ]
 BONE_BY_LOCATION = {
     "Forearm_Left": "Forearm_Left_Weapon", "Forearm_Right": "Forearm_Right_Weapon",
     "Torso_Center": "Torso_Weapon", "Torso_Left": "Torso_Weapon", "Torso_Right": "Torso_Weapon",
     "Torso": "Torso_Weapon",
     "Head": "Head_Weapon" if "Head_Weapon" in bone_names else "Torso_Head",
+    "Clavicle_Left": "Clavicle_Left_Weapon", "Clavicle_Right": "Clavicle_Right_Weapon",
+    "Upperarm_Left": "Upperarm_Left_Weapon", "Upperarm_Right": "Upperarm_Right_Weapon",
 }
 LOCATION_HINT = {
     "Forearm_Left": "left_arm", "Forearm_Right": "right_arm", "Torso_Center": "center_torso",
     "Torso_Left": "left_torso", "Torso_Right": "right_torso", "Torso": "center_torso", "Head": "head",
+    "Clavicle_Left": "left_shoulder", "Clavicle_Right": "right_shoulder",
+    "Upperarm_Left": "left_arm", "Upperarm_Right": "right_arm",
 }
 LOCATIONS_SORTED = sorted(BONE_BY_LOCATION.keys(), key=len, reverse=True)
 
@@ -461,7 +466,7 @@ print("Weapons material built")
 # --- Assign every weapon's material slots by REAL name (never by index) ---
 NAME_TO_MATERIAL = {
     "Variant": variant_mat, "Body": variant_mat,
-    "Weapons": weapons_mat, "MissileHead": weapons_mat, "MIssileHead": weapons_mat,
+    "Weapons": weapons_mat, "MissileHead": weapons_mat, "MIssileHead": weapons_mat, "Arrow": weapons_mat,
 }
 assigned = 0
 assign_errors = []
@@ -480,7 +485,7 @@ for o in list(bpy.data.objects):
         continue
     with open(json_path, encoding="utf-8") as f:
         wdata = json.load(f)
-    slot_names = [s["MaterialSlotName"] for s in wdata[0]["SkeletalMaterials"] if not s["MaterialSlotName"].endswith("_LOD")]
+    slot_names = [s["MaterialSlotName"] for s in wdata[0]["SkeletalMaterials"] if not s["MaterialSlotName"].endswith("_LOD") and s["MaterialSlotName"] != "None"]
     seen = []
     for n in slot_names:
         if n not in seen:
