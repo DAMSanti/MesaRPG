@@ -582,6 +582,12 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'ZEU-6S', 'ZEU-6T', 'ZEU-6Y', 'ZEU-9S', 'ZEU-9S-DC', 'ZEU-9S2', 'ZEU-9T',
     ].map((model) => [model, `${MECHS_DIR}/Zeus.glb`])),
   },
+  'Atlas II': {
+    placeholder: `${MECHS_DIR}/AtlasII.glb`,
+    models: Object.fromEntries([
+      'AS7-D-H', 'AS7-D-H (Kerensky)', 'AS7-D-H2', 'AS7-DK-H',
+    ].map((model) => [model, `${MECHS_DIR}/AtlasII.glb`])),
+  },
   Champion: {
     placeholder: `${MECHS_DIR}/Champion.glb`,
     models: Object.fromEntries([
