@@ -1857,8 +1857,10 @@ export function MechLabView() {
     // mechlab menos bushwacker" — narrows THIS dropdown only, not the
     // shared MECH_CHASSIS_ASSETS registry itself (that one also drives
     // TableView/GMView mech spawning, which still needs every chassis).
+    // Annihilator added once it finished the same full pipeline pass.
+    const READY_CHASSIS = new Set(['Bushwacker', 'Annihilator'])
     listMechChassis()
-      .then((all) => setChassisOptions(all.filter((c) => c.chassis === 'Bushwacker')))
+      .then((all) => setChassisOptions(all.filter((c) => READY_CHASSIS.has(c.chassis))))
       .catch(() => {})
     listMechAnnotations().then(setAllAnnotations).catch(() => {})
     listMechAnnotationReview()

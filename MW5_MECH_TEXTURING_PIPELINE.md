@@ -5,6 +5,13 @@ llevado a producción, sustituyendo el placeholder HBS). Estos modelos van
 a sustituir a los actuales; esto es la referencia para repetir el proceso
 en el resto del roster sin volver a descubrir todo esto por las bravas.
 
+**`rewrite/frontend/public/models/mechs/legacy/` está OBSOLETO.** Son los
+`.glb` viejos (pipeline placeholder-tier o hand-authored anterior a este
+documento), movidos ahí solo para no confundirlos con los curados —
+NUNCA arrancar un chasis nuevo desde ahí. La única fuente real para
+CUALQUIER chasis nuevo es `modelsmw5/activos/<Chasis>/` (ver sección 2
+para la organización completa en `activos/`/`extra/`/`_Common`).
+
 ## 0. Resumen del pipeline completo
 
 1. FModel exporta el chasis en modo **UEFormat** desde el juego a `Output/Exports/`.
@@ -37,6 +44,38 @@ canónicas, gestiona `_common` y la carpeta `Clans`). Reusar tal cual —
 el único bug real que tuvo fue no expandir el prefijo `DLCx/Objects/Mechs`
 correctamente; si se toca, verificar que arrastra TODO el contenido de cada
 DLC, no solo `Objects` (base game).
+
+**Estructura real desde esta sesión**: `modelsmw5/` tiene DOS subcarpetas
+de chasis, no una carpeta plana:
+
+- `modelsmw5/activos/<Chasis>/` — chasis con ficha real en `mech_templates`
+  (comparado por nombre normalizado contra la base de datos, incluyendo
+  los pares nombre-clan/designación-IS conocidos: `MistLynx`↔`Koshi`,
+  `Nova`↔`Black Hawk`, `Executioner`↔`Gladiator`). Estos son los únicos
+  que tiene sentido llevar por el pipeline completo — sin ficha no hay
+  con qué jugarlos.
+- `modelsmw5/extra/<Chasis>/` — el resto (mayoría Clan sin ficha
+  sincronizada: Adder, DireWolf, Ebonjaguar, FireMoth, Gargoyle,
+  Hellbringer, Incubus, KitFox, Maddog, Naga, Nightgyr, ShadowCat,
+  Stormcrow, Summoner, Sunder, TimberWolf, Warhawk; más Bullshark,
+  Corsair, Linebacker, Roughneck sin match encontrado bajo ningún
+  nombre alterno; y `Tutorial`, que no es un chasis real).
+- `modelsmw5/_Common/` se queda en la raíz, FUERA de ambas — lo
+  referencian `.blend` de chasis en cualquiera de las dos carpetas
+  (rutas absolutas, ver más abajo), moverlo rompería los enlaces de
+  todos a la vez.
+
+**Trampa real si se re-organiza esto otra vez**: Blender guarda las rutas
+de imagen EXTERNAS como rutas ABSOLUTAS (confirmado inspeccionando
+`Bushwacker.blend` con `bpy` — `D:\Portfolio\mesa\MesaRPG\modelsmw5\
+Bushwacker\...`, no rutas relativas `//`). Mover la carpeta de un chasis
+que YA tiene `.blend` con texturas importadas (cualquiera bajo
+`activos/` con trabajo real, no solo el placeholder) sin re-enlazar dejó
+esas imágenes en rojo/perdidas. Fix real usado (headless, sin abrir la
+UI): recorrer `bpy.data.images`, para cada `img.filepath` que empiece por
+el prefijo viejo sustituirlo por el nuevo, comprobar con
+`bpy.path.abspath()` + `os.path.exists()` que ninguna queda perdida, y
+`bpy.ops.wm.save_as_mainfile()` para persistir.
 
 ## 3. Import en Blender
 
@@ -199,6 +238,29 @@ por texel. Cada chasis/zona tiene el suyo propio
 `Clan_Generic_Wear_MSK` para armas) — no compartir entre zonas sin
 comprobar que tienen señal real (`Clan_Generic_Wear_MSK` tenía B en
 0 total en un caso, hay que medir antes de asumir).
+
+**El wear mask NO se aplica oscureciendo el color existente — se
+aplica MEZCLANDO hacia un color de suciedad real.** Confirmado dos
+veces (Bushwacker primero, Annihilator después, mismo error repetido
+dos veces): un primer intento en cada chasis oscureció el color base
+multiplicándolo por `(1 - wear*0.3)` — técnicamente "aplica el mask",
+pero el resultado es casi imperceptible y el usuario lo reportó como
+"no veo la capa de suciedad" en AMBOS chasis. La receta real que sí
+se ve (encontrada en `fix_lighting_response_and_dirt.py` de
+Bushwacker): mezclar (`MIX`, no `MULTIPLY`) el color base hacia un
+tono de suciedad real —
+```python
+DIRT_TINT = (0.10, 0.085, 0.065)  # marrón sucio, en espacio LINEAL
+wear_amount = max(canal_G, canal_B) * 0.5  # 0.5 = intensidad, ajustable
+resultado = color_base * (1 - wear_amount) + DIRT_TINT * wear_amount
+```
+— en espacio LINEAL (si el color base sale de un PNG guardado en sRGB,
+decodificar antes de mezclar y volver a codificar sRGB al guardar).
+Aplicar esto tanto al Body como al Variant (mismo mask, mismo patrón,
+solo cambia qué `<Chasis>_*_Wear_MSK` se usa). **Para el siguiente
+chasis: aplicar la mezcla-hacia-color desde el principio, no la versión
+oscurecer-por-multiplicación** — ahorra tener que volver a rehacerlo
+después de que el usuario lo note.
 
 ### Dónde está cada textura en disco (rutas reales usadas en Bushwacker)
 
@@ -462,14 +524,44 @@ el sistema de visibilidad oculta TODAS las armas por defecto (contrato:
     editor — ver sección 13 completa (material real, qué es la textura
     `_Window_MSK`, y el fix de re-parenting) antes de darlo por perdido
     y ocultarlo sin más como Bushwacker.
+9c. **Justo antes de exportar** (después de montar TODAS las armas Y
+    TODAS las animaciones): resetear el esqueleto principal a rest pose
+    de verdad (`bpy.ops.pose.transforms_clear()` con todos los huesos
+    seleccionados) — importar animaciones deja huesos con pose residual
+    aunque el active action esté a `None` y las NLA tracks muteadas. Ver
+    12b, es el bug más caro de esta sesión y NO se nota mirando el
+    `.blend` en Blender (solo comparando contra el `.glb` exportado).
 10. Exportar `.glb`, decodificar el JSON del glTF resultante y verificar
     a mano que cada material tiene `baseColorTexture`/
     `metallicRoughnessTexture`/`normalTexture` reales y no un fallback
     plano sospechoso.
+10b. **Verificación de posición obligatoria**: comparar, para cada arma,
+    la posición mundial calculada directamente en el `.blend` fuente
+    contra la misma malla reabierta desde el `.glb` recién exportado en
+    una escena de Blender nueva — diferencia media esperada < 0.1
+    unidades. Ver la receta completa en 12b. NO fiarse de que "en
+    Blender se ve bien" — ese es precisamente el síntoma del bug 12b.
+10c. **Verificación de nombres obligatoria**: contar cuántos nodos del
+    `.glb` exportado tienen un nombre que empieza por el prefijo de arma
+    (`chrMdlWeap_<Chasis>`) y comprobar que coincide EXACTAMENTE con el
+    número real de armas montadas — un múltiplo (×2, ×3...) es la firma
+    del bug de la sección "BUG CRÍTICO Nº2" más abajo (el wrapper-mini-
+    armature de cada arma comparte el prefijo con su malla).
 11. Medir luminancia de cada textura de color final y compararla con el
     Body ya calibrado, en vez de ajustar a ojo.
 12. Sincronizar `mech_templates` para todas las variantes reales del
     chasis, y confirmar que HexMap/FirstPersonView reciben `mechs`.
+12b. **Probar CADA variante real del chasis en MechLab, no solo la
+    primera** (Annihilator tiene 12 variantes ANH-1A…C-2, todas con
+    loadouts distintos) — un nombre de arma real del catálogo
+    (`app/systems/battletech/weapons.py`) sin entrada exacta en
+    `WEAPON_VISUAL_BUCKETS` (`Mech3D.tsx`) deja ESE mount concreto
+    siempre oculto/en blanco sin avisar, pero solo se nota si esa
+    variante concreta se prueba. Extraer el set de nombres de arma
+    reales que usa el chasis nuevo (consultar `mech_templates` en
+    `mesarpg.db`) y cruzarlo contra las claves de `WEAPON_VISUAL_BUCKETS`
+    ANTES de dar el chasis por terminado, no confiar en probar una sola
+    variante al azar.
 13. Si el chasis trae animaciones propias, revisar la sección 12
     (Animaciones) antes de darlas por conectadas.
 14. **Minificar el `.glb` antes de darlo por terminado** (sección 14) —
@@ -529,6 +621,78 @@ asumir que "ya funciona":**
   `Yaw` — comprobar qué zonas/ejes trae realmente el chasis nuevo antes de
   asumir que cubre las mismas combinaciones que Bushwacker (Bushwacker no
   tiene reacción de impacto para brazos, por ejemplo).
+
+### 12b. BUG CRÍTICO: importar animaciones deja el esqueleto "congelado" en una pose intermedia — resetear a rest ANTES de exportar
+
+**El bug más caro encontrado en toda la sesión de Annihilator** (horas de
+investigación equivocada: se sospechó primero de un problema de
+texturas/slots de material, luego de la jerarquía de huesos internos del
+arma, luego de un bug de exportación de skinning — ninguna de las tres
+era la causa real).
+
+**Síntoma real**: las armas se ven bien colocadas en el propio `.blend`
+(Blender evalúa la pose EN VIVO y el resultado parece perfecto), pero al
+exportar a `.glb` y volver a abrirlo (en Blender limpio, en three.js, en
+MechLab — da igual el visor) las armas aparecen desplazadas varios
+metros de su sitio real, peor cuanto más lejos esté su hueso de montaje
+del `Root` en la cadena cinemática (brazos ~12 unidades mal, torso ~2
+unidades mal, con un chasis de referencia de ~12 unidades de ancho —
+un desplazamiento MASIVO, no un matiz).
+
+**Causa real**: `armature.animation_data.action = None` (usado tras
+importar cada `.ueanim` para no pisar la siguiente animación —
+ver punto 12/sección de animaciones) **detiene la evaluación** de esa
+acción pero **NO resetea los valores de pose** de los huesos
+(`pose_bone.location` / `pose_bone.rotation_quaternion`) a la identidad.
+Importar ~87 animaciones una detrás de otra, cada una dejando el hueso en
+el último frame que tocó, termina con el esqueleto "congelado" en una
+pose intermedia real (rodillas dobladas, cadera rotada — confirmado con
+huesos de PIERNA con rotación de pose no nula, que no tienen nada que
+ver con brazos/armas, prueba de que es un problema del esqueleto entero,
+no de las armas en sí). Mutear los NLA tracks (`track.mute = True`,
+igual que hace el script de Bushwacker) **NO arregla esto** — el
+problema no es qué track está activo, es que los VALORES de pose de cada
+hueso individual quedaron sucios independientemente de las NLA tracks.
+
+El cuerpo (skinned mesh) se ve idéntico en `.blend` y `.glb` a pesar de
+esto porque el skinning siempre resuelve correctamente contra la bind
+pose, sea cual sea la pose actual — el bug solo afecta a objetos
+bone-parented de forma zero-offset (las armas), cuya posición final SÍ
+depende de qué pose tenga el hueso destino en el momento de
+evaluar/exportar.
+
+**Fix aplicado** (una sola vez, tras montar TODAS las armas y TODAS las
+animaciones, justo antes de exportar):
+```python
+bpy.context.view_layer.objects.active = armature
+bpy.ops.object.mode_set(mode="POSE")
+bpy.ops.pose.select_all(action="SELECT")
+bpy.ops.pose.transforms_clear()
+bpy.ops.object.mode_set(mode="OBJECT")
+```
+Verificar con 0 huesos de pose no-identidad antes de exportar (recorrer
+`armature.pose.bones`, comprobar `location`/`rotation_quaternion` contra
+identidad).
+
+**Para el siguiente chasis**: añadir este paso al script de importación
+ESTÁNDAR, inmediatamente después del bloque de importación de
+animaciones (punto 4b del pipeline) y antes de guardar/exportar — no
+esperar a que aparezca el síntoma. Si alguna corrección manual de
+posición de arma (tipo la del hardpoint de cabeza, ver más abajo) se
+calculó ANTES de este reset usando `pose_bone.matrix` (pose actual, no
+rest), hay que recalcularla DESPUÉS del reset, contra la pose ya limpia
+— si no, esa corrección concreta queda desfasada por el mismo tipo de
+error a menor escala.
+
+**Cómo verificar que NO está pasando** (antes de dar un chasis por
+exportado): comparar la posición mundial de cada malla de arma calculada
+DIRECTAMENTE en el `.blend` contra la misma malla reabierta desde el
+`.glb` recién exportado en una escena de Blender limpia — deben coincidir
+casi exactamente (diferencia media < 0.1 unidades en este pipeline). Si
+hay una discrepancia sistemática que crece con la distancia del hueso al
+Root, es este bug. Confiar en el propio `.blend` como "se ve bien" NO es
+suficiente — el bug es precisamente que el `.blend` se ve bien y el
+`.glb` no.
 
 ## 13. Cristal de la cabina (`_CockpitGlass`) — por qué NO se renderiza y qué hacer con el siguiente chasis
 
@@ -756,3 +920,400 @@ anterior (bug real encontrado esta sesión, perdió tiempo real).
    todos los cañones" sigue encontrando puntos razonables, pestaña "Ver
    rig" carga el esqueleto y la lista de animaciones sin errores de
    consola.
+
+## 15. Segundo chasis (Annihilator): qué confirma que el pipeline es repetible, y qué hay que vigilar
+
+Annihilator fue el primer chasis que repitió el pipeline completo desde
+cero después de Bushwacker, expresamente para comprobar que la receta
+documentada no era una solución ad-hoc de un solo chasis. Resultado:
+repetible tal cual, con estas puntualizaciones nuevas.
+
+### El parenteo de armas es SIEMPRE zero-offset — "Keep Transform" es la trampa equivocada
+
+El punto 3 ("Montaje de armas") ya describe el parenteo correcto
+(`parent_type="BONE"`, sin tocar nada más), pero merece decirlo
+explícito porque es fácil caer en la trampa: **NO** calcular
+`matrix_parent_inverse` para "conservar la posición de mundo actual del
+arma" (la operación estándar "Keep Transform" de Blender). Se probó
+directamente en Annihilator y colapsa TODAS las armas a
+aproximadamente el origen del mundo tras guardar y recargar el archivo
+(funciona de forma engañosa en la MISMA sesión por el caché del grafo de
+dependencias, y falla solo al reabrir — fácil de no detectar si no se
+verifica con guardar+reabrir).
+
+La razón real: la malla de cada arma NO trae su posición ya en espacio
+de mundo del mech completo — la trae relativa a su propio punto de
+montaje (offsets pequeños tipo "el hueso `Fire00` está unos metros de su
+propio origen de objeto"). Parentear con el offset a CERO (matriz
+inversa identidad, el comportamiento por defecto de Blender al
+parentear) hace que ese offset pequeño se SUME a la posición real del
+hueso destino — que es exactamente lo que se necesita. Confirmado
+midiendo directamente el bounding box de los vértices del arma montada
+contra la posición del propio hueso destino.
+
+### Huesos de montaje que NO son un `_Weapon` dedicado necesitan corrección manual por eje
+
+Los huesos `*_Weapon` (`Forearm_Left_Weapon`, `Torso_Weapon`, etc.) están
+diseñados para que el parenteo zero-offset caiga exactamente en su
+sitio. Pero no todos los hardpoints tienen uno — Annihilator no tiene
+`Head_Weapon`, así que sus armas de cabeza se montaron en `Torso_Head`,
+que es un hueso esquelético normal (una articulación real, no un punto
+de montaje pensado para esto). Resultado: las armas de cabeza aparecían
+flotando lejos del modelo.
+
+Técnica que funcionó (repetible para el próximo caso similar):
+1. Medir la malla del cuerpo cerca de la zona real donde debería estar
+   el arma (ej. los vértices con Z más alta para la cabeza) y comparar
+   contra la posición sin corregir del arma — la diferencia por eje es
+   el offset a aplicar.
+2. Aplicar la corrección en ESPACIO DE MUNDO, no escribiendo directo a
+   `.location` (que está en espacio de la cola del hueso, no de mundo):
+   ```python
+   bone_world = armature.matrix_world @ pose_bone.matrix
+   desired_world = root_obj.matrix_world.copy()
+   desired_world.translation.z += offset_z  # etc, por eje
+   root_obj.matrix_basis = bone_world.inverted() @ desired_world
+   ```
+3. **Corregir un eje a la vez cuando el usuario da feedback direccional
+   específico** ("está a la altura correcta pero desplazado a un lado").
+   Recalcular los dos ejes desde cero en ese punto arriesga romper el eje
+   que ya estaba bien — aislar y tocar solo el eje señalado.
+4. Verificar con render ortográfico frontal Y lateral, no solo
+   comprobación numérica — un offset "numéricamente plausible" salió
+   visualmente mal en un primer intento aquí.
+
+### El material del slot `Weapons` SIEMPRE necesita la receta real de MetalID — nunca un valor plano
+
+Repitiendo lo del punto 7: el slot `Weapons` de cada arma no es "gris
+metálico genérico" — es el mismo material compartido
+`Clan_Generic_MetalID.png` + `Weapon_Clan_MTI.json` de siempre (ver
+punto 4). La primera pasada de Annihilator usó un valor plano
+(`roughness=0.45, metallic=0.85` fijos) como atajo "por ahora" — quedó
+visualmente sin ningún detalle/variación y no coincidía con el propio
+material `Bushwacker_Weapon` ya construido con la receta real. Se
+corrigió reconstruyendo el nodo con el mismo patrón exacto que
+Bushwacker (`SeparateColor` sobre `Clan_Generic_MetalID` → dos
+`ShaderNodeMath` de tipo `MULTIPLY_ADD` para Roughness/Metallic,
+LERP(Gun Metal, Black Metal) y LERP(Black Metal, Base Metal)
+respectivamente, + `Clan_Generic_Wear_MSK` sumando un poco de rugosidad,
++ `Clan_Generic_NRM` para el normal) — **usando solo nodos `Math`
+después de `SeparateColor`, nunca un `Mix`**, porque un `Mix` en esa
+cadena hace que el auto-bake de Roughness/Metallic de `io_scene_gltf2`
+caiga en silencio al textura original sin mezclar (confirmado ya con
+Bushwacker, se repite aquí). Verificado tras exportar: el material
+`Annihilator_Weapons` resultante SÍ trae un `metallicRoughnessTexture`
+real (`Clan_Generic_MetalID`, factores en 1.0 = "usar la textura tal
+cual"), no un valor plano.
+
+**Regla para el checklist del punto 11**: si al montar armas de un
+chasis nuevo se toma un atajo de material "por ahora, ya lo afino
+después", NO dar el chasis por terminado sin volver a por ese atajo —
+es fácil que se quede así permanentemente si no se compara
+explícitamente contra el material ya construido de un chasis anterior.
+
+### Sin `MetalID` real para Body/Variant no significa "roughness/metallic planos" — derivar uno del propio RGBPaintMask
+
+Corrección importante al punto siguiente: que un chasis no traiga un
+`_metalID` real para Body/Variant (caso real, ver más abajo) NO es
+excusa para dejar Roughness/Metallic en un valor plano único para TODA
+la malla — eso es exactamente lo que hizo la primera pasada de
+Annihilator (roughness=0.6/metallic=0.3 fijos) y es la diferencia
+visual más obvia con Bushwacker (que sí tiene su propio
+`Bushwacker_body_metalID.png` real, wireado directo a Roughness/
+Metallic — confirmado inspeccionando el `.blend` de Bushwacker
+directamente: `bsdf.inputs['Roughness'].is_linked == True`, NO un
+valor por defecto). El resultado plano se nota inmediatamente al lado
+del otro chasis — sin variación de brillo entre pintura y metal
+desnudo, todo con la misma respuesta especular.
+
+Fix real (sin datos MetalID que usar): reutilizar el mismo
+`RGBPaintMask` que ya construye el color (R/G/B = Primary/Secondary/
+Tertiary, sobrante = metal genérico) para generar TAMBIÉN un mapa de
+Roughness y otro de Metallic, asignando un valor distinto por región —
+pintura más mate (roughness alto, metallic bajo), sobrante de metal
+más brillante (roughness bajo, metallic más alto). No reproduce los
+datos reales de MW5 (que no existen para este chasis), pero da
+variación real por región en vez de un valor uniforme, y usa exactamente
+las mismas fronteras de máscara que el color ya usa — consistente por
+construcción. Aplicar a Body Y Variant por igual.
+
+**Para el siguiente chasis**: comprobar SIEMPRE si `Roughness`/
+`Metallic` del `Body`/`Variant` del chasis de referencia (Bushwacker)
+están linkeados a una textura real o son un valor por defecto, antes de
+decidir si el chasis nuevo necesita esta receta de respaldo — si el
+chasis nuevo SÍ trae su propio MetalID real, usar ese en vez de
+derivarlo del PaintMask.
+
+**Trampa real al derivar el mapa de Metallic — CONFLICTO sin solución limpia todavía**:
+la app usa el propio VALOR del canal Metallic ya horneado como señal
+de "maskWeight" para sus sliders "Textura" en vivo
+(`applyMechPbrMaskPatch` en `Mech3D.tsx` — `mix(pintado, metalDesnudo,
+maskWeight)`, maskWeight = metalness muestreado). Esto crea una
+tensión real sin solución limpia: el MISMO canal sirve a la vez de (a)
+valor de render real (determina cuánto brilla ese texel) y (b) señal
+de qué slider debería controlarlo.
+
+- Un primer intento usó Metallic demasiado JUNTO entre región pintada
+  y sobrante (0.15 vs 0.55) — el "maskWeight" nunca llegaba a un
+  extremo limpio en ningún texel, así que los sliders "Cuerpo general"
+  y "fuera de máscara" se mezclaban en TODAS partes en vez de
+  controlar zonas separadas (reportado: "los sliders... editan la
+  misma zona").
+- El intento de arreglarlo separando mucho los extremos (0.04 / 0.92,
+  imitando el contraste casi binario del MetalID real de Bushwacker)
+  **reventó a blanco plano regiones grandes del cuerpo** (hombros,
+  pecho, botas) bajo la iluminación plana de la app — la MISMA causa
+  raíz que el reventón de las armas (metalicidad alta sin mapa de
+  entorno), solo que esta vez en Body/Variant. Reportado: "esta peor
+  imposible".
+- Se revirtió a un rango estrecho y seguro (0.10–0.35) — visualmente
+  correcto, SIN el reventón, pero vuelve a dejar el "maskWeight" poco
+  diferenciado (mismo problema que el primer intento, sliders
+  probablemente se solapan de nuevo). **Sacrificado a propósito**:
+  prioridad real > separación de sliders del panel de desarrollo.
+
+**Para el siguiente chasis, si aparece el mismo dilema**: no hay
+todavía una single-texture-channel que resuelva ambos objetivos a la
+vez. Posibles vías a explorar (ninguna probada en este pipeline
+todavía): (1) mantener Metallic en rango seguro para el render y NO
+intentar separar los sliders vía este canal — aceptar que "fuera de
+máscara" no será perfectamente independiente en chasis sin MetalID
+real; (2) revisar si `applyMechPbrMaskPatch` podría leer una señal de
+máscara de OTRO canal (ej. el alpha del mismo PNG, o un canal de la
+textura de Roughness) en vez de depender de Metallic — cambio de
+código en `Mech3D.tsx`, no solo de datos, fuera del alcance de este
+pipeline de importación. Verificar SIEMPRE en vivo en MechLab tras
+cualquier cambio a este mapa — el render de Blender no predice de
+forma fiable el reventón (ver la nota de verificación más abajo).
+
+### `_Default_SKN.json` sin `MetalID` para Body/Variant es un caso real, no un error de export
+
+Annihilator no tiene ni el parámetro `MetalID` en su SKN ni el archivo
+en disco para Body/Variant (a diferencia de Bushwacker, que sí lo
+tenía). Sí tiene `EMS` (emissive), que Bushwacker no usó. La receta de
+Body/Variant (punto 4: RGBPaintMask + 3 colores + sobrante a metal
+genérico + Wear) no depende de MetalID para nada, así que no hace falta
+ningún cambio — simplemente no hay un canal de rugosidad/metal por zona
+que ajustar más allá del roughness/metallic fijo del material final.
+Confirmar con el SKN real de cada chasis nuevo qué parámetros trae antes
+de asumir que todos tienen los mismos.
+
+### Bake numpy (Patrón B) necesita aplicar sRGB a mano — Cycles ya lo hace solo
+
+Al hornear con Cycles (`bpy.ops.object.bake(type='EMIT')` + `.save()`)
+el PNG de 8 bits sale con la codificación sRGB aplicada automáticamente.
+Escribir píxeles directamente con
+`image.pixels.foreach_set()` + `.save()` (el Patrón B para materiales
+compartidos entre muchas mallas con UVs distintos, ver punto 5) **NO**
+hace esa conversión — un valor lineal `0.2117` de entrada sale
+literalmente `0.2117` en el PNG guardado, sin más. Si los dos patrones
+se usan en el mismo chasis (Body horneado con Cycles, Variant horneado
+con numpy, como en Annihilator) y no se corrige, el resultado numpy sale
+visiblemente más oscuro/apagado que el resultado Cycles aunque partan
+de los mismos colores de entrada. Corrección: aplicar la curva OETF
+sRGB estándar a mano antes de escribir:
+```python
+def linear_to_srgb(c):
+    c = np.clip(c, 0.0, 1.0)
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1/2.4) - 0.055)
+```
+
+### Objeto `Cube` por defecto de Blender colándose en la exportación
+
+Al crear un `.blend` nuevo desde cero (`bpy.ops.wm.save_as_mainfile` sin
+partir de un archivo existente), la escena de arranque trae su propio
+cubo por defecto (`Cube`) que sobrevive a todos los imports posteriores
+si no se borra explícitamente — apareció como una malla suelta más en
+el glTF exportado. Revisar `bpy.data.objects` en busca de objetos
+huérfanos del setup por defecto (`Cube`, `Light`, `Camera` si el propio
+script no los creó) antes del export final, no solo confiar en que el
+import los habrá sustituido.
+
+### El orden real de los slots de material de un arma varía por arma — leer `MaterialSlotName` del JSON, nunca asumir por índice
+
+Cada `_SKM.json` de arma trae `SkeletalMaterials[i].MaterialSlotName`
+con el nombre REAL de cada slot (`"Body"`, `"Variant"`, `"Weapons"`,
+`"MissileHead"`, más sus gemelos `_LOD` que no generan slot propio en
+Blender al importar LOD0 — filtrar cualquier nombre que termine en
+`_LOD` y el recuento restante coincide exactamente con
+`len(mesh.material_slots)`). Asumir "slot 0 siempre es
+Variant/pintura, slot 1 siempre es Weapons/metal" (lo que hizo la
+primera pasada de Annihilator) es **falso en general**: hay armas con
+UN solo slot que es `"Weapons"` puro (sin zona pintada), con dos slots
+en el orden `Variant, Weapons` o al revés, con `Body, Variant`, y con
+`Variant, MissileHead` (la cabeza del misil, sin textura propia — se
+trató igual que `Weapons`, metal desnudo genérico, ya que siempre
+aparece junto a `Variant` y nunca sola). Asignar por índice fijo pinta
+el metal desnudo con la textura de camuflaje (o viceversa) en cualquier
+arma cuyo orden real no coincida con la suposición — sale plano/blanco
+sin textura reconocible. Recorrer el JSON real de cada arma y mapear por
+NOMBRE es la única forma fiable; ver el recuento de combinaciones reales
+en Annihilator (`Weapons` sola, `Variant+Weapons`, `Body+Variant`,
+`Variant+MissileHead`, `Body` sola) para dimensionar cuántos casos hay
+que cubrir.
+
+### BUG CRÍTICO Nº2: el wrapper-armature de cada arma NUNCA debe llevar el prefijo `chrMdlWeap_` — solo la malla
+
+**El segundo bug más caro de la sesión**, encontrado DESPUÉS de arreglar
+12b (pose congelada) — con la posición ya arreglada, los modelos seguían
+sin mostrar NINGÚN arma en MechLab a pesar de que la ficha lateral
+(datos del backend, `getMechImport`) listaba el loadout real
+perfectamente. Sospechar primero de un mismatch de nombres de arma
+reales (`WEAPON_VISUAL_BUCKETS`, ver el hallazgo de `Light AC/2` más
+abajo) es razonable pero NO es esto — un mismatch de bucket deja el
+mount sin reclamar (se queda en su "blank"/tapa por defecto, las DEMÁS
+armas equipadas siguen mostrándose bien). Esto es distinto: **NINGÚN**
+arma se mostraba, en NINGÚN modelo.
+
+**Causa real**: cada arma en Blender son DOS objetos — el wrapper
+(la mini-armature, importada como raíz sin padre) y su malla hija. La
+convención de nombres (`chrMdlWeap_<chasis>_<localización>_<visual>_
+<slot>`) debe ir SOLO en uno de los dos (a criterio, Bushwacker lo pone
+en la malla), y el otro debe llevar un nombre que la app NO reconozca en
+absoluto. Un intento de arreglo intermedio en Annihilator renombró el
+wrapper a `chrMdlWeap_..._rig` — el sufijo `_rig` NO evita que seguía
+EMPEZANDO por `chrMdlWeap_`, así que `weaponMountOfMesh` (que hace
+`tokens.find(t => knownVisuals.has(t))`, no exige que el nombre termine
+justo ahí) lo seguía reconociendo como una entrada de arma válida, con
+el token de slot contaminado (`"eh1_rig"` en vez de `"eh1"`). Resultado:
+**cada arma registraba DOS entradas en el mapa de mounts** (una limpia
+en la malla, una contaminada en el wrapper) — verificado directamente
+contando nodos `chrMdlWeap_*` en el `.glb` exportado: **432 en vez de
+216** (2 por arma). El slot contaminado (`"eh1_rig"`) nunca lo reclama
+ningún arma real del loadout (ese slot no existe), así que
+`applyMechCombatVisibility` lo deja siempre en su estado por defecto
+`'blank'` → **oculta el wrapper**. Y como el wrapper es el PADRE de la
+malla real en la jerarquía de three.js, ocultar el padre oculta la malla
+hija con él, **sin importar que el propio `.visible` de la malla se
+hubiera puesto correctamente a `true` por su propia entrada limpia** —
+three.js no vuelve a mostrar un hijo cuyo ancestro está oculto.
+
+**Sequía de pistas falsas que causó esto**: el síntoma ("no se ve nada")
+es indistinguible a simple vista de un problema de posición/material, y
+la ficha lateral (que lee datos del backend, no del `.glb`) seguía
+mostrando el loadout real perfectamente — hace parecer que "la app sabe
+qué armas hay" cuando en realidad los dos sistemas (datos de loadout vs.
+geometría 3D) son totalmente independientes y uno puede estar bien
+mientras el otro está roto.
+
+**Fix**: el wrapper NUNCA debe compartir el prefijo reconocido por
+`weaponMountOfMesh`/`WEAPON_VISUAL_BUCKETS`. Renombrarlo a algo
+completamente ajeno a la convención (ej. `WeaponRig_<lo que sea>`, o
+simplemente dejarlo con su nombre de importación crudo sin tocar, que es
+lo que hace Bushwacker) — nunca una variación del propio nombre
+reconocido.
+
+**Cómo verificar que NO está pasando, ANTES de dar un chasis por
+exportado** (paso obligatorio nuevo del checklist, punto 11): contar
+cuántos nodos del `.glb` exportado tienen un nombre que empieza por el
+prefijo `chrMdlWeap_` (o el que use el chasis) y comprobar que coincide
+EXACTAMENTE con el número de armas montadas (216 en Annihilator, no
+432, no ningún otro múltiplo). Un múltiplo exacto (×2, ×3...) es la
+firma de este bug — cada objeto extra en la jerarquía de un arma que
+también matchea el patrón de nombre cuenta como una entrada fantasma
+más.
+
+```python
+# en Node/gltf-transform, contar nodos por prefijo:
+weaponNodes = [n for n in doc.getRoot().listNodes() if n.getName().startswith('chrMdlWeap')]
+assert len(weaponNodes) == NUMERO_REAL_DE_ARMAS_MONTADAS
+```
+
+### El `Clan_Generic_MetalID` real tiene 6 presets, no 4 — y los TRES canales R/G/B son máscaras de región independientes
+
+Corrección a los puntos 4/7 y a la sección 15: el recuento inicial
+("Black Metal", "Gun Metal", "Steel", "Base Metal") estaba incompleto.
+El `Weapon_Clan_MTI.json` real trae AL MENOS 7 presets con
+Roughness/Metallic propios: `Base Metal` (Metallic 0.95), `Black Metal`
+(Roughness 0.7, Metallic 0.06 — el único con metalicidad baja), `Gun
+Metal` (Roughness 0.31 — el más brillante), `Steel` (Roughness 2,
+Metallic 0.95 — clampea a rugosidad máxima), `Matte` (Metallic 0.95),
+`Aluminum` (Roughness 1.6, Metallic 0.95 — también clampea a máxima
+rugosidad), `Anodized` (Metallic 0.95, con su propio `Anodized Color`
+cobrizo). Casi todos rondan Metallic≈0.95 EXCEPTO Black Metal — la
+diferencia visual real entre presets está sobre todo en ROUGHNESS, no
+en metalicidad.
+
+Histograma real de `Clan_Generic_MetalID.png` confirmado: **los TRES
+canales R, G Y B** son máscaras binarias de región (no solo R como se
+asumió en la primera pasada) — el pipeline solo usó el canal R
+(LERP entre 2 de los 7 presets reales), ignorando G y B por completo.
+Un chasis nuevo que necesite reproducir el material de armas con más
+fidelidad tendría que leer los 3 canales y mapear cada uno a su preset
+real correspondiente — no implementado todavía en ningún chasis de este
+pipeline (Bushwacker y Annihilator ambos solo usan R).
+
+### El "Gun Metal" real (R≈0, Roughness 0.31, Metallic 0.95) revienta a blanco plano en esta app — es un problema de ILUMINACIÓN, no de datos
+
+Repitiendo el hallazgo del punto 8 pero con un caso concreto: la app
+(`MechLabView.tsx`) solo tiene `ambientLight`+`directionalLight`, sin
+mapa de entorno. Una región con Roughness bajo + Metallic alto (real,
+no un bug del mask) actúa como un espejo casi perfecto con nada que
+reflejar salvo la luz direccional — el resultado es un parche de
+blanco plano ("sin textura") exactamente en los extremos de cañón de
+varias armas de brazo (AC/10, PPC, Gauss, LB 10-X AC, Ultra AC/10 — el
+extremo de cañón cae, por coincidencia de UV, en la región `R≈0` "Gun
+Metal" del mask compartido). El mismo síntoma en Bushwacker se
+manifestaba como CASI NEGRO en vez de blanco — son las dos caras de la
+misma causa (metalicidad alta sin entorno que reflejar); cuál de las
+dos se ve depende del ángulo de la luz direccional sobre esa geometría
+concreta.
+
+**Intentos que NO bastaron (documentados para no repetirlos a ciegas)**:
+1. Clamp de Metallic con un `MULTIPLY ×0.5` posterior a todo el rango —
+   apaga TAMBIÉN las zonas que ya se veían bien (metal realmente oscuro
+   se queda demasiado plano), y no bajó lo suficiente el pico de 0.95
+   en la zona conflictiva. Reportado por el usuario como "has roto
+   armas que estaban bien, y las que estaban mal, siguen mal".
+2. Floor de Roughness (`MULTIPLY_ADD ×0.6 +0.25`, la misma fórmula que
+   sí funcionó en Bushwacker) sin tocar Metallic — insuficiente él solo
+   para esta chasis en concreto.
+3. Los sliders en vivo de MechLab ("Textura" → Rugosidad/Metalicidad
+   "(metal desnudo)", ver `MECH_PBR_DEFAULTS.weapons` en `Mech3D.tsx`)
+   NO tuvieron el mismo efecto que en Bushwacker — hipótesis de trabajo
+   (no confirmada): esos sliders solo escalan la parte del material que
+   NO tiene un mapa metallicRoughness real (`hasRealMetalness`/
+   `hasRealRoughness` en `useMechPbr`), y el material de armas de este
+   pipeline usa `Clan_Generic_MetalID` como textura real en TODA la
+   malla — no hay "fuera de máscara" que esos sliders puedan alcanzar.
+   Si esto se confirma, la implicación es que estos sliders solo sirven
+   para chasis cuyo material de armas NO esté 100% controlado por un
+   mapa por-texel — a verificar la próxima vez que aparezca este bug.
+
+**Lo que sí redujo el problema** (capar los propios extremos del LERP
+en vez de escalar el resultado después):
+```python
+# antes: roughness = R*0.39 + 0.31   (rango real 0.31-0.70)
+#        metallic  = R*-0.89 + 0.95  (rango real 0.06-0.95)
+# después: mismos presets, extremos capados
+roughness = R*0.25 + 0.55   # rango 0.55-0.80 (antes 0.31-0.70)
+metallic  = R*-0.45 + 0.55  # rango 0.10-0.55 (antes 0.06-0.95)
+```
+**Sin verificar en vivo por el usuario al cierre de esta sesión** — el
+render en Blender no reproduce fielmente el ángulo/iluminación exacto
+donde se ve el problema en MechLab, así que la única verificación
+fiable es en la propia app. Si el próximo chasis presenta el mismo
+síntoma: probar esta receta de extremos-capados primero (más quirúrgica
+que clamp/floor posteriores), y verificar SIEMPRE en MechLab en vivo,
+nunca solo con un render de Blender — el render de Blender no reprodujo
+el bug aunque los datos subyacentes eran idénticos.
+
+### Lección de verificación: un Playwright fresco puede seguir sin ver lo que el usuario ve
+
+Varias veces esta sesión un test automatizado (browser Chromium recién
+lanzado, sin caché) mostró el modelo correcto mientras el usuario, en
+su propia pestaña ya abierta, seguía viendo el bug — en un caso real
+era caché/HMR de Vite desincronizado tras muchos re-exports seguidos
+del mismo `.glb` (confirmado: cerrar y reabrir la pestaña lo arregló),
+pero en otro caso el "test automatizado limpio" resultó ser el que
+tenía razón y el problema real (el bug del wrapper `chrMdlWeap_..._rig`,
+ver más arriba) solo se confirmó comparando directamente el `.glb`
+exportado contra el `.blend` fuente — NO fiarse de "mi test en un
+browser limpio lo ve bien" como prueba definitiva de que no hay bug;
+es evidencia a favor, no una prueba. Cuando el usuario reporta algo que
+un test limpio no reproduce: (1) pedir que cierren la pestaña entera
+(no solo refrescar) antes de descartar caché, pero (2) SIEMPRE verificar
+también con una comparación directa de datos (contar nodos, diffear
+posiciones `.blend` vs `.glb`) antes de concluir "es tu sesión" — la
+combinación de ambas señales es la única forma fiable de saber cuál de
+las dos es la causa real.

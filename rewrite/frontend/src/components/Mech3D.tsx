@@ -607,6 +607,14 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // mesh instead of silently staying empty for these two variants.
   'Plasma Rifle': 'ppc',
   'MML 5': 'missile5',
+  // Annihilator's real stock loadouts (ANH-3A, ANH-4A) carry Light AC/2 —
+  // no distinct "light" AC mesh exists anywhere in the MW5 source data
+  // (checked directly: Annihilator's own weapon set only modeled plain
+  // ac2/ac5/ac10/ac20 barrels, same as every other chassis). Same
+  // "shares the physical launcher, stat-only difference" reasoning as
+  // Plasma Rifle/MML 5 above — reuses the plain AC/2 mesh instead of
+  // silently staying empty for these two variants.
+  'Light AC/2': 'ac2',
 }
 for (const laser of [
   'Small Laser', 'Medium Laser', 'Large Laser', 'ER Small Laser', 'ER Medium Laser', 'ER Large Laser', 'ER Micro Laser',
@@ -1284,7 +1292,25 @@ export const DEAD_MECH_CHAR_COLOR = '#17140f'
 // just this one chassis, and gives an unskinned/hand-authored model (the
 // Jenner, the generic placeholder) the exact same result as before, since a
 // model with no SkinnedMesh never enters the skin-aware branch below.
-function computeVisualBoundingBox(clone: THREE.Object3D): THREE.Box3 {
+// `skinnedOnly`: real bug found live comparing Bushwacker (98 mounted
+// weapon meshes) against Annihilator (216) — this function originally
+// unioned EVERY mesh in the scene, weapons included, regardless of
+// which loadout is actually equipped (applyMechCombatVisibility hasn't
+// run yet the first time normalizeMechInstance computes this; even once
+// it has, a hidden mesh's geometry still measures the same). A chassis
+// whose full 216-mesh weapon catalog happens to reach further on one
+// side than its mirror (a bigger/longer barrel mesh at one hardpoint
+// than the visually-equivalent one on the opposite side) skews the
+// UNIONED box's own center away from the body's real center — reported
+// live as "el Bushwacker está perfectamente centrado, pero el
+// Annihilator no" (feet visibly off the hex's own centered footprint).
+// A mech's true centerline is its own body, never its incidental
+// weapon loadout, so X/Z centering now measures ONLY the skinned body
+// mesh (skinnedOnly=true) while the full-scene box (every mesh,
+// weapons included) is kept for the Y/height scale factor — a very
+// long weapon SHOULD still count toward "how tall does this render",
+// just not toward "where is its centerline".
+function computeVisualBoundingBox(clone: THREE.Object3D, skinnedOnly = false): THREE.Box3 {
   clone.updateMatrixWorld(true)
   const box = new THREE.Box3()
   const vertex = new THREE.Vector3()
@@ -1293,6 +1319,7 @@ function computeVisualBoundingBox(clone: THREE.Object3D): THREE.Box3 {
     const position = obj.geometry.attributes.position as THREE.BufferAttribute | undefined
     if (!position) return
     const skinned = (obj as THREE.SkinnedMesh).isSkinnedMesh ? (obj as THREE.SkinnedMesh) : null
+    if (skinnedOnly && !skinned) return
     if (skinned) {
       skinned.skeleton.update()
       // Every Nth vertex is plenty for a bounding estimate (only the real
@@ -1389,8 +1416,14 @@ export function normalizeMechInstance(scene: THREE.Object3D): THREE.Group {
   if (size.y > 0) {
     const s = 1 / size.y
     clone.scale.setScalar(s)
+    // Body-only box for X/Z centering (see computeVisualBoundingBox's own
+    // doc comment) — falls back to the full box's own center for a
+    // chassis with no skinned mesh at all (nothing to measure body-only),
+    // same as before this existed.
+    const bodyBox = computeVisualBoundingBox(clone, true)
+    const centerSource = bodyBox.isEmpty() ? box : bodyBox
     const center = new THREE.Vector3()
-    box.getCenter(center)
+    centerSource.getCenter(center)
     clone.position.set(-center.x * s, -box.min.y * s, -center.z * s)
   }
   // Real bug found live (the Warhammer placeholder): every caller renders
