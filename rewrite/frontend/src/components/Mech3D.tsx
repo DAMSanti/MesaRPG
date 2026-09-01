@@ -570,6 +570,9 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // its own literal mesh token, same pattern the AC/LB-X/Ultra AC families
   // already used correctly below.
   'PPC': 'ppc', 'ER PPC': 'ppc', 'Heavy PPC': 'hppc', 'Light PPC': 'lppc', 'Snub-Nose PPC': 'snppc',
+  // Jenner's own real catalog data has "LPPC" as an alternate spelling of
+  // Light PPC (confirmed via mech_templates).
+  'LPPC': 'lppc',
   // Griffin's own real catalog data has a literal typo, "PP Cp" instead of
   // "PPC" (confirmed via mech_templates) -- mapped as-is rather than
   // touching the source data.
@@ -579,6 +582,9 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // catalog spellings of the same Light Machine Gun (Array) family already
   // mapped above.
   'LMGA': 'lmg', 'Light MG': 'lmg',
+  // Javelin's own real catalog data has "MGA" as an alternate spelling of
+  // Machine Gun (Array), same family as the plain Machine Gun bucket.
+  'MGA': 'mg',
   'AC/2': 'ac2', 'AC/5': 'ac5', 'AC/10': 'ac10', 'AC/20': 'ac20',
   'LB 2-X AC': 'lbx2', 'LB 5-X AC': 'lbx5', 'LB 10-X AC': 'lbx10', 'LB 20-X AC': 'lbx20',
   // Hatamoto-Chi's own real catalog data has "LBXAC 10" as an alternate
@@ -599,7 +605,7 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   'LRM 5': 'missile5', 'LRM 10': 'missile10', 'LRM 15': 'missile15', 'LRM 20': 'missile20',
   'Flamer': 'flamer', 'ER Flamer': 'flamer',
   'AMS': 'ams', 'Laser AMS': 'ams', 'Laser Anti Missile System': 'ams',
-  'Narc': 'narc',
+  'Narc': 'narc', 'Narc Beacon': 'narc',
   // Rotary AC and Rocket Launcher had NO bucket at all — same "aparece
   // siempre fija" failure mode as the PPC/Gauss/MG gap above, just from a
   // missing entry rather than a wrong one. Confirmed against
@@ -649,7 +655,8 @@ const WEAPON_VISUAL_BUCKETS: Record<string, string> = {
   // physical barrel family (Hyper-Velocity/Light/Hyper-Assault are rules
   // differences, not a different in-game model) — same reasoning as
   // Light AC/2 above.
-  'HVAC/10': 'ac10', 'Light AC/5': 'ac5', 'HAG/30': 'gauss',
+  'HVAC/10': 'ac10', 'Light AC/5': 'ac5', 'HAG/30': 'gauss', 'HAG/20': 'gauss',
+  'ATM 3': 'missile3', 'MML 3': 'missile3',
 }
 for (const laser of [
   'Small Laser', 'Medium Laser', 'Large Laser', 'ER Small Laser', 'ER Medium Laser', 'ER Large Laser', 'ER Micro Laser',

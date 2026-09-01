@@ -45,7 +45,11 @@ ROOT = MESA_ROOT + rf"\modelsmw5\activos\{CHASSIS}\Model"
 BODY_DIR = ROOT + r"\Body" + os.sep
 WEAPONS_DIR = ROOT + r"\Weapons" + os.sep
 ANIM_DIR = MESA_ROOT + rf"\modelsmw5\activos\{CHASSIS}\Animation" + os.sep
-TEX_DIR = ROOT + r"\Body\Materials\Textures" + os.sep
+# Most chassis put their textures under Body\Materials\Textures, but some
+# (Kodiak, JennerIIC, ShadowHawkIIC, Viper confirmed so far) use the
+# shorter Body\Textures instead -- detect whichever one actually exists.
+_TEX_DIR_CANDIDATES = [ROOT + r"\Body\Materials\Textures", ROOT + r"\Body\Textures"]
+TEX_DIR = next((p for p in _TEX_DIR_CANDIDATES if os.path.isdir(p)), _TEX_DIR_CANDIDATES[0]) + os.sep
 OUT_BLEND = MESA_ROOT + rf"\models\{CHASSIS}_new.blend"
 OUT_GLB = MESA_ROOT + rf"\rewrite\frontend\public\models\mechs\{CHASSIS}.glb"
 
@@ -118,6 +122,7 @@ FILENAME_RE = re.compile(rf"^Weapon_Mech_{PREFIX}_(.+)_SKM\.uemodel$", re.IGNORE
 KNOWN_LOCATION_TOKENS = [
     "Forearm_Left", "Forearm_Right", "Torso_Center", "Torso_Left", "Torso_Right", "Torso", "Head",
     "Clavicle_Left", "Clavicle_Right", "Upperarm_Left", "Upperarm_Right",
+    "Missile_Left", "Missile_Right", "Shoulder_Left", "Shoulder_Right",
 ]
 BONE_BY_LOCATION = {
     "Forearm_Left": "Forearm_Left_Weapon", "Forearm_Right": "Forearm_Right_Weapon",
@@ -126,11 +131,19 @@ BONE_BY_LOCATION = {
     "Head": "Head_Weapon" if "Head_Weapon" in bone_names else "Torso_Head",
     "Clavicle_Left": "Clavicle_Left_Weapon", "Clavicle_Right": "Clavicle_Right_Weapon",
     "Upperarm_Left": "Upperarm_Left_Weapon", "Upperarm_Right": "Upperarm_Right_Weapon",
+    # Some chassis name their torso missile bay/shoulder mount differently
+    # (Highlander: "Missile_Left" for its Narc; Hunchback: "Shoulder_Right"
+    # for a Blank cover mesh) -- no dedicated bone exists for either under
+    # that name, so route to the nearest real equivalent.
+    "Missile_Left": "Torso_Weapon", "Missile_Right": "Torso_Weapon",
+    "Shoulder_Left": "Clavicle_Left_Weapon", "Shoulder_Right": "Clavicle_Right_Weapon",
 }
 LOCATION_HINT = {
     "Forearm_Left": "left_arm", "Forearm_Right": "right_arm", "Torso_Center": "center_torso",
     "Torso_Left": "left_torso", "Torso_Right": "right_torso", "Torso": "center_torso", "Head": "head",
     "Clavicle_Left": "left_shoulder", "Clavicle_Right": "right_shoulder",
+    "Missile_Left": "left_torso", "Missile_Right": "right_torso",
+    "Shoulder_Left": "left_shoulder", "Shoulder_Right": "right_shoulder",
     "Upperarm_Left": "left_arm", "Upperarm_Right": "right_arm",
 }
 LOCATIONS_SORTED = sorted(BONE_BY_LOCATION.keys(), key=len, reverse=True)
@@ -479,7 +492,7 @@ print("Weapons material built")
 NAME_TO_MATERIAL = {
     "Variant": variant_mat, "Body": variant_mat,
     "Weapons": weapons_mat, "MissileHead": weapons_mat, "MIssileHead": weapons_mat, "Missilehead": weapons_mat,
-    "Arrow": weapons_mat, "Geo": weapons_mat,
+    "Arrow": weapons_mat, "Geo": weapons_mat, "Missiles": weapons_mat,
 }
 assigned = 0
 assign_errors = []

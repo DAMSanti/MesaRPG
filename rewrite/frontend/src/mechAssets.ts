@@ -357,6 +357,26 @@ export const MECH_CHASSIS_ASSETS: Record<string, ChassisAssets> = {
       'HTM-28T', 'HTM-28T (Shin)', 'HTM-28Tr',
     ].map((model) => [model, `${MECHS_DIR}/Hatamotochi.glb`])),
   },
+  Jenner: {
+    placeholder: `${MECHS_DIR}/Jenner.glb`,
+    models: Object.fromEntries([
+      'JR10-X', 'JR7-A', 'JR7-C', 'JR7-C2', 'JR7-C3', 'JR7-C4', 'JR7-D',
+      'JR7-F', 'JR7-K', 'JR7-K (Grace II)', 'JR7-K (Grace)', 'JR7-K (Samuli)', 'JR7-N',
+    ].map((model) => [model, `${MECHS_DIR}/Jenner.glb`])),
+  },
+  'Jenner IIC': {
+    placeholder: `${MECHS_DIR}/JennerIIC.glb`,
+    models: Object.fromEntries([
+      '(Standard)', '2', '3', '4', '5',
+    ].map((model) => [model, `${MECHS_DIR}/JennerIIC.glb`])),
+  },
+  'King Crab': {
+    placeholder: `${MECHS_DIR}/Kingcrab.glb`,
+    models: Object.fromEntries([
+      'KGC-000', 'KGC-0000', 'KGC-000b', 'KGC-001', 'KGC-005', 'KGC-005r',
+      'KGC-007', 'KGC-008', 'KGC-008B', 'KGC-009', 'KGC-009C', 'KGC-010', 'KGC-011',
+    ].map((model) => [model, `${MECHS_DIR}/Kingcrab.glb`])),
+  },
   Champion: {
     placeholder: `${MECHS_DIR}/Champion.glb`,
     models: Object.fromEntries([

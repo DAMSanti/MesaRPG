@@ -1864,6 +1864,7 @@ export function MechLabView() {
       'Champion', 'Cicada', 'Commando', 'Crab', 'Cyclops',
       'Centurion', 'Charger', 'Crusader',
       'Dervish', 'Dragon', 'Enforcer', 'Firestarter', 'Flea', 'Grasshopper', 'Griffin', 'Hatamoto-Chi',
+      'Hatchetman', 'Highlander', 'Hunchback', 'JagerMech', 'Javelin', 'Jenner', 'Jenner IIC', 'King Crab',
     ])
     listMechChassis()
       .then((all) => setChassisOptions(all.filter((c) => READY_CHASSIS.has(c.chassis))))
